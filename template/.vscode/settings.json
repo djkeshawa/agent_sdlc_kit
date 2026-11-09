@@ -1,0 +1,49 @@
+{
+  // ---- Copilot agent customizations used by this repository ----
+  // Setting names change between VS Code releases. If one shows as "Unknown setting",
+  // search the Settings UI for the words in the comment and switch the matching option on.
+
+  // Agent mode
+  "chat.agent.enabled": true,
+  // Read AGENTS.md and .github/copilot-instructions.md, .github/instructions/*.instructions.md
+  "chat.useAgentsMdFile": true,
+  "github.copilot.chat.codeGeneration.useInstructionFiles": true,
+  // Prompt files (.github/prompts) and skills (.github/skills)
+  "chat.promptFiles": true,
+  "chat.useAgentSkills": true,
+  // Hooks (.github/hooks/guardrails.json) - the guardrails. Keep ON.
+  "chat.useHooks": true,
+  "chat.useCustomAgentHooks": true,
+  // Subagents (the orchestrator starts the other agents)
+  "chat.customAgentInSubagent.enabled": true,
+
+  // ---- Approvals: never auto-approve everything ----
+  "chat.tools.autoApprove": false,
+  "chat.tools.global.autoApprove": false,
+  // Read-only and project commands run without a click; everything else asks you.
+  // false = always ask, even if something else would allow it.
+  "chat.tools.terminal.autoApprove": {
+    "git status": true,
+    "git diff": true,
+    "git log": true,
+    "git show": true,
+    "git branch --show-current": true,
+    "/^java \\.agent/Sdlc\\.java (status|verify|trace|selftest|doctor|analyse|tasks list|docs (find|pull)|approval (check|line)|jira (get|search|transitions)|confluence get|ci (status|failures))\\b/": true,
+    "/^sh \\.agent/bin/sdlc (status|verify|trace|selftest)\\b/": true,
+    "/^\\.agent\\\\bin\\\\sdlc\\.cmd (status|verify|trace|selftest)\\b/": true,
+    "/^(\\./mvnw|mvnw\\.cmd) -B -ntp (-q )?(test|verify)( |$)/": true,
+    "/^(npm|pnpm|yarn) (test|run (lint|test|build|typecheck))( |$)/": true,
+    "/^npx (vitest run|jest|tsc --noEmit)( |$)/": true,
+    "git push": false,
+    "gh": false,
+    "rm": false,
+    "curl": false,
+    "wget": false,
+    "docker": false
+  },
+
+  // ---- Editor hygiene for Java ----
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "java.configuration.updateBuildConfiguration": "automatic"
+}

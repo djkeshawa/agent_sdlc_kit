@@ -1,0 +1,173 @@
+<!--
+  Quality plugins for the agent workflow. Merge these into YOUR pom.xml (do not replace it).
+  Step-by-step instructions: docs/05-ci-jenkins-sonar.md (section "Maven quality plugins")
+
+  What each one does on "./mvnw verify":
+    maven-enforcer-plugin  - right Java/Maven version, no duplicate dependency declarations
+    maven-surefire-plugin  - unit tests (*Test.java)
+    maven-failsafe-plugin  - integration tests (*IT.java)
+    jacoco-maven-plugin    - coverage report for SonarQube (target/site/jacoco/jacoco.xml)
+    spotless-maven-plugin  - formatting, ONLY for files changed since origin/develop (ratchet)
+    spotbugs-maven-plugin  - bug patterns (null dereference, resource leaks, ...)
+    sonar-maven-plugin     - lets Jenkins run "./mvnw sonar:sonar"
+
+  Versions were current in 2026; newer patch versions are fine. If your company has a parent
+  POM that already manages some of these, keep the parent's version and only add what is missing.
+-->
+
+<!-- ===================== 1. inside <properties> ===================== -->
+<properties>
+    <java.version>17</java.version>
+    <maven.compiler.release>${java.version}</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!-- SonarQube reads the JaCoCo XML report -->
+    <sonar.coverage.jacoco.xmlReportPaths>${project.basedir}/target/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
+    <!-- Spotless checks only files changed against this ref (no big-bang reformat of legacy code) -->
+    <spotless.ratchetFrom>origin/develop</spotless.ratchetFrom>
+</properties>
+
+<!-- ===================== 2. inside <dependencies> (test scope) ===================== -->
+<dependencies>
+    <!-- ArchUnit: architecture rules as unit tests (see snippets/ArchitectureRulesTest.java) -->
+    <dependency>
+        <groupId>com.tngtech.archunit</groupId>
+        <artifactId>archunit-junit5</artifactId>
+        <version>1.4.1</version>
+        <scope>test</scope>
+    </dependency>
+    <!-- AssertJ and Mockito usually come with spring-boot-starter-test; add them if you do not use Spring Boot -->
+</dependencies>
+
+<!-- ===================== 3. inside <build><plugins> ===================== -->
+<build>
+    <plugins>
+
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-enforcer-plugin</artifactId>
+            <version>3.5.0</version>
+            <executions>
+                <execution>
+                    <id>enforce-basics</id>
+                    <goals><goal>enforce</goal></goals>
+                    <configuration>
+                        <rules>
+                            <requireJavaVersion><version>[17,)</version></requireJavaVersion>
+                            <requireMavenVersion><version>[3.8.6,)</version></requireMavenVersion>
+                            <banDuplicatePomDependencyVersions/>
+                        </rules>
+                    </configuration>
+                </execution>
+            </executions>
+        </plugin>
+
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <version>3.5.3</version>
+            <configuration>
+                <!-- JaCoCo fills @{argLine}; append your own JVM flags after it. On JDK 21+ Mockito may need -XX:+EnableDynamicAgentLoading -->
+                <argLine>@{argLine}</argLine>
+            </configuration>
+        </plugin>
+
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-failsafe-plugin</artifactId>
+            <version>3.5.3</version>
+            <executions>
+                <execution>
+                    <goals>
+                        <goal>integration-test</goal>
+                        <goal>verify</goal>
+                    </goals>
+                </execution>
+            </executions>
+            <configuration>
+                <argLine>@{argLine}</argLine>
+            </configuration>
+        </plugin>
+
+        <plugin>
+            <groupId>org.jacoco</groupId>
+            <artifactId>jacoco-maven-plugin</artifactId>
+            <version>0.8.13</version>
+            <executions>
+                <execution>
+                    <id>prepare-agent</id>
+                    <goals><goal>prepare-agent</goal></goals>
+                </execution>
+                <execution>
+                    <id>prepare-agent-it</id>
+                    <goals><goal>prepare-agent-integration</goal></goals>
+                </execution>
+                <execution>
+                    <id>report</id>
+                    <phase>verify</phase>
+                    <goals><goal>report</goal></goals>
+                </execution>
+                <!--
+                Optional hard floor for the whole project. Prefer SonarQube's "coverage on new
+                code" condition; enable this only for new projects.
+                <execution>
+                    <id>check</id>
+                    <goals><goal>check</goal></goals>
+                    <configuration>
+                        <rules><rule><element>BUNDLE</element><limits>
+                            <limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.80</minimum></limit>
+                        </limits></rule></rules>
+                    </configuration>
+                </execution>
+                -->
+            </executions>
+        </plugin>
+
+        <plugin>
+            <groupId>com.diffplug.spotless</groupId>
+            <artifactId>spotless-maven-plugin</artifactId>
+            <version>2.44.5</version>
+            <configuration>
+                <ratchetFrom>${spotless.ratchetFrom}</ratchetFrom>
+                <java>
+                    <!-- Pick the formatter your team already uses. palantir = google style with 120 columns -->
+                    <palantirJavaFormat/>
+                    <removeUnusedImports/>
+                    <importOrder/>
+                    <trimTrailingWhitespace/>
+                    <endWithNewline/>
+                </java>
+            </configuration>
+            <executions>
+                <execution>
+                    <goals><goal>check</goal></goals>
+                    <phase>verify</phase>
+                </execution>
+            </executions>
+        </plugin>
+
+        <plugin>
+            <groupId>com.github.spotbugs</groupId>
+            <artifactId>spotbugs-maven-plugin</artifactId>
+            <version>4.9.3.0</version>
+            <configuration>
+                <effort>Max</effort>
+                <threshold>High</threshold>
+                <xmlOutput>true</xmlOutput>
+                <!-- <excludeFilterFile>spotbugs-exclude.xml</excludeFilterFile> -->
+            </configuration>
+            <executions>
+                <execution>
+                    <goals><goal>check</goal></goals>
+                    <phase>verify</phase>
+                </execution>
+            </executions>
+        </plugin>
+
+        <plugin>
+            <groupId>org.sonarsource.scanner.maven</groupId>
+            <artifactId>sonar-maven-plugin</artifactId>
+            <version>5.1.0.4751</version>
+        </plugin>
+
+    </plugins>
+</build>

@@ -1,0 +1,8 @@
+#!/bin/sh
+# Fast launcher for the IDE hooks and git hooks: runs the compiled copy in .agent/.build.
+# The first run (or a run after the sources changed) goes through the bootstrap, which compiles.
+dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if [ -f "$dir/.build/sdlc/Main.class" ] && [ -f "$dir/.build/.stamp" ]; then
+  exec java -cp "$dir/.build" sdlc.Main "$@"
+fi
+exec java "$dir/Sdlc.java" "$@"

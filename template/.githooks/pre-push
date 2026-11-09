@@ -1,0 +1,5 @@
+#!/bin/sh
+# Guardrail: no pushes to protected branches or tags, PR policy, verified build.
+# git passes "<local ref> <local sha> <remote ref> <remote sha>" lines on stdin.
+root=$(git rev-parse --show-toplevel) || exit 1
+exec sh "$root/.agent/bin/sdlc" git-hook pre-push "$1"

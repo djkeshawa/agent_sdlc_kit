@@ -1,0 +1,5 @@
+#!/bin/sh
+# Guardrail: protected branches, branch name, secrets, disabled tests, file size.
+# Installed by: java .agent/Sdlc.java setup   (git config core.hooksPath .githooks)
+root=$(git rev-parse --show-toplevel) || exit 1
+exec sh "$root/.agent/bin/sdlc" git-hook pre-commit

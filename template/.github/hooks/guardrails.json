@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "sh .agent/bin/sdlc hook session-start",
+        "windows": ".agent\\bin\\sdlc.cmd hook session-start",
+        "bash": "sh .agent/bin/sdlc hook session-start",
+        "powershell": "$OutputEncoding=[Text.UTF8Encoding]::new($false); [Console]::In.ReadToEnd() | & .\\.agent\\bin\\sdlc.cmd hook session-start; exit $LASTEXITCODE",
+        "timeout": 30,
+        "timeoutSec": 30
+      }
+    ],
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "sh .agent/bin/sdlc hook pre-tool-use",
+        "windows": ".agent\\bin\\sdlc.cmd hook pre-tool-use",
+        "bash": "sh .agent/bin/sdlc hook pre-tool-use",
+        "powershell": "$OutputEncoding=[Text.UTF8Encoding]::new($false); [Console]::In.ReadToEnd() | & .\\.agent\\bin\\sdlc.cmd hook pre-tool-use; exit $LASTEXITCODE",
+        "timeout": 30,
+        "timeoutSec": 30
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "sh .agent/bin/sdlc hook post-tool-use",
+        "windows": ".agent\\bin\\sdlc.cmd hook post-tool-use",
+        "bash": "sh .agent/bin/sdlc hook post-tool-use",
+        "powershell": "$OutputEncoding=[Text.UTF8Encoding]::new($false); [Console]::In.ReadToEnd() | & .\\.agent\\bin\\sdlc.cmd hook post-tool-use; exit $LASTEXITCODE",
+        "timeout": 30,
+        "timeoutSec": 30
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "sh .agent/bin/sdlc hook stop",
+        "windows": ".agent\\bin\\sdlc.cmd hook stop",
+        "bash": "sh .agent/bin/sdlc hook stop",
+        "powershell": "$OutputEncoding=[Text.UTF8Encoding]::new($false); [Console]::In.ReadToEnd() | & .\\.agent\\bin\\sdlc.cmd hook stop; exit $LASTEXITCODE",
+        "timeout": 60,
+        "timeoutSec": 60
+      }
+    ]
+  }
+}

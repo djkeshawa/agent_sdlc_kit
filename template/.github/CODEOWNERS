@@ -1,0 +1,17 @@
+# Guardrail files need a review by the tech leads. Replace @your-org/tech-leads with a real
+# GitHub team (or users like @alice @bob) and turn on "Require review from Code Owners" in the
+# branch protection rule for develop and main.
+
+/.agent/                      @your-org/tech-leads
+/.githooks/                   @your-org/tech-leads
+/.github/                     @your-org/tech-leads
+/.vscode/                     @your-org/tech-leads
+/AGENTS.md                    @your-org/tech-leads
+/.claude/                     @your-org/tech-leads
+/.codex/                      @your-org/tech-leads
+/.agents/                     @your-org/tech-leads
+/CLAUDE.md                    @your-org/tech-leads
+/.mcp.json                    @your-org/tech-leads
+/Jenkinsfile                  @your-org/tech-leads
+/sonar-project.properties     @your-org/tech-leads
+/docs/adr/                    @your-org/tech-leads

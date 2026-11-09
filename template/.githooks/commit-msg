@@ -1,0 +1,4 @@
+#!/bin/sh
+# Guardrail: commit subject "type(KEY-123): summary".
+root=$(git rev-parse --show-toplevel) || exit 1
+exec sh "$root/.agent/bin/sdlc" git-hook commit-msg "$1"
