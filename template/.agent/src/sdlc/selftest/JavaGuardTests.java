@@ -2,6 +2,7 @@ package sdlc.selftest;
 
 import static sdlc.selftest.Asserts.check;
 import static sdlc.selftest.Asserts.expect;
+import static sdlc.selftest.Asserts.json;
 import static sdlc.selftest.Asserts.shell;
 import static sdlc.selftest.Asserts.shellIn;
 import static sdlc.selftest.Asserts.tool;
@@ -36,7 +37,7 @@ final class JavaGuardTests {
     private JavaGuardTests() {}
 
     static void run(Path tmp) throws IOException {
-        expect("edit on develop", tool("replace_string_in_file", "{\"filePath\":\"" + tmp + "/src/main/java/A.java\"}"), Decision.Kind.DENY);
+        expect("edit on develop", tool("replace_string_in_file", "{\"filePath\":\"" + json(tmp) + "/src/main/java/A.java\"}"), Decision.Kind.DENY);
         expect("push develop", shell("git push origin develop"), Decision.Kind.DENY);
         expect("commit on develop", shell("git commit -m 'feat(PROJ-1): x'"), Decision.Kind.DENY);
         Proc.run(tmp, "git", "switch", "-q", "-c", "feature/PROJ-1-demo");
@@ -205,7 +206,7 @@ final class JavaGuardTests {
         expect("climbing path may be a guardrail file", shell("echo x > ../.agent/sdlc.yml"), Decision.Kind.DENY);
         expect("cd then read code ok", shell("cd src/main/java && cat demo/A.java"), Decision.Kind.ALLOW);
         expect("cd and back ok", shell("cd src/main/java/demo && ls && cd - && ./mvnw -B verify"), Decision.Kind.ALLOW);
-        expect("workdir in a guardrail folder", tool("shell", "{\"command\":[\"bash\",\"-lc\",\"echo x > sdlc.yml\"],\"workdir\":\"" + tmp + "/.agent\"}"), Decision.Kind.DENY);
+        expect("workdir in a guardrail folder", tool("shell", "{\"command\":[\"bash\",\"-lc\",\"echo x > sdlc.yml\"],\"workdir\":\"" + json(tmp) + "/.agent\"}"), Decision.Kind.DENY);
         expect("workdir in a code folder", tool("shell", "{\"command\":\"echo x > A.java\",\"workdir\":\"src/main/java/demo\"}"), Decision.Kind.DENY);
         expect("workdir build into the tool copy", tool("shell", "{\"command\":\"javac -d .build /tmp/Evil.java\",\"workdir\":\".agent\"}"), Decision.Kind.DENY);
         expect("hook cwd in a subfolder: climb to a guardrail file", shellIn(tmp.resolve("src"), "echo x >> ../AGENTS.md"), Decision.Kind.DENY);
@@ -278,15 +279,15 @@ final class JavaGuardTests {
         // a token never travels without encryption, and never follows a redirect elsewhere
         check("token over plain http is refused", refuses(() -> Http.text("GET", "http://jira.example.com/rest/api/2/myself", "Bearer t", null, "application/json"), "without encryption"));
 
-        expect("edit guardrail", tool("create_file", "{\"filePath\":\"" + tmp + "/.github/hooks/guardrails.json\"}"), Decision.Kind.DENY);
+        expect("edit guardrail", tool("create_file", "{\"filePath\":\"" + json(tmp) + "/.github/hooks/guardrails.json\"}"), Decision.Kind.DENY);
         expect("edit state", tool("edit", "{\"path\":\".sdlc/PROJ-1/state.json\"}"), Decision.Kind.DENY);
-        expect("edit draft ok", tool("create_file", "{\"filePath\":\"" + tmp + "/.sdlc/PROJ-1/drafts/lld.md\"}"), Decision.Kind.ALLOW);
-        expect("edit inbox ok", tool("create_file", "{\"filePath\":\"" + tmp + "/.sdlc/PROJ-1/inbox/review.md\"}"), Decision.Kind.ALLOW);
-        expect("code without task", tool("replace_string_in_file", "{\"filePath\":\"" + tmp + "/src/main/java/A.java\"}"), Decision.Kind.DENY);
-        expect("docs without task", tool("create_file", "{\"filePath\":\"" + tmp + "/docs/agent/project-profile.md\"}"), Decision.Kind.ALLOW);
-        expect("apply_patch guardrail", tool("apply_patch", "{\"input\":\"*** Begin Patch\\n*** Update File: " + tmp + "/.agent/sdlc.yml\\n*** End Patch\"}"), Decision.Kind.DENY);
-        expect("read secret", tool("read_file", "{\"filePath\":\"" + tmp + "/.agent/local.env\"}"), Decision.Kind.DENY);
-        expect("read code", tool("read_file", "{\"filePath\":\"" + tmp + "/src/main/java/A.java\"}"), Decision.Kind.ALLOW);
+        expect("edit draft ok", tool("create_file", "{\"filePath\":\"" + json(tmp) + "/.sdlc/PROJ-1/drafts/lld.md\"}"), Decision.Kind.ALLOW);
+        expect("edit inbox ok", tool("create_file", "{\"filePath\":\"" + json(tmp) + "/.sdlc/PROJ-1/inbox/review.md\"}"), Decision.Kind.ALLOW);
+        expect("code without task", tool("replace_string_in_file", "{\"filePath\":\"" + json(tmp) + "/src/main/java/A.java\"}"), Decision.Kind.DENY);
+        expect("docs without task", tool("create_file", "{\"filePath\":\"" + json(tmp) + "/docs/agent/project-profile.md\"}"), Decision.Kind.ALLOW);
+        expect("apply_patch guardrail", tool("apply_patch", "{\"input\":\"*** Begin Patch\\n*** Update File: " + json(tmp) + "/.agent/sdlc.yml\\n*** End Patch\"}"), Decision.Kind.DENY);
+        expect("read secret", tool("read_file", "{\"filePath\":\"" + json(tmp) + "/.agent/local.env\"}"), Decision.Kind.DENY);
+        expect("read code", tool("read_file", "{\"filePath\":\"" + json(tmp) + "/src/main/java/A.java\"}"), Decision.Kind.ALLOW);
         expect("outside repo", tool("create_file", "{\"filePath\":\"/etc/hosts\"}"), Decision.Kind.DENY);
 
         Map<String, Object> state = Work.state("PROJ-1");
@@ -297,9 +298,9 @@ final class JavaGuardTests {
         t.put("scenarios", List.of("TS-01", "TS-02"));
         Work.save("PROJ-1", state);
         Work.setCurrent("PROJ-1", "PROJ-2");
-        expect("edit in scope", tool("replace_string_in_file", "{\"filePath\":\"" + tmp + "/src/main/java/com/acme/orders/A.java\"}"), Decision.Kind.ALLOW);
+        expect("edit in scope", tool("replace_string_in_file", "{\"filePath\":\"" + json(tmp) + "/src/main/java/com/acme/orders/A.java\"}"), Decision.Kind.ALLOW);
         expect("cli args string in scope", toolCli("edit", "{\"path\":\"src/test/java/com/acme/orders/ATest.java\"}"), Decision.Kind.ALLOW);
-        expect("edit out of scope", tool("replace_string_in_file", "{\"filePath\":\"" + tmp + "/src/main/java/com/acme/billing/B.java\"}"), Decision.Kind.DENY);
+        expect("edit out of scope", tool("replace_string_in_file", "{\"filePath\":\"" + json(tmp) + "/src/main/java/com/acme/billing/B.java\"}"), Decision.Kind.DENY);
         expect("bash -lc force push", shell("bash -lc 'git push --force origin HEAD'"), Decision.Kind.DENY);
         expect("argv command array", tool("Bash", "{\"command\":[\"bash\",\"-lc\",\"git push --force\"]}"), Decision.Kind.DENY);
         expect("apply_patch in shell out of scope", tool("Bash", "{\"command\":\"apply_patch <<'EOF'\\n*** Begin Patch\\n*** Update File: src/main/java/com/acme/billing/B.java\\n*** End Patch\\nEOF\"}"), Decision.Kind.DENY);
@@ -330,14 +331,14 @@ final class JavaGuardTests {
             Files.createSymbolicLink(drafts.resolve("guard.yml"), tmp.resolve(".agent/sdlc.yml"));
             Files.createSymbolicLink(drafts.resolve("notes.txt"), tmp.resolve(".agent/local.env"));
             expect("edit through link to code", tool("Write", "{\"file_path\":\".sdlc/PROJ-1/drafts/link.java\"}"), Decision.Kind.DENY);
-            expect("edit through link to guardrail", tool("Write", "{\"file_path\":\"" + tmp + "/.sdlc/PROJ-1/drafts/guard.yml\"}"), Decision.Kind.DENY);
+            expect("edit through link to guardrail", tool("Write", "{\"file_path\":\"" + json(tmp) + "/.sdlc/PROJ-1/drafts/guard.yml\"}"), Decision.Kind.DENY);
             expect("shell write through link", shell("echo x > .sdlc/PROJ-1/drafts/link.java"), Decision.Kind.DENY);
             expect("read secret through link", tool("read_file", "{\"filePath\":\".sdlc/PROJ-1/drafts/notes.txt\"}"), Decision.Kind.DENY);
             for (String link : List.of("link.java", "guard.yml", "notes.txt")) Files.delete(drafts.resolve(link));
         } catch (IOException | UnsupportedOperationException e) {
             System.out.println("(symbolic link checks skipped: this account may not create links)");
         }
-        expect("pom asks", tool("replace_string_in_file", "{\"filePath\":\"" + tmp + "/pom.xml\"}"), Decision.Kind.ASK);
+        expect("pom asks", tool("replace_string_in_file", "{\"filePath\":\"" + json(tmp) + "/pom.xml\"}"), Decision.Kind.ASK);
         expect("pr gate not met", shell("gh pr create --base develop --title 'PROJ-1: refunds'"), Decision.Kind.DENY);
         expect("subagent ok", tool("runSubagent", "{\"agentName\":\"implementer\",\"prompt\":\"x\"}"), Decision.Kind.ALLOW);
         for (int i = 1; i <= 5; i++) Work.list(Work.taskState(state, "PROJ-2"), "reviews").add(Store.map("round", i, "verdict", "CHANGES_REQUESTED", "commit", "abc", "at", "2026-01-0" + i));

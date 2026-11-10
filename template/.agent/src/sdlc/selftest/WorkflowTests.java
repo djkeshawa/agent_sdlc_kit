@@ -2,6 +2,7 @@ package sdlc.selftest;
 
 import static sdlc.selftest.Asserts.check;
 import static sdlc.selftest.Asserts.expect;
+import static sdlc.selftest.Asserts.json;
 import static sdlc.selftest.Asserts.tool;
 
 import java.io.IOException;
@@ -76,8 +77,8 @@ final class WorkflowTests {
             check("offline: a task waits for the one it depends on", w.tasks.start(t2) == 1);
             check("offline: task start moves the task and the story", w.tasks.start(t1) == 0
                     && "In Progress".equals(tracker.status.get(t1)) && "In Progress".equals(tracker.status.get("PROJ-7")));
-            expect("offline: edit inside the started task's scope", tool("create_file", "{\"filePath\":\"" + tmp + "/src/main/java/com/acme/refund/Policy.java\"}"), Decision.Kind.ALLOW);
-            expect("offline: edit in the other task's scope", tool("create_file", "{\"filePath\":\"" + tmp + "/src/main/java/com/acme/api/Api.java\"}"), Decision.Kind.DENY);
+            expect("offline: edit inside the started task's scope", tool("create_file", "{\"filePath\":\"" + json(tmp) + "/src/main/java/com/acme/refund/Policy.java\"}"), Decision.Kind.ALLOW);
+            expect("offline: edit in the other task's scope", tool("create_file", "{\"filePath\":\"" + json(tmp) + "/src/main/java/com/acme/api/Api.java\"}"), Decision.Kind.DENY);
             wiki.edit(page, "<p>changed after the tasks were created</p>", "dev");
             check("offline: task start refused once the LLD changed", w.tasks.start(t1) == 1);
             Store.write(Ctx.work("current.json"), Store.map());

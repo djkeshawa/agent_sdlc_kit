@@ -34,6 +34,12 @@ final class Asserts {
         return Hooks.decide("run_in_terminal", Json.obj(Json.parse("{\"command\":" + Json.quote(command) + "}")), folder);
     }
 
+    /** A path as it stands inside a JSON string: a Windows path's backslashes must be escaped, as a host escapes them. */
+    static String json(Path path) {
+        String quoted = Json.quote(path.toString());
+        return quoted.substring(1, quoted.length() - 1);
+    }
+
     static Decision tool(String name, String argsJson) {
         return Hooks.decide(name, Json.obj(Json.parse(argsJson)));
     }

@@ -2,6 +2,7 @@ package sdlc.selftest;
 
 import static sdlc.selftest.Asserts.check;
 import static sdlc.selftest.Asserts.expect;
+import static sdlc.selftest.Asserts.json;
 import static sdlc.selftest.Asserts.shell;
 import static sdlc.selftest.Asserts.tool;
 
@@ -31,15 +32,15 @@ final class NodeGuardTests {
             expect("snapshot update asks", shell("npm test -- -u"), Decision.Kind.ASK);
             expect("npm install asks", shell("npm install left-pad"), Decision.Kind.ASK);
             expect("npm publish", shell("npm publish"), Decision.Kind.DENY);
-            expect("ts code without task", tool("create_file", "{\"filePath\":\"" + tmp + "/src/refund.ts\"}"), Decision.Kind.DENY);
-            expect("package.json asks", tool("create_file", "{\"filePath\":\"" + tmp + "/docs/x.md\"}"), Decision.Kind.ALLOW);
+            expect("ts code without task", tool("create_file", "{\"filePath\":\"" + json(tmp) + "/src/refund.ts\"}"), Decision.Kind.DENY);
+            expect("package.json asks", tool("create_file", "{\"filePath\":\"" + json(tmp) + "/docs/x.md\"}"), Decision.Kind.ALLOW);
             check("it.only found", !Checks.disabledTests(Map.of("src/a.test.ts", List.of("  it.only('works', () => {})"))).isEmpty());
             check("xit found", !Checks.disabledTests(Map.of("src/__tests__/a.ts", List.of("xit('works', () => {})"))).isEmpty());
             check("normal it ok", Checks.disabledTests(Map.of("src/a.spec.tsx", List.of("it('refuses unpaid orders', () => {})"))).isEmpty());
             check("js main without tests", Checks.testsMissing(List.of("src/refund.ts")));
             check("js main with tests", !Checks.testsMissing(List.of("src/refund.ts", "src/refund.test.ts")));
             check("js token literal", !Checks.secrets(Map.of("src/config.ts", List.of("const apiKey = 'q8Zk2LmP0wXr9';"))).isEmpty()); // guard:allow-secret
-            expect("routes file without task", tool("create_file", "{\"filePath\":\"" + tmp + "/routes/users.js\"}"), Decision.Kind.DENY);
+            expect("routes file without task", tool("create_file", "{\"filePath\":\"" + json(tmp) + "/routes/users.js\"}"), Decision.Kind.DENY);
             expect("root entry file without task", tool("create_file", "{\"filePath\":\"index.js\"}"), Decision.Kind.DENY);
             expect("shell write to routes without task", shell("echo x > routes/users.js"), Decision.Kind.DENY);
             check("routes is main code, tool config is not", Checks.isMainCode("routes/users.js") && Checks.isMainCode("server.ts") && !Checks.isMainCode("eslint.config.js"));
