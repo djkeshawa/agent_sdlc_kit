@@ -19,6 +19,11 @@ Refusals are logged in `.sdlc/logs/guard-decisions.jsonl`; Jira/Confluence write
 | `Compiling .agent/src failed` | A local edit of the tool's sources broke it. `git checkout .agent/src` or fix the error shown. |
 | `SELFTEST FAILED` after editing `sdlc.yml` | Your change broke a built-in expectation (for example a protected path removed). Read the failing line; revert or adjust. |
 | `run this from inside the repository` | Run `java .agent/Sdlc.java` from the repository root (or below it). |
+| `the guard (.agent/bin/sdlc) was not found` | The agent was started outside the repository, or its shell is in another git repository. Start it from the repository root. After a kit update, run `java .agent/Sdlc.java config apply` so Claude Code and Codex get the current hook commands (`doctor` says when they are old). |
+| `the guard itself failed (exit N)` | The guard could not run: no Java on the PATH, or the sources under `.agent/src` do not compile (after a bad merge). Run `java .agent/Sdlc.java selftest` and read the error. Tool calls are refused until it works. |
+| `the guard could not decide within 20 s` | A git command the guard asked hung (a credential prompt, a network drive). Run `git status` in a terminal to see what git waits for. |
+| `refusing to send a token to ... without encryption` | `jira.url`, `confluence.url`, `ci.jenkins.url` or `ci.sonar.url` starts with `http://`. Use the `https://` address; only for a server without https set `guard.allowPlainHttp: true`. |
+| `the server redirects to ...` | The address in `.agent/sdlc.yml` is not the one the server answers on (an old host name, `http` instead of `https`, a missing `/wiki`). Put the address from the message there. The tool does not follow a redirect with your token. |
 
 ## Jira and Confluence
 
@@ -39,7 +44,10 @@ Refusals are logged in `.sdlc/logs/guard-decisions.jsonl`; Jira/Confluence write
 | `not in gates.approvers.lld` | The author is not in the approvers list. Add their account id, or have a listed person approve. |
 | Approval comment ignored | Bot comments (`gates.botAccounts`, or containing `[sdlc-bot]`) never count. Pasting the line inside a code block is fine. |
 | `the LLD has no work breakdown` | The LLD needs a ```` ```yaml ```` block starting with `# sdlc-tasks` (see `.agent/templates/lld.md`). |
-| `scope 'src/**' is too broad` | Narrow the task's scope in the LLD. |
+| `scope 'src/**' is too broad` | Narrow the task's scope in the LLD: name at least `guard.minScopeDepth` folders before the first wildcard (Java 4: `src/main/java/com/acme/refund/**`; Node 2: `src/refund/**`). |
+| `the person who saved this version of the page cannot approve it` | Four eyes: someone other than the page's last author approves. A team of one sets `gates.allowSelfApproval: true`. |
+| `VERIFY REFUSED: MAVEN_OPTS passes -DskipTests to the build` | A variable in your terminal switches checks off. `unset MAVEN_OPTS` (or the variable named) and run `verify` again. |
+| An agent is asked to approve `python3 x.py` / `sh x.sh` / `npx <pkg>` | The file is not committed (or the package is not installed), so nobody has reviewed what it runs. Read it, then approve, or commit the script first. |
 | `The LLD changed since the tasks were created` | Re-approve the new version, then `tasks create STORY` again. |
 
 ## Hooks and agents

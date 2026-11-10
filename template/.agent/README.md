@@ -4,7 +4,7 @@
 | --- | --- |
 | `sdlc.yml` | The one file you configure: Jira, Confluence, CI, gates, loops, agent models. Agents cannot edit it; CODEOWNERS review. |
 | `Sdlc.java` | Bootstrap: `java .agent/Sdlc.java <command>` compiles `src/` when it changed and runs it (JDK 17+). |
-| `src/sdlc/*.java` | The tool: hooks, git hooks, Jira/Confluence, gates, loops, CI digest, self test. |
+| `src/sdlc/**` | The tool, one folder per layer: `util` (parsers, HTTP), `core` (settings, state), `guard` (the rules), `workflow` (gates, documents, tasks, loops, CI digest), `integrations` (Jira, Confluence), `cli` (commands, hooks, git hooks), `selftest`. |
 | `bin/sdlc`, `bin/sdlc.cmd` | Fast launchers used by the IDE hooks and git hooks (run the compiled copy in `.build/`). |
 | `templates/` | Skeletons the agents fill: test design, LLD (with the `# sdlc-tasks` work breakdown), project profile. |
 | `local.env.example` | Template for your `local.env` (tokens). `local.env` is git-ignored and agents can never read it. |

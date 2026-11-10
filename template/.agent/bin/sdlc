@@ -2,7 +2,22 @@
 # Fast launcher for the IDE hooks and git hooks: runs the compiled copy in .agent/.build.
 # The first run (or a run after the sources changed) goes through the bootstrap, which compiles.
 dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-if [ -f "$dir/.build/sdlc/Main.class" ] && [ -f "$dir/.build/.stamp" ]; then
-  exec java -cp "$dir/.build" sdlc.Main "$@"
+run() {
+  if [ -f "$dir/.build/sdlc/Main.class" ] && [ -f "$dir/.build/.stamp" ]; then
+    java -cp "$dir/.build" sdlc.Main "$@"
+  else
+    java "$dir/Sdlc.java" "$@"
+  fi
+}
+if [ "$1" = hook ] && [ "$2" = pre-tool-use ]; then
+  # The guard never fails open. It answers 0 (allow, or ask in its output) or 2 (refuse); anything
+  # else means it broke (no Java, a crash, sources that do not compile), and the call is refused.
+  run "$@"
+  rc=$?
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
+    echo "Refused by project guardrail: the guard itself failed (exit $rc). Ask a human to run: java .agent/Sdlc.java selftest" >&2
+    exit 2
+  fi
+  exit "$rc"
 fi
-exec java "$dir/Sdlc.java" "$@"
+run "$@"

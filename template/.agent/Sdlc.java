@@ -74,12 +74,17 @@ public class Sdlc {
             return false;
         }
         Files.createDirectories(build);
+        List<Path> fresh = new ArrayList<>();
         try (Stream<Path> s = Files.walk(tmp)) {
             for (Path p : s.filter(Files::isRegularFile).toList()) {
                 Path dest = build.resolve(tmp.relativize(p).toString());
                 Files.createDirectories(dest.getParent());
                 Files.move(p, dest, StandardCopyOption.REPLACE_EXISTING);
+                fresh.add(dest);
             }
+        }
+        try (Stream<Path> s = Files.walk(build)) { // classes of sources that were deleted or moved must not stay loadable
+            for (Path old : s.filter(p -> p.toString().endsWith(".class") && !fresh.contains(p)).toList()) Files.deleteIfExists(old);
         }
         delete(tmp);
         Files.writeString(build.resolve(".stamp"), String.valueOf(System.currentTimeMillis()));

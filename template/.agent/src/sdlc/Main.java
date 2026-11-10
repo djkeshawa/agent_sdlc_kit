@@ -10,14 +10,39 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
+import sdlc.cli.Analyse;
+import sdlc.cli.GitHooks;
+import sdlc.cli.HookFormat;
+import sdlc.cli.Hooks;
+import sdlc.cli.Repos;
+import sdlc.cli.Setup;
+import sdlc.cli.Status;
+import sdlc.core.Console;
+import sdlc.core.Ctx;
+import sdlc.core.UsageException;
+import sdlc.core.Work;
+import sdlc.guard.Decision;
+import sdlc.integrations.Confluence;
+import sdlc.integrations.Jira;
+import sdlc.selftest.SelfTest;
+import sdlc.util.Http;
+import sdlc.util.Markdown;
+import sdlc.workflow.Approvals;
+import sdlc.workflow.Checks;
+import sdlc.workflow.Ci;
+import sdlc.workflow.Gates;
+import sdlc.workflow.IssueTracker;
+import sdlc.workflow.Loops;
+import sdlc.workflow.MindMap;
+import sdlc.workflow.Mistakes;
+import sdlc.workflow.Tasks;
+import sdlc.workflow.Trace;
+import sdlc.workflow.Verify;
+import sdlc.workflow.Wiki;
+import sdlc.workflow.Workflow;
+
 /** Entry point of the sdlc tool. Run it as: java .agent/Sdlc.java <command> */
 public final class Main {
-    static final class UsageException extends RuntimeException {
-        UsageException(String m) {
-            super(m);
-        }
-    }
-
     private static final String USAGE = """
             usage: java .agent/Sdlc.java <command>      (fast: sh .agent/bin/sdlc | .agent\\bin\\sdlc.cmd)
 
@@ -56,14 +81,16 @@ public final class Main {
         Integer fresh = rerunIfStale(args);
         if (fresh != null) System.exit(fresh);
         boolean hook = args[0].equals("hook") || args[0].equals("git-hook");
+        boolean guard = args[0].equals("hook") && args.length > 1 && args[1].equals("pre-tool-use");
+        if (guard) refuseWhenSlow(args);
         String stdin = hook && (args[0].equals("hook") || args.length > 1 && args[1].equals("pre-push")) ? readStdin() : "";
         int code;
         try {
-            Ctx.init(startDir(args, stdin));
+            Ctx.init(home());
             code = dispatch(args, stdin);
         } catch (UsageException e) {
-            if (args[0].equals("hook") && args.length > 1 && args[1].equals("pre-tool-use")) {
-                code = Hooks.emit(Decision.deny("the guard could not decide (" + e.getMessage() + ")."));
+            if (guard) {
+                code = Hooks.emit(Decision.deny("the guard could not decide (" + e.getMessage() + ")."), hookFormat(args));
             } else {
                 System.err.println(e.getMessage());
                 code = 3;
@@ -71,10 +98,10 @@ public final class Main {
         } catch (Http.ApiException e) {
             System.err.println("Remote call failed: " + e.getMessage());
             code = 4;
-        } catch (Exception e) {
-            if (args[0].equals("hook") && args.length > 1 && args[1].equals("pre-tool-use")) {
+        } catch (Throwable e) { // also StackOverflowError and OutOfMemoryError: a tool call built to crash the guard is refused
+            if (guard) {
                 // fail closed: a broken guard must not wave tool calls through
-                code = Hooks.emit(Decision.deny("the guard failed (" + e + "). Ask a human to run: java .agent/Sdlc.java selftest"));
+                code = Hooks.emit(Decision.deny("the guard failed (" + e + "). Ask a human to run: java .agent/Sdlc.java selftest"), hookFormat(args));
             } else if (hook) {
                 System.err.println("[sdlc] hook error (ignored): " + e);
                 code = args[0].equals("git-hook") ? 1 : 0;
@@ -86,13 +113,43 @@ public final class Main {
         System.exit(code);
     }
 
-    private static Path startDir(String[] args, String stdin) {
-        if (args[0].equals("hook") && !stdin.isBlank()) {
+    /** hook ... --for claude | codex | copilot: the host whose answer format is wanted. */
+    private static HookFormat hookFormat(String[] args) {
+        return HookFormat.of(Checks.options(args, 1).getOrDefault("for", "copilot"));
+    }
+
+    /** Seconds the guard may take for one tool call. The hosts give a hook 30 s and let the call through when it runs out. */
+    private static final int GUARD_SECONDS = 20;
+
+    /** A guard that hangs must not let the call through: after GUARD_SECONDS it refuses and stops. */
+    private static void refuseWhenSlow(String[] args) {
+        Thread t = new Thread(() -> {
             try {
-                if (Json.obj(Json.parse(stdin)).get("cwd") instanceof String s && !s.isBlank()) return Path.of(s);
-            } catch (RuntimeException ignored) {
-                // use the process directory
+                Thread.sleep(GUARD_SECONDS * 1000L);
+            } catch (InterruptedException e) {
+                return;
             }
+            Hooks.emit(Decision.deny("the guard could not decide within " + GUARD_SECONDS + " s. Run the command in smaller, plainer steps."), hookFormat(args));
+            Runtime.getRuntime().halt(2);
+        });
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /**
+     * The repository this copy of the tool belongs to: the folder that holds .agent. Never the
+     * folder a hook payload names. The agent chooses that folder (cd /tmp), and rules read from
+     * there would be the rules of another repository, or none.
+     */
+    private static Path home() {
+        try {
+            var source = Main.class.getProtectionDomain().getCodeSource();
+            if (source != null) {
+                Path agent = Path.of(source.getLocation().toURI()).getParent(); // <repo>/.agent/.build -> <repo>/.agent
+                if (agent != null && agent.getParent() != null && String.valueOf(agent.getFileName()).equals(".agent")) return agent.getParent();
+            }
+        } catch (Exception e) {
+            // not started from .agent/.build: use the process directory
         }
         return Path.of("").toAbsolutePath();
     }
@@ -109,11 +166,12 @@ public final class Main {
         String c0 = a[0];
         String c1 = a.length > 1 ? a[1] : "";
         Map<String, String> opt = Checks.options(a, 1);
+        Workflow w = new Workflow(new Jira(Ctx.cfg), new Confluence(Ctx.cfg), Console.TERMINAL); // the one place that says the tracker is Jira and the wiki is Confluence
         return switch (c0) {
-            case "hook" -> Hooks.run(c1, stdin, opt.getOrDefault("for", "copilot"));
+            case "hook" -> Hooks.run(c1, stdin, hookFormat(a), w.sync);
             case "git-hook" -> GitHooks.run(c1, Arrays.copyOfRange(a, 2, a.length), stdin);
-            case "setup" -> Setup.setup();
-            case "doctor" -> Setup.doctor();
+            case "setup" -> Setup.setup(Main::selfTest);
+            case "doctor" -> Setup.doctor(w.issues, w.wiki);
             case "selftest" -> SelfTest.run();
             case "config" -> c1.equals("apply") ? Setup.configApply() : Setup.configCheck();
             case "status" -> Status.run();
@@ -122,28 +180,28 @@ public final class Main {
             case "trace" -> Trace.run(pos(a, 1));
             case "check-pr" -> Checks.printPolicy(Checks.prPolicy(opt.get("title"), true));
             case "docs" -> switch (c1) {
-                case "find" -> Docs.printFind(need(a, 2, "KEY"));
-                case "pull" -> Docs.pull(need(a, 2, "KEY"));
-                case "publish" -> Docs.publish(need(a, 2, "KEY"), Approvals.fromCli(need(a, 3, "test-design|lld")), file(opt));
+                case "find" -> w.docs.printFind(need(a, 2, "KEY"));
+                case "pull" -> w.docs.pull(need(a, 2, "KEY"));
+                case "publish" -> w.docs.publish(need(a, 2, "KEY"), Approvals.fromCli(need(a, 3, "test-design|lld")), file(opt));
                 default -> usage();
             };
-            case "approval" -> Approvals.cli(c1, need(a, 2, "KEY"), Approvals.fromCli(need(a, 3, "test-design|lld")));
+            case "approval" -> w.approvals.cli(c1, need(a, 2, "KEY"), Approvals.fromCli(need(a, 3, "test-design|lld")));
             case "mindmap" -> MindMap.cli(file(opt), Path.of(opt.getOrDefault("out", file(opt).resolveSibling("mindmap.png").toString())));
             case "repos" -> Repos.sync();
-            case "tasks" -> c1.equals("create") ? Tasks.create(need(a, 2, "STORY")) : Tasks.list(pos(a, 2));
-            case "task" -> c1.equals("start") ? Tasks.start(need(a, 2, "TASK")) : Tasks.finish();
+            case "tasks" -> c1.equals("create") ? w.tasks.create(need(a, 2, "STORY")) : w.tasks.list(pos(a, 2));
+            case "task" -> c1.equals("start") ? w.tasks.start(need(a, 2, "TASK")) : w.tasks.finish();
             case "review" -> Loops.recordReview(need(a, 2, "TASK"), file(opt));
             case "qa" -> Loops.recordQa(a.length > 2 && !a[2].startsWith("--") ? a[2] : "", file(opt));
             case "ci" -> switch (c1) {
-                case "wait" -> Ci.waitFor(opt);
-                case "failures" -> Ci.failures(opt);
-                default -> Ci.status(opt);
+                case "wait" -> Ci.waitFor(w.issues, opt);
+                case "failures" -> Ci.failures(w.issues, opt);
+                default -> Ci.status(w.issues, opt);
             };
-            case "sync" -> Sync.run(pos(a, 1), false);
-            case "retro", "mistakes" -> Mistakes.retro(a.length > 1 && !a[1].startsWith("--") ? a[1] : Work.currentStory(), opt.containsKey("comment"));
-            case "jira" -> jira(c1, a, opt);
+            case "sync" -> w.sync.run(pos(a, 1), false);
+            case "retro", "mistakes" -> Mistakes.retro(w.issues, a.length > 1 && !a[1].startsWith("--") ? a[1] : Work.currentStory(), opt.containsKey("comment"));
+            case "jira" -> jira(w.issues, c1, a, opt);
             case "confluence" -> {
-                Confluence.Page p = Confluence.page(need(a, 2, "PAGE_ID"));
+                Wiki.Page p = w.wiki.page(need(a, 2, "PAGE_ID"));
                 System.out.println(opt.containsKey("storage") ? p.storage() // the raw storage format, to debug the Markdown conversion
                         : "# " + p.title() + "  (v" + p.version() + ", " + p.url() + ")\n\n" + Markdown.toMarkdown(p.storage()));
                 yield 0;
@@ -152,31 +210,31 @@ public final class Main {
         };
     }
 
-    private static int jira(String c1, String[] a, Map<String, String> opt) throws IOException {
+    private static int jira(IssueTracker issues, String c1, String[] a, Map<String, String> opt) throws IOException {
         switch (c1) {
-            case "get" -> System.out.println(Jira.text(need(a, 2, "KEY"), Integer.parseInt(opt.getOrDefault("comments", "10"))));
+            case "get" -> System.out.println(issues.text(need(a, 2, "KEY"), Integer.parseInt(opt.getOrDefault("comments", "10"))));
             case "search" -> {
-                for (Map<String, Object> i : Jira.search(need(a, 2, "JQL"), Integer.parseInt(opt.getOrDefault("max", "20")))) {
-                    System.out.printf("%-12s %-14s %-10s %s%n", Json.str(i, "key"), Json.str(i, "fields.status.name"), Json.str(i, "fields.issuetype.name"), Json.str(i, "fields.summary"));
+                for (IssueTracker.Issue i : issues.search(need(a, 2, "JQL"), Integer.parseInt(opt.getOrDefault("max", "20")))) {
+                    System.out.printf("%-12s %-14s %-10s %s%n", i.key(), i.status(), i.type(), i.summary());
                 }
             }
             case "comment" -> {
-                String body = opt.containsKey("file") ? Files.readString(FileRules.safeInput(opt.get("file"))) : opt.getOrDefault("text", "");
+                String body = opt.containsKey("file") ? Files.readString(Gates.guard(null).files.safeInput(opt.get("file"))) : opt.getOrDefault("text", "");
                 if (body.isBlank()) throw new UsageException("give --file <path> or --text \"...\"");
-                Jira.comment(need(a, 2, "KEY"), body, true);
+                issues.comment(need(a, 2, "KEY"), body, true);
                 System.out.println("Comment added to " + a[2]);
             }
             case "transitions" -> {
-                for (Map<String, Object> t : Jira.transitions(need(a, 2, "KEY"))) System.out.println(t.get("id") + "  " + t.get("name") + "  ->  " + Json.str(t, "to.name"));
+                for (IssueTracker.Transition t : issues.transitions(need(a, 2, "KEY"))) System.out.println(t.id() + "  " + t.name() + "  ->  " + t.to());
             }
             case "transition" -> {
-                if (!Jira.transition(need(a, 2, "KEY"), need(a, 3, "STATUS"), true)) throw new UsageException("no transition to '" + a[3] + "' from the current status (see: jira transitions " + a[2] + ")");
+                if (!issues.transition(need(a, 2, "KEY"), need(a, 3, "STATUS"), true)) throw new UsageException("no transition to '" + a[3] + "' from the current status (see: jira transitions " + a[2] + ")");
                 System.out.println(a[2] + " moved to " + a[3]);
             }
             case "link" -> {
                 String url = need(a, 3, "URL");
                 if (!url.startsWith("http")) throw new UsageException("URL must start with http(s)://");
-                Jira.link(need(a, 2, "KEY"), url, opt.getOrDefault("title", "Link"));
+                issues.link(need(a, 2, "KEY"), url, opt.getOrDefault("title", "Link"));
                 System.out.println("Linked " + url);
             }
             default -> {
@@ -184,6 +242,14 @@ public final class Main {
             }
         }
         return 0;
+    }
+
+    private static int selfTest() {
+        try {
+            return SelfTest.run();
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
     }
 
     private static int usage() {
@@ -203,7 +269,7 @@ public final class Main {
     private static Path file(Map<String, String> opt) {
         String f = opt.get("file");
         if (f == null || f.equals("true")) throw new UsageException("missing --file <path>");
-        return FileRules.safeInput(f);
+        return Gates.guard(null).files.safeInput(f);
     }
 
     /**

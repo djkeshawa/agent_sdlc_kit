@@ -39,12 +39,13 @@ agentic-sdlc-java-kit/
 │   ├── pom-quality-plugins.xml    <- JaCoCo, Spotless, SpotBugs, enforcer, failsafe for your pom.xml
 │   ├── ArchitectureRulesTest.java <- ArchUnit rules (layers, no field injection, ...)
 │   └── node-quality.md            <- Node/TypeScript: scripts, Vitest JUnit + lcov, ESLint, Sonar, Jenkins
+├── tests/e2e/                     <- the kit's own end-to-end test: python3 tests/e2e/run.py
 └── template/                      <- copy its contents into your repository
     ├── AGENTS.md
     ├── .agent/
     │   ├── sdlc.yml               <- the ONE file you configure
     │   ├── Sdlc.java              <- java .agent/Sdlc.java <command>  (JDK 17+, no build step)
-    │   ├── src/sdlc/              <- the tool: hooks, gates, Jira/Confluence, CI digest, self test
+    │   ├── src/sdlc/              <- the tool, in layers: util, core, guard, workflow, integrations, cli, selftest
     │   ├── bin/sdlc, sdlc.cmd     <- fast launchers for hooks
     │   ├── templates/             <- test design, LLD, project profile skeletons
     │   └── local.env.example      <- your tokens go in local.env (git-ignored, agents can't read it)
@@ -91,7 +92,7 @@ Then in Copilot Chat, Claude Code or Codex: `/analyse` once, and per story `/tes
 
 ## What was tested
 
-- **Self test:** `java .agent/Sdlc.java selftest` - 236 checks of the shell, file, MCP, git,
+- **Self test:** `java .agent/Sdlc.java selftest` - 408 checks of the shell, file, MCP, git,
   secret, scope, gate and parsing rules.
 - **Full flow against mocks:** a scratch Maven repository with a mock Jira Cloud, Confluence
   Cloud, Jenkins and SonarQube and a fake `gh`: setup, doctor, ~30 hook decisions, docs
@@ -99,7 +100,8 @@ Then in Copilot Chat, Claude Code or Codex: `/analyse` once, and per story `/tes
   non-approver, bot, valid), LLD publish, sub-tasks, task scope, test-first verify, Stop hook,
   commit hooks (message, secret, disabled test), review loop, PR gate, push guard, CI digest
   (Jenkins test report and log, Sonar gate and issues), retro, merge sync, LLD changed after
-  approval.
+  approval. This test is in the repository: `python3 tests/e2e/run.py` (120 checks, about a
+  minute, needs only a JDK, git and Python 3; see [tests/e2e](tests/e2e/README.md)).
 - **Full flow against real services** (November 2026): Jira Cloud through the API gateway
   with a scoped bot token, Confluence Cloud on a second site, a private GitHub repository, a
   Jenkins LTS in Docker and SonarQube Cloud. Two human approvals posted in Jira, two Jira

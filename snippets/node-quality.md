@@ -8,7 +8,8 @@ newer minor versions are fine. These files were tested together on a TypeScript 
 ## 1. `package.json` scripts
 
 `sdlc verify` runs `npm run lint --if-present && npm test && npm run build --if-present`
-(`build.verify` in `sdlc.yml` changes it, e.g. for pnpm or yarn).
+(with a `pnpm-lock.yaml` or `yarn.lock` the same steps run with pnpm or yarn; `build.verify` in
+`sdlc.yml` changes it).
 
 ```json
 {

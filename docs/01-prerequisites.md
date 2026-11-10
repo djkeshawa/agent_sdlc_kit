@@ -74,8 +74,8 @@ Not sure which Jira you have? `*.atlassian.net` is **Cloud**; anything else is *
 
 Node.js (the version your project uses; an LTS) with npm, pnpm or yarn on the PATH. The kit's
 tool itself still needs the JDK from step 1; nothing else of Java is needed. The verify command
-is `npm run lint --if-present && npm test && npm run build --if-present`; set `build.verify` for
-pnpm or yarn ([docs/03](03-configuration.md#build-and-tests)).
+is `npm run lint --if-present && npm test && npm run build --if-present`; with a `pnpm-lock.yaml`
+or `yarn.lock` the same steps run with pnpm or yarn ([docs/03](03-configuration.md#build-and-tests)).
 
 ### 7. The build wrapper in your project (Java)
 
