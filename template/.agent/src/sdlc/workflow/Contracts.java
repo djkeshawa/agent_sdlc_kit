@@ -252,4 +252,82 @@ public final class Contracts {
         }
         return true;
     }
+
+    // ---------------- PR policy ----------------
+
+    public record Policy(List<String> passes, List<String> fails, List<String> warns) {}
+
+    /**
+     * For check-pr and the PR gate: every changed contract file of this repository, compared with
+     * the base branch. With lanes.enabled, each added or removed operation must be allowed by the
+     * story's docs/agent/contracts/<STORY>.json (written by tasks create from its lane and slice),
+     * and a breaking change needs compatibility: breaking in the solution. Without lanes, breaking
+     * changes are warnings.
+     */
+    public static Policy prPolicy(String story, String base, List<String> changed) {
+        List<String> passes = new ArrayList<>(), fails = new ArrayList<>(), warns = new ArrayList<>();
+        Catalog c = Catalog.load();
+        Catalog.Component self = c.self();
+        if (self == null) return new Policy(passes, fails, warns);
+        Map<String, String> fileToApi = new LinkedHashMap<>();
+        for (String api : self.providesApis()) {
+            Catalog.Api a = c.apis.get(api);
+            if (a != null && !a.definition().isBlank()) fileToApi.put(a.definition(), api);
+        }
+        List<String> touched = changed.stream().filter(fileToApi::containsKey).toList();
+        List<String> deleted = sdlc.core.Git.lines(sdlc.util.Proc.run(sdlc.core.Ctx.root, "git", "diff", "--name-only", "--diff-filter=D", base + "...HEAD").out());
+        List<String> all = new ArrayList<>(touched);
+        for (String d : deleted) if (fileToApi.containsKey(d) && !all.contains(d)) all.add(d);
+        if (all.isEmpty()) return new Policy(passes, fails, warns);
+        boolean lanes = Lanes.enabled();
+        Map<String, Object> allowance = story.isBlank() ? Map.of() : sdlc.core.Store.read(Lanes.allowanceFile(story));
+        for (String file : all) {
+            String api = fileToApi.get(file);
+            List<Change> changes;
+            try {
+                changes = diff(parse(show(base, file)), parse(show("HEAD", file)));
+            } catch (RuntimeException e) {
+                fails.add("Contract " + file + " could not be read: " + e.getMessage());
+                continue;
+            }
+            if (changes.isEmpty()) {
+                passes.add("Contract " + file + " changed without an operation or breaking change");
+                continue;
+            }
+            List<String> problems = new ArrayList<>();
+            if (!lanes) {
+                for (Change ch : changes) if (ch.breaking()) warns.add("contract " + api + ": breaking change " + ch.operation() + " (" + ch.detail() + ")");
+                passes.add("Contract " + file + ": " + changes.size() + " change(s) (lanes off: not checked against a lane)");
+                continue;
+            }
+            if (allowance.isEmpty()) {
+                fails.add("Contract " + file + " changed, but " + (story.isBlank() ? "no story is known" : story + " has no " + Lanes.allowanceFile(story).getFileName()
+                        + " (java .agent/Sdlc.java tasks create " + story + " writes it; commit it)"));
+                continue;
+            }
+            String lane = Json.str(allowance, "lane");
+            Map<String, Object> entry = Json.map(Json.map(allowance.get("apis")).get(api));
+            if (entry.isEmpty()) {
+                fails.add("Contract " + api + " (" + file + ") changed, but the " + lane + " lane of " + story + " allows no change to it" + (lane.equals("patch") ? " (raise the LLD's lane, get it approved, tasks create again)" : ""));
+                continue;
+            }
+            Set<String> add = new LinkedHashSet<>(Work.strings(entry.get("add")));
+            Set<String> remove = new LinkedHashSet<>(Work.strings(entry.get("remove")));
+            boolean breaking = "true".equals(Work.str(entry.get("breaking")));
+            for (Change ch : changes) {
+                String op = normalize(ch.operation());
+                if (ch.kind().equals("added") && !add.contains("*") && !add.contains(op)) problems.add(ch.operation() + " added, but the solution slice does not list it");
+                else if (ch.kind().equals("removed") && !remove.contains(op)) problems.add(ch.operation() + " removed, but the solution slice does not list the removal (breaking)");
+                else if (ch.kind().equals("breaking") && !breaking) problems.add(ch.operation() + ": " + ch.detail() + " is a breaking change; the " + lane + " lane allows additive changes only");
+            }
+            if (problems.isEmpty()) passes.add("Contract " + api + ": " + changes.size() + " change(s), all allowed by the " + lane + " lane of " + story);
+            else fails.add("Contract " + api + " (" + file + "): " + String.join("; ", problems) + ". Change the code, or ask the architect for a solution change.");
+        }
+        return new Policy(passes, fails, warns);
+    }
+
+    private static String show(String ref, String file) {
+        sdlc.util.Proc r = sdlc.util.Proc.run(sdlc.core.Ctx.root, "git", "show", ref + ":" + file);
+        return r.code() == 0 ? r.out() : "";
+    }
 }

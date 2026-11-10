@@ -24,6 +24,8 @@ environment; list it under "Out of scope" with a pointer if the one pager states
 
 - Requirements: R-01
 - Level: integration          <!-- unit | integration | e2e | contract | manual | performance -->
+- Components: payments-service <!-- cross-component features: the component(s) whose team owns it -->
+- Hold-out: no                <!-- yes = QE keeps this test in its own repository, hidden from the implementer -->
 - Priority: P1                <!-- P1 must pass for release, P2 should, P3 nice to have -->
 - Type: functional            <!-- functional | negative | boundary | security | regression | data -->
 - Given an order paid 3 days ago

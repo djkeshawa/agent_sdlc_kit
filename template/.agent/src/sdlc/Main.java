@@ -39,6 +39,7 @@ import sdlc.workflow.Loops;
 import sdlc.workflow.MindMap;
 import sdlc.workflow.Mistakes;
 import sdlc.workflow.Tasks;
+import sdlc.workflow.TestLocks;
 import sdlc.workflow.Trace;
 import sdlc.workflow.Verify;
 import sdlc.workflow.Wiki;
@@ -78,6 +79,8 @@ public final class Main {
             stories create <EPIC>                one Jira story per component of the approved solution design
             feature status <EPIC>                solution approval, stories, LLDs and slices of a cross-component feature
             classify <KEY>                       lowest delivery lane the facts allow (lanes.enabled)
+            tests lock <STORY> [--paths g1,g2]   QE: lock acceptance tests (drafts/acceptance and/or paths) | tests status [<STORY>]
+            holdout status [<STORY>] [--build N] results of QE's hold-out scenarios (ids, titles, pass/fail only)
 
             eval collect <EPIC>...               scoping eval: case input + ground truth from commits per Jira key (gh)
             eval score [--runs r1,r2]            score agent answers in .sdlc/eval/inbox/<run>/ against the truth
@@ -222,6 +225,8 @@ public final class Main {
             case "stories" -> c1.equals("create") ? w.stories.create(need(a, 2, "EPIC")) : usage();
             case "feature" -> c1.equals("status") ? w.feature.status(need(a, 2, "EPIC")) : usage();
             case "classify" -> Lanes.classify(w, need(a, 1, "KEY"));
+            case "tests" -> c1.equals("lock") ? TestLocks.lock(need(a, 2, "STORY"), opt.getOrDefault("paths", "")) : TestLocks.status(pos(a, 2));
+            case "holdout" -> w.holdout.status(pos(a, 2), opt.getOrDefault("build", ""));
             case "eval" -> switch (c1) {
                 case "collect" -> w.eval.collect(positional(a, 2));
                 case "score" -> w.eval.score(opt.containsKey("runs") ? List.of(opt.get("runs").split(",")) : List.of());

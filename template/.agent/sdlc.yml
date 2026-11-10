@@ -85,6 +85,10 @@ catalog:
   repos: []                       # more repositories (owner/name) to sync besides github.relatedRepos
 lanes:
   enabled: false                  # true = tasks create and the PR gate check the LLD's lane (patch | component | cross-component)
+tests:
+  lockAcceptance: false           # true = task start waits until QE locked the story's acceptance tests (tests lock)
+holdout:
+  jenkinsJob: ""                  # QE's job running the hold-out scenarios against PR builds, e.g. https://jenkins.yourcompany.com/job/qe-holdout
 
 # ---------------------------------------------------------------------------------------
 # CI - your EXISTING Jenkins and SonarQube are only read, never changed
@@ -152,6 +156,7 @@ agents:
 # ---------------------------------------------------------------------------------------
 # build:
 #   verify: ./mvnw -B -ntp verify -Pit
+#   mutation: ./mvnw -B -ntp -q org.pitest:pitest-maven:scmMutationCoverage -DoriginBranch=origin/develop
 #   preCommit: ./mvnw -B -ntp -q spotless:check
 # paths:
 #   protected+: [docs/legal/**]

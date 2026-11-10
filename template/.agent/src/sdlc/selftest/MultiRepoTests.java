@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Set;
 
 import sdlc.core.Config;
+import sdlc.core.Locks;
 import sdlc.core.Ctx;
 import sdlc.core.Store;
 import sdlc.core.Work;
@@ -26,6 +27,8 @@ import sdlc.workflow.Contracts;
 import sdlc.workflow.Eval;
 import sdlc.workflow.Lanes;
 import sdlc.workflow.Solution;
+import sdlc.workflow.TestLocks;
+import sdlc.workflow.Verify;
 import sdlc.workflow.Workflow;
 
 /** Self test: the multi-component additions (scoping eval, catalog, solution design, contracts, locks). */
@@ -42,6 +45,8 @@ final class MultiRepoTests {
             scan(tmp);
             solution();
             epicFlow(tmp);
+            locks(tmp);
+            contractPolicy(tmp);
         } finally {
             Ctx.cfg = saved;
             for (String f : List.of("catalog-info.yaml", "api/openapi.yaml", "api/events.yaml")) Files.deleteIfExists(tmp.resolve(f));
@@ -190,12 +195,13 @@ final class MultiRepoTests {
         check("contracts: $ref body, required field and header", post.requiredRequest().containsAll(Set.of("body:amount", "header:Idempotency-Key")) && post.requestEnums().get("body:reason").contains("OTHER"));
         check("contracts: AsyncAPI messages", Contracts.parse(ASYNCAPI).operations().containsKey("message RefundRequested on refund-events"));
         String v2 = OPENAPI.replace("required: [amount]", "required: [amount, reason]").replace("enum: [DAMAGED, OTHER]", "enum: [DAMAGED]")
-                .replace("\"409\": {description: closed}", "\"422\": {description: closed}").replace("amount: {type: string}\n            components", "amount: {type: number}\n            components")
+                .replace("\"409\": {description: closed}", "\"422\": {description: closed}").replace("        amount: {type: string}\n        reason", "        amount: {type: number}\n        reason")
                 .replace("  /refunds/{id}:\n    get:", "  /refunds/{id}:\n    delete:") + "";
         List<Contracts.Change> d = Contracts.diff(v1, Contracts.parse(v2));
         check("contracts: new required field is breaking", d.stream().anyMatch(x -> x.breaking() && x.detail().contains("new required body:reason")));
         check("contracts: removed enum value is breaking", d.stream().anyMatch(x -> x.breaking() && x.detail().contains("enum value OTHER removed")));
         check("contracts: removed response code is breaking", d.stream().anyMatch(x -> x.breaking() && x.detail().contains("response 409 removed")));
+        check("contracts: a changed property type is breaking", d.stream().anyMatch(x -> x.breaking() && x.detail().contains("body:amount type string -> number")));
         check("contracts: removed and added operations", d.stream().anyMatch(x -> x.kind().equals("removed") && x.operation().equals("GET /refunds/{id}"))
                 && d.stream().anyMatch(x -> x.kind().equals("added") && x.operation().equals("DELETE /refunds/{id}")));
         check("contracts: an unchanged spec has no changes", Contracts.diff(v1, Contracts.parse(OPENAPI)).isEmpty());
@@ -354,6 +360,103 @@ final class MultiRepoTests {
         check("lanes: classify names the floor and why", Lanes.classify(w, "PROJ-60") == 0 && String.join("\n", said.out).contains("Lowest lane for PROJ-60: component"));
     }
 
+    private static void locks(Path tmp) throws IOException {
+        java.io.PrintStream out = System.out, err = System.err;
+        java.io.PrintStream sink = new java.io.PrintStream(java.io.OutputStream.nullOutputStream());
+        System.setOut(sink);
+        System.setErr(sink);
+        try {
+            lockChecks(tmp);
+        } finally {
+            System.setOut(out);
+            System.setErr(err);
+        }
+    }
+
+    private static void lockChecks(Path tmp) throws IOException {
+        String test = "src/test/java/com/acme/refund/RefundAcceptanceTest.java";
+        Path draft = tmp.resolve(".sdlc/PROJ-70/drafts/acceptance/" + test);
+        Store.writeText(draft, "class RefundAcceptanceTest { /* TS-01 */ }\n");
+        Store.writeText(tmp.resolve(".sdlc/PROJ-70/drafts/acceptance/src/main/java/Sneaky.java"), "class Sneaky {}\n");
+        check("locks: only test code can be locked", Asserts.throwsUsage(() -> {
+            try {
+                TestLocks.lock("PROJ-70", "");
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        }));
+        Files.delete(tmp.resolve(".sdlc/PROJ-70/drafts/acceptance/src/main/java/Sneaky.java"));
+        check("locks: QE locks the drafted acceptance test", TestLocks.lock("PROJ-70", "") == 0 && Files.exists(tmp.resolve(test))
+                && Locks.isLocked(tmp, test) && Locks.broken(tmp).isEmpty());
+        check("locks: a CRLF checkout hashes the same", Locks.hash("a\r\nb\n".getBytes()).equals(Locks.hash("a\nb\n".getBytes())));
+        expect("locks: agent edit tool refused on a locked test", tool("replace_string_in_file", "{\"filePath\":\"" + json(tmp) + "/" + test + "\"}"), Decision.Kind.DENY);
+        expect("locks: shell write refused on a locked test", shell("echo '' > " + test), Decision.Kind.DENY);
+        expect("locks: sed -i refused on a locked test", shell("sed -i s/TS/XX/ " + test), Decision.Kind.DENY);
+        expect("locks: rm refused on a locked test", shell("rm " + test), Decision.Kind.DENY);
+        expect("locks: agents cannot lock", shell("java .agent/Sdlc.java tests lock PROJ-70 --paths " + test), Decision.Kind.DENY);
+        expect("locks: agents may read the lock status", shell("java .agent/Sdlc.java tests status PROJ-70"), Decision.Kind.ALLOW);
+        expect("locks: the lock file is protected", tool("create_file", "{\"filePath\":\"" + json(tmp) + "/docs/test-locks/PROJ-70.json\"}"), Decision.Kind.DENY);
+        Store.writeText(tmp.resolve(test), "class RefundAcceptanceTest { /* weakened */ }\n");
+        check("locks: a changed locked test is broken", Locks.broken(tmp).stream().anyMatch(b -> b.startsWith(test + " (PROJ-70): changed")));
+        Config before = Ctx.cfg;
+        Ctx.cfg = Config.parse(CONFIG + "build:\n  verify: \"true\"\ntests:\n  lockAcceptance: true\n");
+        try {
+            check("locks: verify refuses while a locked test is changed", Verify.run() == 1);
+            Store.writeText(tmp.resolve(test), "class RefundAcceptanceTest { /* TS-01 */ }\n");
+            check("locks: restored, nothing broken", Locks.broken(tmp).isEmpty());
+        } finally {
+            Ctx.cfg = before;
+        }
+        Files.delete(tmp.resolve(test));
+        Files.delete(tmp.resolve("docs/test-locks/PROJ-70.json"));
+    }
+
+    private static void contractPolicy(Path tmp) throws IOException {
+        String[] git = {"git", "-c", "user.name=t", "-c", "user.email=t@x", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"};
+        Proc.run(tmp, "git", "switch", "-q", "-c", "feature/PROJ-80-contract");
+        Store.writeText(tmp.resolve("api/openapi.yaml"), OPENAPI);
+        Proc.run(tmp, "git", "add", "api/openapi.yaml");
+        Proc.run(tmp, concat(git, "commit", "-q", "-m", "test(PROJ-80): v1"));
+        String base = Proc.run(tmp, "git", "rev-parse", "HEAD").out().strip();
+        Store.writeText(tmp.resolve("api/openapi.yaml"), OPENAPI.replace("\ncomponents:", "\n  /refunds:\n    get:\n      responses:\n        \"200\": {description: ok}\ncomponents:"));
+        Proc.run(tmp, "git", "add", "api/openapi.yaml");
+        Proc.run(tmp, concat(git, "commit", "-q", "-m", "feat(PROJ-80): list refunds"));
+        List<String> changed = List.of("api/openapi.yaml");
+        Path allow = Lanes.allowanceFile("PROJ-80");
+        check("contracts: a change with no recorded lane fails", Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("has no PROJ-80.json")));
+        Store.write(allow, Store.map("story", "PROJ-80", "lane", "patch", "apis", Map.of()));
+        check("contracts: a patch lane allows no contract change", Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("patch lane of PROJ-80 allows no change")));
+        Store.write(allow, Store.map("story", "PROJ-80", "lane", "component", "apis", Map.of("payments-api", Store.map("add", List.of("*"), "remove", List.of(), "breaking", false))));
+        check("contracts: a component lane allows an added operation", Contracts.prPolicy("PROJ-80", base, changed).fails().isEmpty());
+        Store.write(allow, Store.map("story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("POST /orders/{}/refunds"), "remove", List.of(), "breaking", false))));
+        check("contracts: an operation the slice does not list fails", Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("GET /refunds added, but the solution slice does not list it")));
+        Store.write(allow, Store.map("story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds"), "remove", List.of(), "breaking", false))));
+        check("contracts: an operation the slice lists passes", Contracts.prPolicy("PROJ-80", base, changed).fails().isEmpty());
+        Store.writeText(tmp.resolve("api/openapi.yaml"), OPENAPI.replace("required: [amount]", "required: [amount, reason]"));
+        Proc.run(tmp, "git", "add", "api/openapi.yaml");
+        Proc.run(tmp, concat(git, "commit", "-q", "-m", "feat(PROJ-80): reason required"));
+        Store.write(allow, Store.map("story", "PROJ-80", "lane", "component", "apis", Map.of("payments-api", Store.map("add", List.of("*"), "remove", List.of(), "breaking", false))));
+        check("contracts: a breaking change fails outside a planned breaking change", Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("new required body:reason is a breaking change")));
+        Store.write(allow, Store.map("story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of(), "remove", List.of(), "breaking", true))));
+        check("contracts: a planned breaking change passes", Contracts.prPolicy("PROJ-80", base, changed).fails().isEmpty());
+        Config before = Ctx.cfg;
+        Ctx.cfg = Config.parse(CONFIG.replace("enabled: true", "enabled: false"));
+        try {
+            Contracts.Policy off = Contracts.prPolicy("PROJ-80", base, changed);
+            check("contracts: without lanes a breaking change is a warning", off.fails().isEmpty() && off.warns().stream().anyMatch(x -> x.contains("breaking change")));
+        } finally {
+            Ctx.cfg = before;
+        }
+        Files.deleteIfExists(allow);
+        Proc.run(tmp, "git", "switch", "-q", "feature/PROJ-7-refunds");
+    }
+
+    private static String[] concat(String[] a, String... b) {
+        String[] out = java.util.Arrays.copyOf(a, a.length + b.length);
+        System.arraycopy(b, 0, out, a.length, b.length);
+        return out;
+    }
+
     private static String lldText(String lane, String slice) {
         return "# LLD\n\n```yaml\n# sdlc-tasks\nlane: " + lane + "\n" + (slice.isEmpty() ? "" : "solutionSlice: " + slice + "\n") + "tasks:\n  - id: T1\n    title: Refund API\n"
                 + "    scope: [src/main/java/com/acme/refund/**]\n    acceptance:\n      - Given a paid order, then 201\n```\n";
@@ -373,11 +476,11 @@ final class MultiRepoTests {
         Eval.CaseScore none = Eval.score("E-3", Set.of("a"), List.of(Set.of()));
         check("eval: an empty answer scores zero", none.recall() == 0 && none.precision() == 0);
 
-        Store.writeText(tmp.resolve("docs/agent/eval/scoping/truth/E-9.yml"), "components: [a]\n");
-        expect("eval: agents cannot read the ground truth", tool("read_file", "{\"filePath\":\"" + json(tmp) + "/docs/agent/eval/scoping/truth/E-9.yml\"}"), Decision.Kind.DENY);
-        expect("eval: nor cat it", shell("cat docs/agent/eval/scoping/truth/E-9.yml"), Decision.Kind.DENY);
-        expect("eval: nor by glob", shell("cat docs/agent/eval/scoping/truth/*"), Decision.Kind.DENY);
-        expect("eval: nor edit it", tool("create_file", "{\"filePath\":\"" + json(tmp) + "/docs/agent/eval/scoping/truth/E-9.yml\"}"), Decision.Kind.DENY);
+        Store.writeText(tmp.resolve(".sdlc/hidden/eval/truth/E-9.yml"), "components: [a]\n");
+        expect("eval: agents cannot read the ground truth", tool("read_file", "{\"filePath\":\"" + json(tmp) + "/.sdlc/hidden/eval/truth/E-9.yml\"}"), Decision.Kind.DENY);
+        expect("eval: nor cat it", shell("cat .sdlc/hidden/eval/truth/E-9.yml"), Decision.Kind.DENY);
+        expect("eval: nor by glob", shell("cat .sdlc/hidden/eval/truth/*"), Decision.Kind.DENY);
+        expect("eval: nor edit it", tool("create_file", "{\"filePath\":\"" + json(tmp) + "/.sdlc/hidden/eval/truth/E-9.yml\"}"), Decision.Kind.DENY);
         expect("eval: case inputs stay readable", tool("read_file", "{\"filePath\":\"" + json(tmp) + "/docs/agent/eval/scoping/cases/E-9.md\"}"), Decision.Kind.ALLOW);
         expect("eval: hold-out folder is hidden", shell("cat .sdlc/hidden/holdout/T.java"), Decision.Kind.DENY);
         expect("eval: agents cannot score (the report shows the truth)", shell("java .agent/Sdlc.java eval score"), Decision.Kind.DENY);

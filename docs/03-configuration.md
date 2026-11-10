@@ -63,7 +63,7 @@ human changes. Secrets never go here: they go in `.agent/local.env` ([docs/02 st
 | `github.host` | `github.com` | or your Enterprise host (changes the generated MCP config) |
 | `github.relatedRepos` | `[]` | other teams' repos the designer may read: `{name, repo, team, purpose}`; `sdlc repos sync` makes local read-only copies |
 | `github.org` | `""` | your GitHub organisation; limits the commit search of `eval collect` (and `catalog cochange`) to it |
-| `eval.dir` | `docs/agent/eval` | the scoping eval's cases (`scoping/cases/`) and hidden ground truth (`scoping/truth/`), [docs/08](08-multi-component.md#phase-0-the-scoping-eval) |
+| `eval.dir` | `docs/agent/eval` | the scoping eval's cases (`scoping/cases/`); the ground truth lives in `.sdlc/hidden/eval/truth/`, [docs/08](08-multi-component.md#phase-0-the-scoping-eval) |
 
 ## CI (read only)
 
@@ -94,6 +94,9 @@ human changes. Secrets never go here: they go in `.agent/local.env` ([docs/02 st
 | --- | --- | --- |
 | `catalog.file` | `catalog-info.yaml` | this repository in the component catalog (Backstage format); protected, CODEOWNERS |
 | `catalog.repos` | `[]` | more repositories (`owner/name`) for `catalog sync`, besides `github.relatedRepos` |
+| `tests.lockAcceptance` | `false` | `true`: `task start` refuses until QE has locked the story's acceptance tests (`tests lock`) |
+| `holdout.jenkinsJob` | `""` | QE's Jenkins job that runs the hold-out scenarios against the PR build (on `ci.jenkins.url`); read by `holdout status` |
+| `build.mutation` | `""` | optional mutation test command run by `verify` after the build (e.g. PIT on changed code); non-zero fails verify |
 | `lanes.enabled` | `false` | `true`: `tasks create` checks the LLD's `lane:` and `solutionSlice:`, the PR policy refuses contract file changes in a patch-lane story |
 
 ## Coding agents, models and MCP
@@ -121,7 +124,7 @@ human changes. Secrets never go here: they go in `.agent/local.env` ([docs/02 st
 | `paths.protected` | `.agent/**`, `.githooks/**`, `.github/{hooks,agents,prompts,skills,instructions,workflows}/**`, `.github/copilot-instructions.md`, `.github/CODEOWNERS`, `AGENTS.md`, `CLAUDE.md`, `.claude/**`, `.codex/**`, `.agents/**`, `.mcp.json`, `Jenkinsfile`, `.vscode/**`, `sonar-project.properties`, `.gitattributes`, `.sdlc/**` | agents never edit these (tool or shell); CODEOWNERS reviews human changes |
 | `paths.agentWritable` | `.sdlc/*/drafts/**`, `.sdlc/*/inbox/**` | the exceptions inside `.sdlc/` |
 | `paths.secret` | `.agent/local.env`, `**/*.env`, `**/.env.*`, `**/.netrc`, `**/.m2/settings.xml`, keystores, ssh and private keys (`**/*.key`, `**/*key.pem`), the token files of `gh`, cloud CLIs, Docker and Kubernetes (`**/.config/gh/**`, `**/.aws/**`, `**/.kube/config`, ...), `/proc/*/environ`, `**/secrets/**`, ... | agents never read or write these; commits of them are blocked |
-| `paths.hidden` | `docs/agent/eval/**/truth/**`, `.sdlc/hidden/**` | treated like secrets: agents never read or write them (eval ground truth, hold-out test code) |
+| `paths.hidden` | `.sdlc/hidden/**` | agents never read or write these (eval ground truth and report, any local copy of hold-out tests); unlike `paths.secret`, a commit of them is not blocked, but keep them out of git: git commands would show them |
 | `paths.code` | Java: `src/**`, `**/src/**` | code: edits need a started task and must be in its scope |
 | `paths.main` / `paths.test` | Java: `**/src/main/**` / `**/src/test/**`, `**/src/it/**`, `**/src/integrationTest/**` | main vs test code (tests-with-changes, disabled-test checks) |
 | `paths.ask` | Java: `pom.xml`, `.mvn/**`, `mvnw*`, DB migrations, checkstyle/spotbugs configs, `lombok.config` | edits need a human click (build, dependencies, schema) |

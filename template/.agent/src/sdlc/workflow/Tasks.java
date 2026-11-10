@@ -136,8 +136,10 @@ public final class Tasks {
                 return 1;
             }
             String declared = Work.str(block.getOrDefault("lane", "patch")).strip();
-            String floor = Lanes.floor(w, story, scopes).lane();
-            lane = Lanes.rank(declared) >= Lanes.rank(floor) ? declared : floor;
+            Lanes.Floor floor = Lanes.floor(w, story, scopes);
+            lane = Lanes.rank(declared) >= Lanes.rank(floor.lane()) ? declared : floor.lane();
+            Store.write(Lanes.allowanceFile(story), Lanes.allowance(story, lane, floor));
+            w.console.out("Contract changes this story may make: " + Ctx.rel(Lanes.allowanceFile(story)) + " (commit it with the story; check-pr reads it in CI)");
         }
         Map<String, Object> state = Work.state(story);
         if (!lane.isEmpty()) state.put("lane", lane);
@@ -227,6 +229,11 @@ public final class Tasks {
                     return 1;
                 }
             }
+        }
+        if (Ctx.cfg.bool("tests.lockAcceptance", false) && !sdlc.core.Locks.hasStory(Ctx.root, story)) {
+            w.console.err("QE has not locked " + story + "'s acceptance tests yet (tests.lockAcceptance): qa-verifier drafts them in .sdlc/" + story
+                    + "/drafts/acceptance/, a QE person reviews and runs: java .agent/Sdlc.java tests lock " + story);
+            return 1;
         }
         if (!"approved".equals(t.get("status"))) t.put("status", "started");
         state.put("branch", branch);

@@ -19,6 +19,7 @@ public final class Workflow {
     public final Eval eval;
     public final Stories stories;
     public final Feature feature;
+    public final Holdout holdout;
 
     public Workflow(IssueTracker issues, Wiki wiki, Console console) {
         this.issues = issues;
@@ -31,5 +32,6 @@ public final class Workflow {
         this.eval = new Eval(this);
         this.stories = new Stories(this);
         this.feature = new Feature(this);
+        this.holdout = new Holdout(this);
     }
 }

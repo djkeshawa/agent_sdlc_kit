@@ -254,6 +254,12 @@ class H(BaseHTTPRequestHandler):
             return self.send({"mode": "NORMAL"})
         if path == "/api/authentication/validate":
             return self.send({"valid": True})
+        if re.match(r"^/job/qe-holdout/(lastCompletedBuild|\d+)/testReport/api/json$", path):
+            S["auth_seen"].append(["holdout", path, self.headers.get("Authorization", "")[:12]])
+            return self.send({"suites": [{"cases": [
+                {"className": "qe.RefundHoldoutTest", "name": "TS-01 paid order refunded", "status": "PASSED"},
+                {"className": "qe.RefundHoldoutTest", "name": "TS-02 day 31 boundary", "status": "FAILED", "errorDetails": "expected 409 for input SECRET-INPUT-42"},
+                {"className": "qe.Smoke", "name": "health", "status": "PASSED"}]}]})
         mj = re.match(r"^/job/payments/job/PR-1/(\d+)/(testReport/api/json|consoleText)$", path)
         if mj:
             S["auth_seen"].append(["jenkins", path, self.headers.get("Authorization", "")[:12]])

@@ -45,11 +45,17 @@ public final class GitHooks {
         for (String f : staged) {
             Path p = Ctx.root.resolve(f);
             if (Files.isRegularFile(p) && Files.size(p) > maxKb * 1024L) errors.add("File too large (> " + maxKb + " KB): " + f);
-            if (files.isSecret(f)) errors.add("Credential file staged: " + f);
+            if (files.isCredential(f)) errors.add("Credential file staged: " + f);
             if (f.startsWith(".sdlc/")) errors.add("Local state staged: " + f + " (add .sdlc/ to .gitignore)");
             if (Glob.any(Ctx.cfg.list("paths.protected"), f)) guardrails.add(f);
         }
         if (!guardrails.isEmpty()) warnings.add(guardrails.size() + " guardrail file(s) changed; a tech lead reviews them (CODEOWNERS)");
+        List<String> touched = new ArrayList<>(staged);
+        touched.addAll(Git.lines(Proc.run(Ctx.root, "git", "diff", "--cached", "--name-only", "--diff-filter=D").out()));
+        for (String b : sdlc.core.Locks.broken(Ctx.root)) {
+            String path = b.substring(0, b.indexOf(" ("));
+            if (touched.contains(path)) errors.add("Locked acceptance test " + b + ". The code must pass it as QE locked it; if the test is wrong, QE changes it and runs tests lock again.");
+        }
         if (Checks.testsMissing(staged)) warnings.add("Main code changed without a test change in this commit.");
         String quick = Ctx.WINDOWS ? Ctx.cfg.str("build.preCommitWindows", Ctx.cfg.str("build.preCommit")) : Ctx.cfg.str("build.preCommit");
         if (errors.isEmpty() && !quick.isBlank()) {

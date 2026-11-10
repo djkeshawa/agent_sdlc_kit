@@ -28,7 +28,7 @@ import sdlc.util.Yaml;
  * agent picked from the same inputs. Several runs per case show consistency, not just luck.
  *
  *   <eval.dir>/scoping/cases/<KEY>.md    the input: one pager, HLD and Jira text (agents read it)
- *   <eval.dir>/scoping/truth/<KEY>.yml   what really changed (hidden from agents, paths.hidden)
+ *   .sdlc/hidden/eval/truth/<KEY>.yml    what really changed (hidden from agents, never in git: git show would reveal it)
  *   .sdlc/eval/inbox/<run>/<KEY>.yml     one agent answer: components: [a, b] (or a solution draft)
  */
 public final class Eval {
@@ -40,6 +40,11 @@ public final class Eval {
 
     public static Path dir() {
         return Ctx.root.resolve(Ctx.cfg.str("eval.dir", "docs/agent/eval")).resolve("scoping");
+    }
+
+    /** The ground truth: under .sdlc/hidden (git-ignored), so no git command can show it to an agent. */
+    public static Path truthDir() {
+        return Ctx.work("hidden", "eval", "truth");
     }
 
     public static Path answers() {
@@ -64,16 +69,16 @@ public final class Eval {
             Set<String> components = new TreeSet<>();
             for (String repo : repos.keySet()) components.add(Catalog.componentOfRepo(repo));
             StringBuilder truth = new StringBuilder("# Ground truth for " + epic + ", collected by `sdlc eval collect`. Review it: remove a repository\n"
-                    + "# whose commit only mentioned the key in passing. Hidden from agents (paths.hidden).\n");
+                    + "# whose commit only mentioned the key in passing. Hidden from agents; keep a copy outside this repository.\n");
             truth.append("components: [").append(String.join(", ", components)).append("]\nrepos:\n");
             repos.forEach((r, n) -> truth.append("  - {repo: ").append(r).append(", commits: ").append(n).append("}\n"));
             truth.append("keys: [").append(String.join(", ", keys)).append("]\n");
-            Store.writeText(dir().resolve("truth").resolve(epic + ".yml"), truth.toString());
+            Store.writeText(truthDir().resolve(epic + ".yml"), truth.toString());
             Store.writeText(dir().resolve("cases").resolve(epic + ".md"), caseText(epic));
             w.console.out(epic + ": " + components.size() + " component(s) " + components + " from " + repos.size() + " repo(s)");
             written++;
         }
-        w.console.out("\n" + written + " case(s) in " + Ctx.rel(dir()) + ". Review truth/*.yml, then let the agents answer (/eval-scoping <run>) and run: java .agent/Sdlc.java eval score");
+        w.console.out("\n" + written + " case(s) in " + Ctx.rel(dir()) + ". Review " + Ctx.rel(truthDir()) + "/*.yml, then let the agents answer (/eval-scoping <run>) and run: java .agent/Sdlc.java eval score");
         return written == epics.size() ? 0 : 1;
     }
 
@@ -110,7 +115,7 @@ public final class Eval {
     }
 
     public static Report report(List<String> wanted) throws IOException {
-        Path truthDir = dir().resolve("truth");
+        Path truthDir = truthDir();
         if (!Files.isDirectory(truthDir)) throw new UsageException("no ground truth in " + Ctx.rel(truthDir) + " (java .agent/Sdlc.java eval collect <EPIC> ...)");
         List<String> runs = new ArrayList<>(wanted);
         if (runs.isEmpty() && Files.isDirectory(answers())) {

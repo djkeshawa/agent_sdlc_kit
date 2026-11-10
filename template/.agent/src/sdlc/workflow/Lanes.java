@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 import sdlc.core.Ctx;
+import sdlc.core.Store;
 import sdlc.core.UsageException;
 import sdlc.core.Work;
 import sdlc.util.Glob;
@@ -109,12 +110,34 @@ public final class Lanes {
         return 0;
     }
 
-    /** For the PR policy: contract files changed while the story's lane is patch. */
-    public static List<String> contractChangesInPatch(String story, List<String> changed) {
-        if (!enabled() || story.isBlank()) return List.of();
-        String lane = Work.str(Work.state(story).get("lane"));
-        if (!lane.equals("patch") && !lane.isBlank()) return List.of();
-        List<String> contracts = Catalog.load().contractFiles();
-        return changed.stream().filter(contracts::contains).toList();
+    /** Where tasks create records what the story may change in its contracts; committed, so check-pr in CI can read it. */
+    public static java.nio.file.Path allowanceFile(String story) {
+        return Ctx.root.resolve("docs/agent/contracts").resolve(story + ".json");
+    }
+
+    /**
+     * What the story may change in this repository's contracts, from its lane: patch nothing,
+     * component additions to its own APIs, cross-component exactly what its slice provides.
+     */
+    static Map<String, Object> allowance(String story, String lane, Floor f) {
+        Catalog c = Catalog.load();
+        Map<String, Object> apis = new java.util.LinkedHashMap<>();
+        Catalog.Component self = c.self();
+        if (self != null && !lane.equals("patch")) {
+            for (String api : self.providesApis()) {
+                Catalog.Api a = c.apis.get(api);
+                if (a == null || a.definition().isBlank()) continue;
+                if (lane.equals("component")) {
+                    apis.put(api, Store.map("file", a.definition(), "add", List.of("*"), "remove", List.of(), "breaking", false));
+                } else if (f.solution() != null) {
+                    if (f.solution().allowedAdds(api).isEmpty() && f.solution().allowedRemoves(api).isEmpty()) continue;
+                    apis.put(api, Store.map("file", a.definition(), "add", new ArrayList<>(f.solution().allowedAdds(api)),
+                            "remove", new ArrayList<>(f.solution().allowedRemoves(api)), "breaking", f.solution().breakingAllowed(api)));
+                }
+            }
+        }
+        Map<String, Object> out = Store.map("story", story, "lane", lane, "apis", apis);
+        if (f.solution() != null && self != null && f.solution().components.containsKey(self.name())) out.put("solutionSlice", f.solution().sliceHash(self.name()));
+        return out;
     }
 }

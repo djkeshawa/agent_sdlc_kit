@@ -146,6 +146,8 @@ public final class Defaults {
                 - .gitattributes
                 - .sdlc/**
                 - catalog-info.yaml
+                - docs/test-locks/**
+                - docs/agent/contracts/**
                 - .git/config
                 - .git/hooks/**
                 - .git/info/**
@@ -193,14 +195,17 @@ public final class Defaults {
                 - "**/.gem/credentials"
                 - "/proc/*/environ"
               hidden:
-                - "docs/agent/eval/**/truth/**"
                 - ".sdlc/hidden/**"
               doc: [docs/**, README.md, CHANGELOG.md]
             build:
               preCommit: ""
               preCommitWindows: ""
+              mutation: ""
             tests:
               requireTestsForMainChanges: true
+              lockAcceptance: false
+            holdout:
+              jenkinsJob: ""
             """;
 
     static final String JAVA_MAVEN = """

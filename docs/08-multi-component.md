@@ -22,11 +22,13 @@ stories' keys (`github.org` limits the search), and writes:
 | File | Content | Agents |
 | --- | --- | --- |
 | `docs/agent/eval/scoping/cases/<EPIC>.md` | the epic's Jira text, one pager and HLD: the input | read |
-| `docs/agent/eval/scoping/truth/<EPIC>.yml` | `components:` that really changed, the repositories and commit counts | **never** (`paths.hidden`) |
+| `.sdlc/hidden/eval/truth/<EPIC>.yml` | `components:` that really changed, the repositories and commit counts | **never** (`paths.hidden`) |
 
 Review each truth file: remove a repository whose commit only mentioned the key in passing.
-Repository names map to component names through `github.relatedRepos` (`name` for `repo`),
-later through the catalog. Commit the cases and the truth, so the set is kept.
+Repository names map to component names through the catalog, or `github.relatedRepos` (`name`
+for `repo`). Commit the cases. The truth is never committed to a repository agents work in
+(`git show` or `git log -p` would reveal it): keep a copy where QE keeps the hold-out tests, and
+copy it into `.sdlc/hidden/eval/truth/` before scoring.
 
 ```text
 # 2. answers: in Copilot Chat, Claude Code or Codex, k times with different run names
@@ -147,3 +149,68 @@ and stops; the architect changes the solution.
 | `stories create <EPIC>` | refused until approved; idempotent; comments on stories whose slice changed |
 | `feature status <EPIC>` | exit 0 only when the solution and every component LLD are approved and current |
 | `classify <KEY>` | lowest lane and why |
+
+## Phase 2: tests the implementer cannot game, and contract checks
+
+Coding agents pass tests they can see in ways that do not meet the requirement: editing the
+test, or special-casing its inputs. Two kinds of tests close that gap.
+
+### Locked acceptance tests
+
+```
+qa-verifier (job A)   drafts acceptance tests in .sdlc/<STORY>/drafts/acceptance/<repository path>
+QE person             reviews them, then: java .agent/Sdlc.java tests lock <STORY>   (agents are refused)
+                      -> copies them into the repository, writes docs/test-locks/<STORY>.json (hashes)
+implementer           makes the code pass them; may not change them
+```
+
+`tests lock <STORY> --paths <glob,glob>` locks test files that already exist (written by QE by
+hand). Locking again keeps the earlier files and updates the hashes. With
+`tests.lockAcceptance: true`, `task start` waits until the story has a lock.
+
+| Check | Where |
+| --- | --- |
+| No agent edits a locked test (edit tools and shell writes) | agent hooks |
+| A commit that changes or deletes a locked test is refused | pre-commit |
+| `verify` refuses while a locked test differs from its lock | verify |
+| FAIL when a locked test differs; WARN when a lock file changed | PR gate, `check-pr` in CI |
+| QE reviews lock changes | CODEOWNERS on `docs/test-locks/` |
+
+The check is on the file's content, not on who changed it, so it holds in every coding tool.
+
+### Hold-out scenarios
+
+QE marks some scenarios `- Hold-out: yes` in the test design (typically boundaries and
+combinations), writes them as black-box API or end-to-end tests in **QE's own repository**, and
+runs them in its own Jenkins job against the PR build. They never exist in the component's
+repository, so no agent can read or tune for them.
+
+```bash
+java .agent/Sdlc.java holdout status <STORY> [--build N]
+```
+
+reads only the test names and pass/fail from `holdout.jenkinsJob` (the error details, which can
+show inputs, are never requested), maps them to `TS-..` ids, and writes a digest with ids,
+titles and results to `.sdlc/<STORY>/rounds/holdout-N.md`. Scenarios marked hold-out that did
+not run show as NOT RUN. Visible tests passing while hold-out scenarios fail is the signal that
+the code meets the tests, not the requirement: review against the requirement, not the hidden test.
+
+### Contract checks in the PR policy
+
+With a `catalog-info.yaml`, every pull request that changes one of this repository's contract
+files is compared with the base branch (OpenAPI 3 / 2 paths, AsyncAPI 2 / 3 messages):
+
+- `tasks create` (lanes on) writes `docs/agent/contracts/<STORY>.json`: what the story's lane
+  allows. Patch: nothing. Component: additions to its own APIs. Cross-component: exactly the
+  operations its slice lists, and breaking changes only if the solution says `compatibility: breaking`.
+  Commit it with the story; it is protected, so agents cannot widen it.
+- `check-pr` and the PR gate fail an added or removed operation the allowance does not list,
+  and a breaking change it does not allow. In CI the story comes from the branch name.
+- Breaking changes detected: removed operations or messages, removed response codes, new
+  required request fields or parameters, removed enum values, changed property types, removed
+  response properties. Without lanes they are warnings. Limits: [docs/06](06-guardrails-reference.md#limits-of-the-multi-component-checks).
+
+### Mutation testing
+
+`build.mutation` runs after the build in `verify`; see `snippets/contracts-and-mutation.md`
+for PIT and Stryker on changed code, and for consumer-driven contract tests.
