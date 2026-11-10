@@ -26,6 +26,10 @@ Jira story (product owner) + one pager / HLD in Confluence
    |  HUMAN GATE: a human reviews and merges the PR
 ```
 
+A feature that spans several components adds an epic level on top: `/solution EPIC`
+(architect) -> one story per component -> the flow above in each repository, with each
+team's design held to its slice of the solution. [docs/08](docs/08-multi-component.md).
+
 Read [docs/00-how-it-works.md](docs/00-how-it-works.md) for the agents, the gates and the four
 guardrail layers.
 
@@ -38,7 +42,8 @@ agentic-sdlc-java-kit/
 ├── snippets/
 │   ├── pom-quality-plugins.xml    <- JaCoCo, Spotless, SpotBugs, enforcer, failsafe for your pom.xml
 │   ├── ArchitectureRulesTest.java <- ArchUnit rules (layers, no field injection, ...)
-│   └── node-quality.md            <- Node/TypeScript: scripts, Vitest JUnit + lcov, ESLint, Sonar, Jenkins
+│   ├── node-quality.md            <- Node/TypeScript: scripts, Vitest JUnit + lcov, ESLint, Sonar, Jenkins
+│   └── contracts-and-mutation.md  <- PIT / Stryker on changed code, Spring Cloud Contract / Pact
 ├── tests/e2e/                     <- the kit's own end-to-end test: python3 tests/e2e/run.py
 └── template/                      <- copy its contents into your repository
     ├── AGENTS.md
@@ -47,14 +52,15 @@ agentic-sdlc-java-kit/
     │   ├── Sdlc.java              <- java .agent/Sdlc.java <command>  (JDK 17+, no build step)
     │   ├── src/sdlc/              <- the tool, in layers: util, core, guard, workflow, integrations, cli, selftest
     │   ├── bin/sdlc, sdlc.cmd     <- fast launchers for hooks
-    │   ├── templates/             <- test design, LLD, project profile skeletons
+    │   ├── templates/             <- test design, LLD, project profile, solution design, catalog-info.yaml
     │   └── local.env.example      <- your tokens go in local.env (git-ignored, agents can't read it)
     ├── .githooks/                 <- pre-commit, commit-msg, pre-push
     ├── .github/
     │   ├── copilot-instructions.md, instructions/   <- rules every agent reads
     │   ├── agents/                <- orchestrator, analyst, qe-designer, designer, implementer,
-    │   │                             reviewer, qa-verifier, ci-fixer
-    │   ├── prompts/               <- /analyse, /test-design, /design, /feature, /review, /fix-ci
+    │   │                             reviewer, qa-verifier, ci-fixer, architect, impact-analyst, eval-runner
+    │   ├── prompts/               <- /analyse, /test-design, /design, /feature, /review, /fix-ci,
+    │   │                             /solution, /eval-scoping
     │   ├── skills/                <- Java standards, testing, code review, Sonar fixes, Jira/Confluence
     │   ├── hooks/guardrails.json  <- Copilot agent hooks -> the tool
     │   │                             (Claude Code and Codex: `config apply` generates .claude/, .codex/, .agents/)
@@ -93,15 +99,20 @@ Then in Copilot Chat, Claude Code or Codex: `/analyse` once, and per story `/tes
 
 ## What was tested
 
-- **Self test:** `java .agent/Sdlc.java selftest` - 413 checks of the shell, file, MCP, git,
-  secret, scope, gate and parsing rules.
+- **Self test:** `java .agent/Sdlc.java selftest` - 520 checks of the shell, file, MCP, git,
+  secret, scope, gate and parsing rules, and of the multi-component additions (catalog, scans,
+  contract diffs, solution design, stories, lanes, test locks, co-change, upgrade).
 - **Full flow against mocks:** a scratch Maven repository with a mock Jira Cloud, Confluence
   Cloud, Jenkins and SonarQube and a fake `gh`: setup, doctor, ~30 hook decisions, docs
   find/pull, test design publish (with mind map), approvals (wrong version, edited comment,
   non-approver, bot, valid), LLD publish, sub-tasks, task scope, test-first verify, Stop hook,
   commit hooks (message, secret, disabled test), review loop, PR gate, push guard, CI digest
   (Jenkins test report and log, Sonar gate and issues), retro, merge sync, LLD changed after
-  approval. This test is in the repository: `python3 tests/e2e/run.py` (120 checks, about a
+  approval. Then a cross-component epic: scoping eval, catalog check / sync / scan / graph,
+  solution design publish and approval, one story per component, solution slice, feature
+  status, locked acceptance tests (agent edit, pre-commit, verify, check-pr), a contract change
+  without a recorded lane, hold-out results without their inputs, co-change, trace import and
+  kit upgrade. This test is in the repository: `python3 tests/e2e/run.py` (166 checks, about a
   minute, needs only a JDK, git and Python 3; see [tests/e2e](tests/e2e/README.md)).
 - **Full flow against real services** (November 2026): Jira Cloud through the API gateway
   with a scoped bot token, Confluence Cloud on a second site, a private GitHub repository, a
@@ -129,6 +140,7 @@ Then in Copilot Chat, Claude Code or Codex: `/analyse` once, and per story `/tes
   new-code coverage gate (the digest named the file and its 11 uncovered lines), green after a
   reviewed fix.
 
-Not tested: Jira/Confluence Data Center, a Windows machine, GitHub Enterprise Server, and a
+Not tested: Jira/Confluence Data Center, a Windows machine, GitHub Enterprise Server, the
+multi-component additions against real services (GitHub commit search, a QE hold-out job), and a
 live VS Code + Copilot session (its hooks were driven with the payloads VS Code and the Copilot
 CLI send). Do the 10-minute hook test in docs/02 on your machine, with every tool you use.

@@ -1,6 +1,10 @@
 # Proposal: multi-component, multi-repo delivery
 
-Status: draft, round 3. Nothing here is implemented yet. Section 15 lists what changed in each round.
+Status: implemented (phases 0-3) on branch feat/multi-component-delivery; the guide is
+[docs/08](../08-multi-component.md). Section 15 lists what changed in each design round. Where the
+implementation differs: the scoping eval's ground truth lives in `.sdlc/hidden/` (never in git,
+where `git show` would reveal it), and `docs/agent/contracts/<STORY>.json` carries each story's
+allowed contract changes so `check-pr` can enforce them in CI without Confluence access.
 
 ## 1. The short answer
 
