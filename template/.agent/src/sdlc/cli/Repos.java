@@ -29,8 +29,9 @@ public final class Repos {
             if (Files.isDirectory(dir.resolve(".git"))) {
                 p = Proc.run(dir, "git", "pull", "--ff-only", "--depth", "1");
             } else {
-                if (branch.isBlank()) p = Proc.run(Ctx.root, "git", "clone", "--depth", "1", url, dir.toString());
-                else p = Proc.run(Ctx.root, "git", "clone", "--depth", "1", "--branch", branch, url, dir.toString());
+                // "--": an address or branch from the settings is never read as a git option
+                if (branch.isBlank()) p = Proc.run(Ctx.root, "git", "clone", "--depth", "1", "--", url, dir.toString());
+                else p = Proc.run(Ctx.root, "git", "clone", "--depth", "1", "--branch=" + branch, "--", url, dir.toString());
             }
             System.out.println((p.ok() ? "OK     " : "FAILED ") + name + "  " + url + (p.ok() ? "" : "  " + p.err().trim()));
             if (!p.ok()) failed++;

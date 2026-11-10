@@ -19,6 +19,11 @@ Refusals are logged in `.sdlc/logs/guard-decisions.jsonl`; Jira/Confluence write
 | `Compiling .agent/src failed` | A local edit of the tool's sources broke it. `git checkout .agent/src` or fix the error shown. |
 | `SELFTEST FAILED` after editing `sdlc.yml` | Your change broke a built-in expectation (for example a protected path removed). Read the failing line; revert or adjust. |
 | `run this from inside the repository` | Run `java .agent/Sdlc.java` from the repository root (or below it). |
+| `the guard (.agent/bin/sdlc) was not found` | The agent was started outside the repository, or its shell is in another git repository. Start it from the repository root. After a kit update, run `java .agent/Sdlc.java config apply` so Claude Code and Codex get the current hook commands (`doctor` says when they are old). |
+| `the guard itself failed (exit N)` | The guard could not run: no Java on the PATH, or the sources under `.agent/src` do not compile (after a bad merge). Run `java .agent/Sdlc.java selftest` and read the error. Tool calls are refused until it works. |
+| `the guard could not decide within 20 s` | A git command the guard asked hung (a credential prompt, a network drive). Run `git status` in a terminal to see what git waits for. |
+| `refusing to send a token to ... without encryption` | `jira.url`, `confluence.url`, `ci.jenkins.url` or `ci.sonar.url` starts with `http://`. Use the `https://` address; only for a server without https set `guard.allowPlainHttp: true`. |
+| `the server redirects to ...` | The address in `.agent/sdlc.yml` is not the one the server answers on (an old host name, `http` instead of `https`, a missing `/wiki`). Put the address from the message there. The tool does not follow a redirect with your token. |
 
 ## Jira and Confluence
 

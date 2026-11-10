@@ -5,7 +5,7 @@
 hooks (Copilot, Claude Code, Codex: the same rules; each tool's edit and shell tools are
 understood, including Codex's `apply_patch` and `bash -lc "..."`), 2 = git hooks, 3 = your CI (with the optional `check-pr` stage, [docs/05](05-ci-jenkins-sonar.md)),
 4 = GitHub branch protection and CODEOWNERS. `java .agent/Sdlc.java selftest` checks the
-layer-1 and layer-2 rules (356 checks).
+layer-1 and layer-2 rules (408 checks).
 
 ## Files
 
@@ -37,6 +37,10 @@ layer-1 and layer-2 rules (356 checks).
 | Disabled or focused tests (`@Disabled`, `@Ignore`, `assumeTrue(false)`, `it.skip`, `.only`) | note after edit | commit refused | check-pr | - |
 | `--no-verify` (and any abbreviation git accepts, e.g. `--no-veri`), `-n`, changing `core.hooksPath`, `SDLC_*`/`HUSKY=0`/`SKIP=` variables | deny | - | - | - |
 | Git settings and variables that make git run a program: `core.fsmonitor`, `core.pager`, `core.editor`, `core.sshCommand`, `diff.external`, `filter.*`, `merge.*.driver`, ... (`git config` and `git -c`), `GIT_SSH_COMMAND`, `GIT_EXTERNAL_DIFF`, `GIT_EDITOR`, ... Harmless values (`cat`, `less`, `true`, empty) are fine | deny | - | - | - |
+| Variables and options that load other code into the tools: `LD_PRELOAD`, `DYLD_*`, `BASH_ENV`; an agent, trust store or proxy setting in `JAVA_TOOL_OPTIONS`, `MAVEN_OPTS`, `GRADLE_OPTS`, ... (`-javaagent`, `-Djavax.net.ssl.*`); `--require` / `--import` in `NODE_OPTIONS`; Java options on the guard's own tool (`java -javaagent:... .agent/Sdlc.java`, `java -cp ... sdlc.Main`) | deny | - | - | - |
+| `PATH` with a folder agents can write to first (inside the repository, a temp folder, a relative folder); `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` | ask | - | - | - |
+| Git pointed somewhere else: pushing to an address instead of a remote (`git push https://...`, `--repo`, `--receive-pack`), `git remote set-url`, `--git-dir` / `--work-tree` / `--exec-path`, `git daemon` | deny | - | - | - |
+| `git remote add` / `rename` / `remove`, pushing to a remote other than `origin`, `git worktree add`, and git commands that run a command of the agent's choosing (`git rebase --exec`, `git bisect run`, `git submodule foreach`, `git difftool -x`), `git submodule add`, `git lfs install` | ask | - | - | - |
 | Git aliases: defining one (`git config alias.*`, `git -c alias.*`, config includes) is refused; an existing alias is expanded and checked like the command it runs; shell aliases (`!...`) are refused | deny | - | - | - |
 | Shell spellings that hide a path: `{a,b}` braces, `$'..'` escapes, backslash escapes (`local.e\nv`) and variables set in the same line are expanded before checking; a path built from a variable the guard cannot resolve needs approval | deny / ask | - | - | - |
 | Command output used inside a command (`$(...)`, backticks) when it could be a path the agent chose: file contents, decoded text (`cat $(echo ... \| base64 -d)`). Facts (`date`, `pwd`, `git rev-parse`, `git diff --name-only`, ...) and a commit message in a quoted here-document are free | ask | - | - | - |
@@ -45,7 +49,7 @@ layer-1 and layer-2 rules (356 checks).
 | `git reset --hard`, `git clean -f`, `git checkout -- .`, `stash drop`, branch delete/rename | ask | - | - | - |
 | `git clean -x`, git config outside the repo, identity/credential/remote changes | deny | - | - | - |
 | Approval lines (`SDLC-APPROVED`) in any command | deny | - | - | - |
-| `gh pr merge`, `gh pr review --approve` / `-a`, releases, repo settings, secrets, `gh auth token`, raw `gh api` writes in every spelling (`-XPUT`, `--field=`, `-fk=v`, GraphQL mutations), `gh alias` changes, `gh extension install` | deny | - | - | rulesets |
+| `gh pr merge`, `gh pr review --approve` / `-a`, releases, repo settings, secrets, `gh auth token`, `gh auth status --show-token`, `git credential ...`, raw `gh api` writes in every spelling (`-XPUT`, `--field=`, `-fk=v`, GraphQL mutations), `gh alias` changes, `gh extension install` | deny | - | - | rulesets |
 | A `gh` command the guard does not know (an alias or extension) | ask | - | - | - |
 | Story and task keys on the command line must be Jira keys (`PAY-123`), so the tool never writes outside `.sdlc/` | tool | - | - | - |
 | `gh pr create` (or its alias `gh pr new`) before the PR gate is met | deny | - | - | - |
@@ -57,7 +61,7 @@ layer-1 and layer-2 rules (356 checks).
 | Packages downloaded and run on the spot: `npx <pkg>` when it is not in `node_modules/.bin`, `npx --yes`, `npm exec`, `pnpm dlx`, `yarn dlx`, `bun x` | ask | - | - | - |
 | Downloaded code piped into an interpreter (`curl ... \| sh`, `iwr ... \| iex`) | deny | - | - | - |
 | Machine changes (`sudo`, `su`, `chown`, `mkfs`, `dd`, `setx`, `reg`, `shutdown`) | deny | - | - | - |
-| Printing the environment (`env`, `printenv`, `set`, `Get-ChildItem env:`), `$...TOKEN` variables | deny | - | - | - |
+| Printing the environment (`env`, `printenv`, `set`, `Get-ChildItem env:`, `ps e`, `/proc/<pid>/environ`), `$...TOKEN` variables | deny | - | - | - |
 | Recursive deletes outside build output; deleting outside the project or `.git` | ask / deny | - | - | - |
 | Encoded PowerShell (`-EncodedCommand`) | deny | - | - | - |
 | Running the hooks, `setup` or `config apply` by hand | deny | - | - | - |
@@ -125,9 +129,17 @@ GitHub Enterprise and SonarQube servers in read-only mode.
 - **Hooks are young in some IDEs.** Hooks for Copilot in VS Code are labelled preview in some
   versions; JetBrains support came later. Run the hook test ([docs/02 step 8](02-setup.md#step-8-the-hook-test))
   after IDE upgrades.
-- **A broken guard fails closed** for tool calls (an exception denies the call and asks for
-  `selftest`). An IDE **timeout** fails open; the compiled guard answers in about 0.1 s and the
-  timeout is 30 s.
+- **A broken guard fails closed** for tool calls. An exception, a crash, sources that do not
+  compile, a missing Java or a guard that cannot be found from the shell's folder all refuse the
+  call and ask for `selftest`; so does a tool call nested too deep to check, and a guard that has
+  not answered after 20 s. The IDE's own **timeout** (30 s) still fails open, which is why the
+  guard gives up first; it normally answers in about 0.1 s.
+- **The guard reads its rules from the repository it is installed in**, never from the folder the
+  agent's shell is in. A `cd` to another folder or repository changes where relative paths are
+  read from, not which rules apply.
+- **Tokens travel only over https** (or to this machine), and the tool does not follow a redirect
+  to another address. A server that only speaks http inside your network needs
+  `guard.allowPlainHttp: true`.
 
 ## Changing a rule
 

@@ -30,7 +30,10 @@ final class GhRules {
         }
         if (group.equals("release") && !Set.of("view", "list", "download").contains(action)) return Decision.deny("releases are made by humans.");
         if (group.equals("repo") && Set.of("delete", "archive", "rename", "edit").contains(action)) return Decision.deny("changes repository settings.");
-        if (group.equals("auth")) return action.equals("status") ? Decision.allow() : Decision.deny("agents never read or change GitHub credentials.");
+        if (group.equals("auth")) { // gh auth status -t / --show-token prints the token
+            boolean showsToken = args.stream().anyMatch(x -> GitRules.abbrev(x, "--show-token", 4) || x.matches("^-[a-zA-Z]*t[a-zA-Z]*$"));
+            return action.equals("status") && !showsToken ? Decision.allow() : Decision.deny("agents never read or change GitHub credentials.");
+        }
         if (Set.of("secret", "variable", "ruleset", "workflow", "cache").contains(group) && !Set.of("list", "view").contains(action)) return Decision.deny("changes repository security or CI settings.");
         if (group.equals("api")) return api(args.subList(1, args.size()));
         if (group.equals("alias")) return Set.of("list", "ls").contains(action) ? Decision.allow() : Decision.deny("gh aliases hide commands from the guard. Run the gh command directly.");

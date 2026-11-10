@@ -13,7 +13,6 @@ import java.util.concurrent.TimeUnit;
 public record Proc(int code, String out, String err) {
     public static final boolean WINDOWS = System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("win");
 
-
     public static Proc run(Path dir, String... cmd) {
         return runWithInput(dir, null, 120, cmd);
     }
@@ -29,18 +28,22 @@ public record Proc(int code, String out, String err) {
                     // the process closed its input early
                 }
             });
-            writer.start();
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             ByteArrayOutputStream err = new ByteArrayOutputStream();
-            Thread t = new Thread(() -> copy(p.getErrorStream(), err));
-            t.start();
-            copy(p.getInputStream(), out);
-            writer.join();
+            Thread readErr = new Thread(() -> copy(p.getErrorStream(), err));
+            Thread readOut = new Thread(() -> copy(p.getInputStream(), out)); // on its own thread: reading here would wait for ever on a process that hangs
+            for (Thread t : List.of(writer, readErr, readOut)) t.setDaemon(true);
+            writer.start();
+            readErr.start();
+            readOut.start();
             if (!p.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+                p.descendants().forEach(ProcessHandle::destroyForcibly);
                 p.destroyForcibly();
-                return new Proc(124, out.toString(StandardCharsets.UTF_8), "timeout");
+                return new Proc(124, out.toString(StandardCharsets.UTF_8), "timeout after " + timeoutSeconds + " s");
             }
-            t.join();
+            readOut.join();
+            readErr.join();
+            writer.join();
             return new Proc(p.exitValue(), out.toString(StandardCharsets.UTF_8), err.toString(StandardCharsets.UTF_8));
         } catch (IOException e) {
             return new Proc(127, "", e.toString());

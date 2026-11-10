@@ -24,6 +24,7 @@ public final class Ctx {
         cfg = Config.load(root.resolve(".agent/sdlc.yml"));
         secrets = null;
         Http.proxy = () -> secret("HTTPS_PROXY", secret("https_proxy", "")); // local.env may name the company proxy
+        Http.allowPlainHttp = cfg.bool("guard.allowPlainHttp", false);
     }
 
     static Path gitRoot(Path start) {

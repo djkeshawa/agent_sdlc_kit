@@ -63,16 +63,24 @@ public final class Guard {
         return branch;
     }
 
-    /** A folder of the repository named by the host (the hook's cwd, a tool call's workdir), or null when it is not one. */
+    /**
+     * The folder the host says the shell is in (the hook's cwd, a tool call's workdir), or null
+     * when it names none. It may lie outside the repository: relative paths are then read from
+     * out there, so `repo/.agent/sdlc.yml` typed one folder above the repository is still seen
+     * for what it is.
+     */
     public static Path folder(Path root, Path base, Object dir) {
         if (!(dir instanceof String s) || s.isBlank()) return null;
         try {
             Path p = Path.of(s);
             p = (p.isAbsolute() ? p : base.resolve(p)).normalize();
             if (p.startsWith(root)) return p;
-            Path real = p.toRealPath();
-            return real.startsWith(root) ? real : null;
-        } catch (IOException | RuntimeException e) {
+            try {
+                return p.toRealPath(); // a link into the repository counts as the folder it leads to
+            } catch (IOException e) {
+                return p;
+            }
+        } catch (RuntimeException e) {
             return null;
         }
     }

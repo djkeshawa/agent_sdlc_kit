@@ -35,9 +35,18 @@ public final class AgentTools {
         if (tools.contains("codex")) codex();
     }
 
-    /** The command a hook runs; works from any folder inside the repository (POSIX shell, Git Bash on Windows). */
+    /**
+     * The command a hook runs (POSIX shell, Git Bash on Windows). The repository is found from the
+     * folder the agent was started in (Claude Code: CLAUDE_PROJECT_DIR), not from wherever its
+     * shell has wandered to. A guard that cannot be found refuses the tool call: a `cd` out of the
+     * repository, or into another one, must not switch the guard off.
+     */
     static String hookCommand(String event, String tool) {
-        return "sh \"$(git rev-parse --show-toplevel)/.agent/bin/sdlc\" hook " + event + " --for " + tool;
+        String missing = event.equals("pre-tool-use")
+                ? "echo \"Refused by project guardrail: the guard (.agent/bin/sdlc) was not found. Start the agent inside the repository.\" >&2; exit 2"
+                : "exit 0";
+        return "d=$(git -C \"${CLAUDE_PROJECT_DIR:-.}\" rev-parse --show-toplevel 2>/dev/null); "
+                + "if [ -f \"$d/.agent/bin/sdlc\" ]; then sh \"$d/.agent/bin/sdlc\" hook " + event + " --for " + tool + "; else " + missing + "; fi";
     }
 
     static Map<String, Object> hooks(String tool) {

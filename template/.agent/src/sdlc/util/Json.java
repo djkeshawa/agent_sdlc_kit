@@ -7,8 +7,11 @@ import java.util.Map;
 
 /** Minimal JSON: parses to Map / List / String / Double / Boolean / null, and writes the same. */
 public final class Json {
+    /** Deeper than any real payload; a document nested further is refused instead of overflowing the stack. */
+    private static final int MAX_DEPTH = 200;
     private final String s;
     private int i;
+    private int depth;
 
     private Json(String s) {
         this.s = s;
@@ -67,6 +70,15 @@ public final class Json {
     private Map<String, Object> object() {
         Map<String, Object> m = new LinkedHashMap<>();
         i++;
+        if (++depth > MAX_DEPTH) throw new IllegalArgumentException("JSON nested deeper than " + MAX_DEPTH + " levels");
+        try {
+            return members(m);
+        } finally {
+            depth--;
+        }
+    }
+
+    private Map<String, Object> members(Map<String, Object> m) {
         ws();
         if (s.charAt(i) == '}') { i++; return m; }
         while (true) {
@@ -86,6 +98,15 @@ public final class Json {
     private List<Object> array() {
         List<Object> l = new ArrayList<>();
         i++;
+        if (++depth > MAX_DEPTH) throw new IllegalArgumentException("JSON nested deeper than " + MAX_DEPTH + " levels");
+        try {
+            return items(l);
+        } finally {
+            depth--;
+        }
+    }
+
+    private List<Object> items(List<Object> l) {
         ws();
         if (s.charAt(i) == ']') { i++; return l; }
         while (true) {

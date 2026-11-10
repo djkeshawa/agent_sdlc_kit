@@ -26,7 +26,6 @@ import sdlc.integrations.Confluence;
 import sdlc.integrations.Jira;
 import sdlc.selftest.SelfTest;
 import sdlc.util.Http;
-import sdlc.util.Json;
 import sdlc.util.Markdown;
 import sdlc.workflow.Approvals;
 import sdlc.workflow.Checks;
@@ -82,13 +81,15 @@ public final class Main {
         Integer fresh = rerunIfStale(args);
         if (fresh != null) System.exit(fresh);
         boolean hook = args[0].equals("hook") || args[0].equals("git-hook");
+        boolean guard = args[0].equals("hook") && args.length > 1 && args[1].equals("pre-tool-use");
+        if (guard) refuseWhenSlow(args);
         String stdin = hook && (args[0].equals("hook") || args.length > 1 && args[1].equals("pre-push")) ? readStdin() : "";
         int code;
         try {
-            Ctx.init(startDir(args, stdin));
+            Ctx.init(home());
             code = dispatch(args, stdin);
         } catch (UsageException e) {
-            if (args[0].equals("hook") && args.length > 1 && args[1].equals("pre-tool-use")) {
+            if (guard) {
                 code = Hooks.emit(Decision.deny("the guard could not decide (" + e.getMessage() + ")."), hookFormat(args));
             } else {
                 System.err.println(e.getMessage());
@@ -97,8 +98,8 @@ public final class Main {
         } catch (Http.ApiException e) {
             System.err.println("Remote call failed: " + e.getMessage());
             code = 4;
-        } catch (Exception e) {
-            if (args[0].equals("hook") && args.length > 1 && args[1].equals("pre-tool-use")) {
+        } catch (Throwable e) { // also StackOverflowError and OutOfMemoryError: a tool call built to crash the guard is refused
+            if (guard) {
                 // fail closed: a broken guard must not wave tool calls through
                 code = Hooks.emit(Decision.deny("the guard failed (" + e + "). Ask a human to run: java .agent/Sdlc.java selftest"), hookFormat(args));
             } else if (hook) {
@@ -117,13 +118,38 @@ public final class Main {
         return HookFormat.of(Checks.options(args, 1).getOrDefault("for", "copilot"));
     }
 
-    private static Path startDir(String[] args, String stdin) {
-        if (args[0].equals("hook") && !stdin.isBlank()) {
+    /** Seconds the guard may take for one tool call. The hosts give a hook 30 s and let the call through when it runs out. */
+    private static final int GUARD_SECONDS = 20;
+
+    /** A guard that hangs must not let the call through: after GUARD_SECONDS it refuses and stops. */
+    private static void refuseWhenSlow(String[] args) {
+        Thread t = new Thread(() -> {
             try {
-                if (Json.obj(Json.parse(stdin)).get("cwd") instanceof String s && !s.isBlank()) return Path.of(s);
-            } catch (RuntimeException ignored) {
-                // use the process directory
+                Thread.sleep(GUARD_SECONDS * 1000L);
+            } catch (InterruptedException e) {
+                return;
             }
+            Hooks.emit(Decision.deny("the guard could not decide within " + GUARD_SECONDS + " s. Run the command in smaller, plainer steps."), hookFormat(args));
+            Runtime.getRuntime().halt(2);
+        });
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /**
+     * The repository this copy of the tool belongs to: the folder that holds .agent. Never the
+     * folder a hook payload names. The agent chooses that folder (cd /tmp), and rules read from
+     * there would be the rules of another repository, or none.
+     */
+    private static Path home() {
+        try {
+            var source = Main.class.getProtectionDomain().getCodeSource();
+            if (source != null) {
+                Path agent = Path.of(source.getLocation().toURI()).getParent(); // <repo>/.agent/.build -> <repo>/.agent
+                if (agent != null && agent.getParent() != null && String.valueOf(agent.getFileName()).equals(".agent")) return agent.getParent();
+            }
+        } catch (Exception e) {
+            // not started from .agent/.build: use the process directory
         }
         return Path.of("").toAbsolutePath();
     }

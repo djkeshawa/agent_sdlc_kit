@@ -32,19 +32,38 @@ final class GitRules {
                 if (d != null) return d;
             }
             if (noVerify(a)) return Decision.deny("skips the git hooks.");
+            if (a.startsWith("--git-dir") || a.startsWith("--work-tree")) return Decision.deny("points git at another repository or working tree; the guard checks this one.");
+            if (a.startsWith("--exec-path=")) return Decision.deny("makes git run its commands from another folder.");
             i += (a.equals("-C") || a.equals("-c") || a.equals("--git-dir") || a.equals("--work-tree") || a.equals("--config-env") || a.equals("--namespace")) ? 2 : 1;
         }
         if (i >= args.size()) return Decision.allow();
         String sub = args.get(i);
         List<String> rest = args.subList(i + 1, args.size());
         if (rest.stream().anyMatch(GitRules::noVerify)) return Decision.deny("skips the git hooks. Fix what the hook reports instead.");
+        if (sub.startsWith("credential")) return Decision.deny("reads or changes the passwords and tokens git has stored.");
         String branch = g.branch();
         boolean onProtected = g.cfg.isProtectedBranch(branch);
+        String first = rest.stream().filter(a -> !a.startsWith("-")).findFirst().orElse("");
         return switch (sub) {
             case "push" -> push(rest, branch);
             case "commit" -> rest.stream().anyMatch(a -> a.matches("^-[a-zA-Z]*n[a-zA-Z]*$")) ? Decision.deny("`-n` skips the git hooks.")
                     : onProtected ? Decision.deny("commits go on a feature branch, never on `" + branch + "`.") : Decision.allow();
-            case "merge", "rebase", "cherry-pick", "revert", "am" -> onProtected ? Decision.deny("changes protected branch `" + branch + "`. Work on a feature branch.") : Decision.allow();
+            case "merge", "rebase", "cherry-pick", "revert", "am" -> onProtected ? Decision.deny("changes protected branch `" + branch + "`. Work on a feature branch.")
+                    : sub.equals("rebase") && rest.stream().anyMatch(a -> a.equals("-x") || a.startsWith("-x") && !a.startsWith("--") || abbrev(a, "--exec", 4))
+                            ? Decision.ask("`git rebase --exec` runs a command at every commit, which the guard cannot check.") : Decision.allow();
+            case "remote" -> switch (first) {
+                case "set-url" -> Decision.deny("changes where git pushes to and fetches from.");
+                case "add", "rename", "remove", "rm" -> Decision.ask("adds, renames or removes a git remote. Approve only if you know the address.");
+                default -> Decision.allow();
+            };
+            case "bisect" -> first.equals("run") ? Decision.ask("`git bisect run` runs a command at every step, which the guard cannot check.") : Decision.allow();
+            case "submodule" -> first.equals("foreach") ? Decision.ask("`git submodule foreach` runs a command in every submodule, which the guard cannot check.")
+                    : first.equals("add") ? Decision.ask("adds another repository's code as a submodule.") : Decision.allow();
+            case "lfs" -> Set.of("install", "uninstall", "update").contains(first) ? Decision.ask("`git lfs " + first + "` rewrites git hooks.") : Decision.allow();
+            case "difftool", "mergetool" -> rest.stream().anyMatch(a -> a.startsWith("-x") || abbrev(a, "--extcmd", 5))
+                    ? Decision.ask("runs a program of the command's choosing on the files.") : Decision.allow();
+            case "daemon", "instaweb" -> Decision.deny("serves the repository on the network.");
+            case "send-email" -> Decision.ask("sends commits by e-mail.");
             case "tag" -> rest.isEmpty() || rest.contains("-l") || rest.contains("--list") ? Decision.allow() : Decision.deny("tags are made by the release process.");
             case "config" -> config(rest);
             case "reset" -> rest.contains("--hard") ? Decision.ask("`git reset --hard` throws away uncommitted work.") : Decision.allow();
@@ -55,7 +74,8 @@ final class GitRules {
             case "update-ref", "filter-branch", "filter-repo", "replace" -> Decision.deny("rewrites git history or refs.");
             case "stash" -> !rest.isEmpty() && (rest.get(0).equals("drop") || rest.get(0).equals("clear")) ? Decision.ask("drops stashed work.") : Decision.allow();
             case "checkout", "restore" -> rest.contains(".") ? Decision.ask("discards uncommitted changes.") : Decision.allow();
-            case "worktree" -> !rest.isEmpty() && (rest.get(0).equals("remove") || rest.get(0).equals("prune")) ? Decision.ask("removes a worktree.") : Decision.allow();
+            case "worktree" -> first.equals("remove") || first.equals("prune") ? Decision.ask("removes a worktree.")
+                    : first.equals("add") ? Decision.ask("adds a second working tree. The guard's branch and scope checks look at this one only.") : Decision.allow();
             default -> alias(sub, rest, depth);
         };
     }
@@ -138,12 +158,20 @@ final class GitRules {
                 }
                 if (abbrev(a, "--tags", 4) || abbrev(a, "--follow-tags", 5)) return Decision.deny("pushes tags.");
                 if (abbrev(a, "--delete", 5) || abbrev(a, "--prune", 5) || abbrev(a, "--all", 4)) return Decision.deny("deletes or pushes every remote branch.");
+                if (abbrev(a, "--repo", 4)) return Decision.deny("pushes to an address instead of the repository's remote. Push to `origin`.");
+                if (abbrev(a, "--receive-pack", 5) || abbrev(a, "--exec", 4)) return Decision.deny("makes the push run a program of the command's choosing.");
             } else if (a.startsWith("-") && a.length() > 1) {
                 if (a.contains("f")) return Decision.deny("force pushes rewrite shared history.");
                 if (a.contains("d")) return Decision.deny("deletes a remote branch.");
             } else {
                 positional.add(a);
             }
+        }
+        Decision where = Decision.allow();
+        if (!positional.isEmpty()) {
+            String remote = positional.get(0);
+            if (remote.matches(".*(://|[@:\\\\]).*|^[/.~].*")) return Decision.deny("pushes to an address (`" + ShellRules.brief(remote) + "`) instead of the repository's remote. Push to `origin`.");
+            if (!remote.equals("origin")) where = Decision.ask("pushes to the remote `" + remote + "`, not `origin`. Approve only if that is where this work belongs.");
         }
         List<String> refspecs = positional.size() > 1 ? positional.subList(1, positional.size()) : List.of();
         if (refspecs.isEmpty() && g.cfg.isProtectedBranch(branch)) return Decision.deny("pushes to protected branch `" + branch + "`. Open a pull request instead.");
@@ -156,6 +184,6 @@ final class GitRules {
             if (target.equals("HEAD")) target = branch;
             if (g.cfg.isProtectedBranch(target)) return Decision.deny("pushes to protected branch `" + target + "`. Open a pull request instead.");
         }
-        return g.gate.push();
+        return g.gate.push().strictest(where);
     }
 }

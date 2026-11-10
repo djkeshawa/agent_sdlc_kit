@@ -102,6 +102,7 @@ public final class Defaults {
               minScopeDepth: 2
               maxFileKb: 1024
               maxStopBlocks: 3
+              allowPlainHttp: false
             paths:
               protected:
                 - .agent/**
@@ -150,6 +151,27 @@ public final class Defaults {
                 - "**/*.keystore"
                 - "**/credentials.xml"
                 - "**/secrets/**"
+                - "**/id_ecdsa*"
+                - "**/id_dsa*"
+                - "**/*.key"
+                - "**/*key.pem"
+                - "**/.config/gh/**"
+                - "**/.config/git/credentials"
+                - "**/.aws/**"
+                - "**/.azure/**"
+                - "**/.config/gcloud/**"
+                - "**/.docker/config.json"
+                - "**/.kube/config"
+                - "**/.gnupg/**"
+                - "**/.pypirc"
+                - "**/.pgpass"
+                - "**/.my.cnf"
+                - "**/.vault-token"
+                - "**/.terraformrc"
+                - "**/.cargo/credentials*"
+                - "**/.composer/auth.json"
+                - "**/.gem/credentials"
+                - "/proc/*/environ"
               doc: [docs/**, README.md, CHANGELOG.md]
             build:
               preCommit: ""

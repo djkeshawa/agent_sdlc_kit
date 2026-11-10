@@ -50,6 +50,8 @@ public final class ShellRules {
     private final List<ShellRule> rules;
     /** How deep check() is nested (bash -c "...", $(...)); the folders of a line are forgotten when the outermost one returns. */
     private int depth;
+    /** Commands nested deeper than this are refused: real work never is, and the checks would take too long. */
+    private static final int MAX_NESTING = 12;
 
     ShellRules(Guard g) {
         this.g = g;
@@ -85,6 +87,7 @@ public final class ShellRules {
     public Decision check(String line) {
         depth++;
         try {
+            if (depth > MAX_NESTING) return Decision.deny("the command nests commands more than " + MAX_NESTING + " levels deep ($(...), sh -c, eval); the guard cannot check that. Write it in plain steps.");
             return line(line);
         } finally {
             if (--depth == 0) g.folders.forgetLine();
@@ -141,11 +144,13 @@ public final class ShellRules {
     /** One simple command: leading NAME=value words and wrappers come off, then the rules are asked in order. */
     Decision command(List<String> raw) {
         List<String> words = new ArrayList<>(raw);
+        Decision question = Decision.allow(); // what a leading NAME=value asks the human; the command itself is still checked
         while (!words.isEmpty()) {
             String w = words.get(0);
             if (w.matches("(?s)^[A-Za-z_][A-Za-z0-9_]*=.*")) {
                 Decision variable = env.variable(w);
-                if (variable != null) return variable;
+                if (variable != null && variable.denied()) return variable;
+                if (variable != null) question = question.strictest(variable);
                 words.remove(0);
             } else if (WRAPPERS.contains(w) && words.size() > 1) {
                 words.remove(0);
@@ -154,13 +159,13 @@ public final class ShellRules {
                 break;
             }
         }
-        if (words.isEmpty()) return Decision.allow();
+        if (words.isEmpty()) return question;
         ShellCommand command = new ShellCommand(raw, words);
         for (ShellRule rule : rules) {
             Decision d = rule.check(command);
-            if (d != null) return d;
+            if (d != null) return d.strictest(question);
         }
-        return Decision.allow();
+        return question;
     }
 
     // ---------------- the rules that need no class of their own ----------------
@@ -184,6 +189,9 @@ public final class ShellRules {
             if (!(w.endsWith("Sdlc.java") || w.endsWith("bin/sdlc") || w.endsWith("sdlc.cmd") || w.equals("sdlc.Main"))) continue;
             String sub = i + 1 < words.size() ? words.get(i + 1) : "";
             String sub2 = i + 2 < words.size() ? words.get(i + 2) : "";
+            if (words.subList(1, i).stream().anyMatch(o -> o.startsWith("-"))) {
+                return Decision.deny("Java options (`" + brief(String.join(" ", words.subList(1, i))) + "`) change how the guard's tool runs. Run it plainly: java .agent/Sdlc.java <command>");
+            }
             if (sub.equals("hook") || sub.equals("git-hook")) return Decision.deny("hooks are run by the IDE and git, not by hand.");
             if (sub.equals("setup") || sub.equals("config") && sub2.equals("apply")) return Decision.deny("setup and config apply change guardrail files; a human runs them.");
             if (sub.equals("review") && sub2.equals("record")) return g.gate.recordReview();

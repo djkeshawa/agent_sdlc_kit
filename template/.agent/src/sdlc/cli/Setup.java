@@ -35,6 +35,7 @@ public final class Setup {
             Files.copy(Ctx.root.resolve(".agent/local.env.example"), env);
             System.out.println("- created .agent/local.env from the example: fill in your tokens");
         }
+        ownerOnly(env);
         if (!Ctx.WINDOWS) {
             try (Stream<Path> hooks = Files.list(Ctx.root.resolve(".githooks"))) {
                 for (Path h : hooks.toList()) h.toFile().setExecutable(true);
@@ -168,6 +169,34 @@ public final class Setup {
         return out;
     }
 
+    /** The tokens file is for its owner only (where the file system knows owners: not on Windows). */
+    private static void ownerOnly(Path file) {
+        try {
+            Files.setPosixFilePermissions(file, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+        } catch (UnsupportedOperationException | IOException e) {
+            // Windows, or a file system without permissions
+        }
+    }
+
+    private static boolean readableByOthers(Path file) {
+        try {
+            var p = Files.getPosixFilePermissions(file);
+            return p.contains(java.nio.file.attribute.PosixFilePermission.GROUP_READ) || p.contains(java.nio.file.attribute.PosixFilePermission.OTHERS_READ);
+        } catch (UnsupportedOperationException | IOException e) {
+            return false;
+        }
+    }
+
+    /** True when the generated hook settings of a tool run the command this version of the kit writes. */
+    private static boolean hooksCurrent(Path settings, String tool) {
+        try {
+            String text = Files.readString(settings);
+            return text.contains(Json.write(AgentTools.hookCommand("pre-tool-use", tool)));
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
     public static int doctor(IssueTracker issues, Wiki wiki) {
         int bad = 0;
         bad += line("Java " + Runtime.version().feature(), Runtime.version().feature() >= 17, "JDK 17+ needed");
@@ -178,6 +207,12 @@ public final class Setup {
         if (!Ctx.cfg.cloud()) line("docker (for the Data Center MCP server)", Proc.run(Ctx.root, "docker", "--version").ok(), "optional: install Docker, or use uvx (see docs)");
         List<String> problems = Ctx.cfg.problems();
         bad += line("sdlc.yml", problems.isEmpty(), String.join("; ", problems));
+        Path env = Ctx.root.resolve(".agent/local.env");
+        if (Files.exists(env)) bad += line(".agent/local.env readable by you only", !readableByOthers(env), "run: chmod 600 .agent/local.env");
+        for (String[] t : new String[][] {{"claude", ".claude/settings.json", "Claude Code"}, {"codex", ".codex/hooks.json", "Codex"}}) {
+            Path settings = Ctx.root.resolve(t[1]);
+            if (Files.exists(settings)) bad += line(t[2] + " hooks up to date", hooksCurrent(settings, t[0]), "run: java .agent/Sdlc.java config apply");
+        }
         bad += check("Jira login", issues::login);
         bad += check("Confluence", () -> {
             wiki.ping();

@@ -108,7 +108,7 @@ human changes. Secrets never go here: they go in `.agent/local.env` ([docs/02 st
 | --- | --- | --- |
 | `paths.protected` | `.agent/**`, `.githooks/**`, `.github/{hooks,agents,prompts,skills,instructions,workflows}/**`, `.github/copilot-instructions.md`, `.github/CODEOWNERS`, `AGENTS.md`, `CLAUDE.md`, `.claude/**`, `.codex/**`, `.agents/**`, `.mcp.json`, `Jenkinsfile`, `.vscode/**`, `sonar-project.properties`, `.gitattributes`, `.sdlc/**` | agents never edit these (tool or shell); CODEOWNERS reviews human changes |
 | `paths.agentWritable` | `.sdlc/*/drafts/**`, `.sdlc/*/inbox/**` | the exceptions inside `.sdlc/` |
-| `paths.secret` | `.agent/local.env`, `**/*.env`, `**/.env.*`, `**/.netrc`, `**/.m2/settings.xml`, keystores, ssh keys, `**/secrets/**`, ... | agents never read or write these; commits of them are blocked |
+| `paths.secret` | `.agent/local.env`, `**/*.env`, `**/.env.*`, `**/.netrc`, `**/.m2/settings.xml`, keystores, ssh and private keys (`**/*.key`, `**/*key.pem`), the token files of `gh`, cloud CLIs, Docker and Kubernetes (`**/.config/gh/**`, `**/.aws/**`, `**/.kube/config`, ...), `/proc/*/environ`, `**/secrets/**`, ... | agents never read or write these; commits of them are blocked |
 | `paths.code` | Java: `src/**`, `**/src/**` | code: edits need a started task and must be in its scope |
 | `paths.main` / `paths.test` | Java: `**/src/main/**` / `**/src/test/**`, `**/src/it/**`, `**/src/integrationTest/**` | main vs test code (tests-with-changes, disabled-test checks) |
 | `paths.ask` | Java: `pom.xml`, `.mvn/**`, `mvnw*`, DB migrations, checkstyle/spotbugs configs, `lombok.config` | edits need a human click (build, dependencies, schema) |
@@ -161,6 +161,7 @@ string: `| TS-01 | src/refund/policy.test.ts#refuses a refund after day 30 |`.
 | `guard.minScopeDepth` | Java `4`, Node `2` | folders a task scope must name before its first wildcard: `src/main/java/com/**` passes, `src/main/java/**` and `**/src/**` are refused by `tasks create` |
 | `guard.maxFileKb` | `1024` | larger files are refused at commit |
 | `guard.maxStopBlocks` | `3` | how often the Stop hook sends an agent back to run `verify` before giving the turn to you |
+| `guard.allowPlainHttp` | `false` | `true` lets the tool send tokens to an `http://` server (Jira, Confluence, Jenkins, SonarQube) that is not this machine; leave it off unless a server inside your network has no https |
 
 ## Environment variables (`.agent/local.env` or the environment)
 

