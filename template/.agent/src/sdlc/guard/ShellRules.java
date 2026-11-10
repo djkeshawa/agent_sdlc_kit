@@ -189,7 +189,7 @@ public final class ShellRules {
             if (!(w.endsWith("Sdlc.java") || w.endsWith("bin/sdlc") || w.endsWith("sdlc.cmd") || w.equals("sdlc.Main"))) continue;
             String sub = i + 1 < words.size() ? words.get(i + 1) : "";
             String sub2 = i + 2 < words.size() ? words.get(i + 2) : "";
-            if (words.subList(1, i).stream().anyMatch(o -> o.startsWith("-"))) {
+            if (i > 1 && words.subList(1, i).stream().anyMatch(o -> o.startsWith("-"))) { // the launcher may be the first word
                 return Decision.deny("Java options (`" + brief(String.join(" ", words.subList(1, i))) + "`) change how the guard's tool runs. Run it plainly: java .agent/Sdlc.java <command>");
             }
             if (sub.equals("hook") || sub.equals("git-hook")) return Decision.deny("hooks are run by the IDE and git, not by hand.");

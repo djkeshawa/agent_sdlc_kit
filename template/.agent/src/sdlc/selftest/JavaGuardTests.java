@@ -122,6 +122,11 @@ final class JavaGuardTests {
         expect("approval text", shell("java .agent/Sdlc.java jira comment PROJ-1 --text 'SDLC-APPROVED PROJ-1 lld 1v2 abc'"), Decision.Kind.DENY);
         expect("run hook by hand", shell("java .agent/Sdlc.java hook pre-tool-use"), Decision.Kind.DENY);
         expect("setup by agent", shell("sh .agent/bin/sdlc setup"), Decision.Kind.DENY);
+        expect("launcher run directly", shell(".agent/bin/sdlc status"), Decision.Kind.ALLOW);
+        expect("launcher run directly, no arguments", shell(".agent/bin/sdlc"), Decision.Kind.ALLOW);
+        expect("windows launcher run directly", shell(".agent\\bin\\sdlc.cmd status"), Decision.Kind.ALLOW);
+        expect("setup through the launcher run directly", shell(".agent/bin/sdlc setup"), Decision.Kind.DENY);
+        expect("hook through the launcher run directly", shell(".agent/bin/sdlc hook pre-tool-use"), Decision.Kind.DENY);
         expect("config apply by agent", shell("java .agent/Sdlc.java config apply"), Decision.Kind.DENY);
         expect("status ok", shell("java .agent/Sdlc.java status"), Decision.Kind.ALLOW);
         expect("compile into build", shell("javac -d .agent/.build /tmp/Evil.java"), Decision.Kind.DENY);
