@@ -204,6 +204,16 @@ public final class Catalog {
         return r.substring(r.lastIndexOf('/') + 1).toLowerCase(Locale.ROOT);
     }
 
+    /** Repositories (owner/name) the tool knows: this one, github.relatedRepos and catalog.repos. */
+    public static List<String> knownRepos() {
+        Set<String> out = new LinkedHashSet<>();
+        String origin = GitHub.originRepo();
+        if (!origin.isBlank()) out.add(origin);
+        for (Map<String, Object> r : Ctx.cfg.maps("github.relatedRepos")) if (!Work.str(r.get("repo")).isBlank()) out.add(Work.str(r.get("repo")));
+        out.addAll(Ctx.cfg.list("catalog.repos"));
+        return new ArrayList<>(out);
+    }
+
     // ---------------- commands ----------------
 
     /** sdlc catalog check: this repository's catalog-info.yaml is complete and its API files exist. */

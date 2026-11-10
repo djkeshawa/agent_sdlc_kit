@@ -40,10 +40,9 @@ public final class CoChange {
         if (epics.isEmpty()) throw new UsageException("usage: sdlc catalog cochange <EPIC> [<EPIC> ...] [--min 2]");
         Map<String, Set<String>> byEpic = new LinkedHashMap<>();
         for (String epic : epics) {
-            List<String> keys = new ArrayList<>(List.of(epic));
-            for (IssueTracker.Issue c : w.issues.children(epic)) keys.add(c.key());
+            List<String> keys = Eval.keysOf(w, epic);
             Set<String> comps = new TreeSet<>();
-            for (String repo : GitHub.reposFor(keys).keySet()) comps.add(Catalog.componentOfRepo(repo));
+            for (String repo : GitHub.reposFor(keys, Catalog.knownRepos()).keySet()) comps.add(Catalog.componentOfRepo(repo));
             byEpic.put(epic, comps);
             w.console.out(epic + ": " + comps);
         }

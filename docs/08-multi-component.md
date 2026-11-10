@@ -16,8 +16,12 @@ an agent, a model or the catalog.
 java .agent/Sdlc.java eval collect PAY-10 PAY-42 PAY-77
 ```
 
-For each epic, the tool searches GitHub for commits that mention the epic's key or one of its
-stories' keys (`github.org` limits the search), and writes:
+For each epic, the tool looks for commits that mention the key of the epic, of one of its
+stories or of one of their sub-tasks (commits usually carry the sub-task's key). It looks in two
+places: GitHub's commit search (`github.org` limits it), and the commit lists of every branch of
+the repositories it knows (this one, `github.relatedRepos`, `catalog.repos`; the newest
+`github.commitPages` x 100 commits per branch). The second is needed because the commit search
+covers default branches only and often returns nothing for private repositories. It writes:
 
 | File | Content | Agents |
 | --- | --- | --- |
@@ -224,7 +228,8 @@ java .agent/Sdlc.java catalog cochange PAY-10 PAY-42 PAY-77 [--min 2]
 ```
 
 For each epic, GitHub commit search by the epic's and its stories' Jira keys gives the
-components that changed (every commit carries its key, so this needs no extra data). Each pair
+components that changed (every commit carries its key, so this needs no extra data; found the
+same two ways as for `eval collect`). Each pair
 that changed together is explained by the catalog (declared), by a scan or trace (found but not
 declared), or by nothing. A pair that changes together at least `--min` times with nothing to
 explain it is usually a hidden coupling: a shared table, a shared library, a copied DTO. Fix the
@@ -266,6 +271,29 @@ ending in `+` adds to a list at any layer (`protected+: [docs/legal/**]`).
 `java .agent/Sdlc.java selftest` includes the multi-component rules (catalog parsing, scans,
 OpenAPI / AsyncAPI diffs, solution checks, slices, stories, lanes, locks, contract policy,
 co-change, upgrade). `python3 tests/e2e/run.py` runs the epic flow against the mock Jira,
-Confluence, Jenkins and a fake `gh` (`tests/e2e/multi.py`). Not tested against real services yet:
-GitHub commit search on a real organisation, a real QE hold-out job, and Jira Data Center's
-Epic Link field.
+Confluence, Jenkins and a fake `gh` (`tests/e2e/multi.py`).
+
+**Live run (November 2026)** against Jira Cloud and Confluence Cloud (one site), a private GitHub
+repository and a Jenkins LTS in Docker, with a provider and a consumer repository:
+
+- an epic with a solution design: publish refused while a component was disputed, then published;
+  `stories create` refused before the approval and created two stories after it;
+- `docs pull` on each story wrote its slice; an LLD with `lane: patch` and a stale slice hash was
+  refused by `tasks create`, the corrected one created Jira sub-tasks and the contract allowance;
+- `check-pr` failed an operation the slice did not list and passed once it was removed;
+- QE's acceptance test was locked; a weakened copy was refused by pre-commit and by `verify`;
+- the pull request went through the Jenkins pipeline and `ci wait` read it as green;
+- `feature status` showed both LLDs approved and current; after solution v2 changed only the
+  consumer's slice, only that story was commented, its LLD showed as OUTDATED, and its
+  `tasks create` and `task start` were refused while the provider's story was untouched;
+- `holdout status` read a QE job's results without the failure message that held the input;
+- `eval collect`, `eval score`, `catalog cochange`, `catalog sync / scan / graph` and `upgrade`.
+
+That run found and fixed: locked acceptance tests counted as code outside the tasks' scope;
+`task start` not noticing a changed slice; GitHub's commit search returning nothing for private
+repositories and feature branches; and commits under sub-task keys not counted for an epic.
+
+Not tested live: a consumer repository on GitHub (it stayed local, so `catalog sync` through
+`gh` and co-change across two real repositories ran only against the mock), real hold-out tests
+(the QE job returned prepared results), a red CI round on the new checks, Jira Data Center's
+Epic Link field, and agent sessions driving the new commands (the steps were run by hand).

@@ -54,6 +54,7 @@ public final class Defaults {
             github:
               host: github.com
               org: ""
+              commitPages: 3
               relatedRepos: []
             eval:
               dir: docs/agent/eval

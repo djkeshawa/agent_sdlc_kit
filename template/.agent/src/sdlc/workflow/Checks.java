@@ -168,8 +168,10 @@ public final class Checks {
         List<String> scopes = new ArrayList<>();
         for (Object t : Work.tasks(Work.state(story)).values()) scopes.addAll(Work.strings(Json.obj(t).get("scope")));
         if (scopes.isEmpty()) return null;
-        // guardrail files (the kit's own .agent/src among them) have their own rule: CODEOWNERS review
-        return changed.stream().filter(f -> Glob.any(Ctx.cfg.list("paths.code"), f) && !Glob.any(scopes, f) && !Glob.any(Ctx.cfg.list("paths.ask"), f)
+        // guardrail files (the kit's own .agent/src among them) have their own rule: CODEOWNERS review.
+        // Acceptance tests locked by QE belong to no task: they come with the lock, and the lock check guards them.
+        Map<String, sdlc.core.Locks.Entry> locked = sdlc.core.Locks.locked(Ctx.root);
+        return changed.stream().filter(f -> Glob.any(Ctx.cfg.list("paths.code"), f) && !Glob.any(scopes, f) && !locked.containsKey(f) && !Glob.any(Ctx.cfg.list("paths.ask"), f)
                 && !Glob.any(Ctx.cfg.list("paths.protected"), f) && !Glob.any(Ctx.cfg.list("paths.doc"), f)).toList();
     }
 

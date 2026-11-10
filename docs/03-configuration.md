@@ -65,6 +65,7 @@ human changes. Secrets never go here: they go in `.agent/local.env` ([docs/02 st
 | --- | --- | --- |
 | `github.host` | `github.com` | or your Enterprise host (changes the generated MCP config) |
 | `github.relatedRepos` | `[]` | other teams' repos the designer may read: `{name, repo, team, purpose}`; `sdlc repos sync` makes local read-only copies |
+| `github.commitPages` | `3` | pages of 100 commits read per branch when looking for a Jira key in the known repositories |
 | `github.org` | `""` | your GitHub organisation; limits the commit search of `eval collect` (and `catalog cochange`) to it |
 | `eval.dir` | `docs/agent/eval` | the scoping eval's cases (`scoping/cases/`); the ground truth lives in `.sdlc/hidden/eval/truth/`, [docs/08](08-multi-component.md#phase-0-the-scoping-eval) |
 

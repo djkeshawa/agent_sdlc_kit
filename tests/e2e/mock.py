@@ -157,10 +157,14 @@ class H(BaseHTTPRequestHandler):
         if path == "/__gh/commits" and m == "POST":
             S["commits"] = data["commits"]
             return self.send({})
+        if path == "/__gh/repo":
+            if q.get("kind") == "branches":
+                return self.send([{"name": "develop"}] if any(c["repo"] == q["repo"] for c in S["commits"]) else [])
+            return self.send([{"sha": c["sha"], "commit": {"message": c["message"]}} for c in S["commits"] if c["repo"] == q["repo"]] if q.get("page") == "1" else [])
         if path == "/__gh/commits":
             words = [w.strip('"') for w in q.get("q", "").split() if not w.startswith("org:")]
             items = [{"sha": c["sha"], "repository": {"full_name": c["repo"]}, "commit": {"message": c["message"]}}
-                     for c in S["commits"] if all(w in c["message"] for w in words)]
+                     for c in S["commits"] if c.get("searchable", True) and all(w in c["message"] for w in words)]
             return self.send({"total_count": len(items), "items": items})
         if path == "/__gh/files" and m == "POST":
             S["files"].update(data["files"])

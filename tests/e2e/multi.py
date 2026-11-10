@@ -4,14 +4,14 @@
 # ---------- Phase 0: scoping eval ----------
 admin("/__gh/commits", {"commits": [
     {"repo": "acme/payments-service", "sha": "a1", "message": "feat(PAY-100): refund endpoint"},
-    {"repo": "acme/orders-service", "sha": "b1", "message": "feat(PAY-10): show refund status"},
-    {"repo": "acme/orders-service", "sha": "b2", "message": "fix(PAY-10): status label"},
+    {"repo": "acme/orders-service", "sha": "b1", "message": "feat(PAY-101): show refund status (carries a sub-task's key)"},
+    {"repo": "acme/orders-service", "sha": "b2", "message": "fix(PAY-102): status label"},
     {"repo": "acme/unrelated", "sha": "c1", "message": "chore(PAY-1000): not this epic"},
 ]})
 code, out = sdlc("eval", "collect", "PAY-10")
 truth = PROJ / ".sdlc/hidden/eval/truth/PAY-10.yml"
 case = PROJ / "docs/agent/eval/scoping/cases/PAY-10.md"
-check("eval collect: truth from commits by the epic's and its stories' keys", code == 0 and truth.exists()
+check("eval collect: truth from commits by the epic's, its stories' and their sub-tasks' keys", code == 0 and truth.exists()
       and "components: [orders-service, payments-service]" in truth.read_text() and "unrelated" not in truth.read_text(), out)
 check("eval collect: case input has the epic's Jira text", case.exists() and "Refunds epic" in case.read_text(), out)
 d, why = hook("read_file", {"filePath": str(truth)})
@@ -213,8 +213,12 @@ check("holdout digest never shows the hidden test's inputs", "SECRET-INPUT-42" n
 check("holdout: Jenkins token sent to the configured job", any(a[0] == "holdout" and a[2].startswith("Basic") for a in state()["auth_seen"]))
 
 # ---------- Phase 3: co-change, runtime traces, pinned kit version ----------
+admin("/__gh/commits", {"commits": [
+    {"repo": "acme/payments-service", "sha": "a1", "message": "feat(PAY-100): refund endpoint"},
+    {"repo": "acme/orders-service", "sha": "b9", "message": "feat(PAY-10): on a feature branch, not in the search index", "searchable": False},
+]})
 code, out = sdlc("catalog", "cochange", "PAY-10")
-check("cochange: components that changed together for an epic, explained by the catalog", code == 0 and "orders-service + payments-service" in out
+check("cochange: commits the search misses are found in the known repositories' branches; pairs explained by the catalog", code == 0 and "orders-service + payments-service" in out
       and "declared in the catalog" in out and (PROJ / ".sdlc/catalog/cochange.md").exists(), out)
 deps = WORK / "jaeger-deps.json"
 deps.write_text(json.dumps({"data": [{"parent": "payments-service", "child": "ledger-service", "callCount": 7}]}))

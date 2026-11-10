@@ -110,6 +110,22 @@ public final class Lanes {
         return 0;
     }
 
+    /**
+     * For task start: the solution changed this component's slice after the tasks were created
+     * (a message), or null when the slice is still the one the LLD was approved for.
+     */
+    static String staleSlice(Workflow w, String story) {
+        String had = Work.str(Store.read(allowanceFile(story)).get("solutionSlice"));
+        Docs.Doc d = w.docs.solution(story);
+        if (d == null || had.isBlank()) return null;
+        Solution s = Solution.parseStorage(w.wiki.page(d.id()).storage());
+        String self = Catalog.selfName();
+        if (!s.components.containsKey(self)) return "The solution design no longer includes this repository's component '" + self + "'. Stop and ask the architect.";
+        String now = s.sliceHash(self);
+        return now.equals(had) ? null : "The solution design changed this component's slice (" + had + " -> " + now + ") since the tasks were created. Update the LLD from the new slice "
+                + "(java .agent/Sdlc.java docs pull " + story + "), get it approved, and run: java .agent/Sdlc.java tasks create " + story;
+    }
+
     /** Where tasks create records what the story may change in its contracts; committed, so check-pr in CI can read it. */
     public static java.nio.file.Path allowanceFile(String story) {
         return Ctx.root.resolve("docs/agent/contracts").resolve(story + ".json");

@@ -23,6 +23,7 @@ import sdlc.guard.Decision;
 import sdlc.util.Proc;
 import sdlc.workflow.Approvals;
 import sdlc.workflow.Catalog;
+import sdlc.workflow.Checks;
 import sdlc.workflow.CatalogScan;
 import sdlc.workflow.CoChange;
 import sdlc.workflow.Contracts;
@@ -350,6 +351,8 @@ final class MultiRepoTests {
         check("epic: a new solution version comments only on the changed story", w.stories.create("PROJ-50") == 0
                 && tracker.comments.get(payStory).stream().anyMatch(c -> c.body().contains("changed this story's slice"))
                 && tracker.comments.getOrDefault(ordersStory, List.of()).size() == before);
+        check("lanes: task start refused once the solution changed this component's slice", w.tasks.start(tracker.created.get(2).key()) == 1
+                && String.join("\n", said.err).contains("changed this component's slice"));
         said.out.clear();
         w.feature.status("PROJ-50");
         check("feature: an LLD from the old slice shows as outdated", String.join("\n", said.out).contains("OUTDATED"));
@@ -392,6 +395,8 @@ final class MultiRepoTests {
         check("locks: QE locks the drafted acceptance test", TestLocks.lock("PROJ-70", "") == 0 && Files.exists(tmp.resolve(test))
                 && Locks.isLocked(tmp, test) && Locks.broken(tmp).isEmpty());
         check("locks: a CRLF checkout hashes the same", Locks.hash("a\r\nb\n".getBytes()).equals(Locks.hash("a\nb\n".getBytes())));
+        Store.write(tmp.resolve(".sdlc/PROJ-70/state.json"), Store.map("story", "PROJ-70", "tasks", Map.of("PROJ-71", Store.map("scope", List.of("src/main/java/com/acme/refund/**")))));
+        check("locks: a locked acceptance test is not 'code outside the tasks' scope'", Checks.outsideScope("PROJ-70", List.of(test, "src/main/java/demo/A.java")).equals(List.of("src/main/java/demo/A.java")));
         expect("locks: agent edit tool refused on a locked test", tool("replace_string_in_file", "{\"filePath\":\"" + json(tmp) + "/" + test + "\"}"), Decision.Kind.DENY);
         expect("locks: shell write refused on a locked test", shell("echo '' > " + test), Decision.Kind.DENY);
         expect("locks: sed -i refused on a locked test", shell("sed -i s/TS/XX/ " + test), Decision.Kind.DENY);

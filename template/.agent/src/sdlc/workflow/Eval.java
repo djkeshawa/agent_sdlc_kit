@@ -59,11 +59,10 @@ public final class Eval {
         int written = 0;
         for (String epic : epics) {
             if (!Work.isKey(epic)) throw new UsageException("'" + epic + "' is not a Jira key");
-            List<String> keys = new ArrayList<>(List.of(epic));
-            for (IssueTracker.Issue child : w.issues.children(epic)) keys.add(child.key());
-            Map<String, Integer> repos = GitHub.reposFor(keys);
+            List<String> keys = keysOf(w, epic);
+            Map<String, Integer> repos = GitHub.reposFor(keys, Catalog.knownRepos());
             if (repos.isEmpty()) {
-                w.console.err(epic + ": no commits found for " + keys + " (github.org = '" + Ctx.cfg.str("github.org") + "'); skipped");
+                w.console.err(epic + ": no commits found for " + keys + " (commit search with github.org = '" + Ctx.cfg.str("github.org") + "', and every branch of " + Catalog.knownRepos() + "); skipped");
                 continue;
             }
             Set<String> components = new TreeSet<>();
@@ -80,6 +79,17 @@ public final class Eval {
         }
         w.console.out("\n" + written + " case(s) in " + Ctx.rel(dir()) + ". Review " + Ctx.rel(truthDir()) + "/*.yml, then let the agents answer (/eval-scoping <run>) and run: java .agent/Sdlc.java eval score");
         return written == epics.size() ? 0 : 1;
+    }
+
+    /** The epic's key, its stories' keys and their sub-tasks' keys: commits usually carry the sub-task's key. */
+    static List<String> keysOf(Workflow w, String epic) {
+        List<String> keys = new ArrayList<>(List.of(epic));
+        for (IssueTracker.Issue story : w.issues.children(epic)) {
+            if (keys.contains(story.key())) continue;
+            keys.add(story.key());
+            for (IssueTracker.Issue task : w.issues.children(story.key())) if (!keys.contains(task.key())) keys.add(task.key());
+        }
+        return keys;
     }
 
     /** The case input: the epic's Jira text and its one pager / HLD pages. Never the code or later designs. */

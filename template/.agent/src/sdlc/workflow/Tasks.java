@@ -230,6 +230,13 @@ public final class Tasks {
                 }
             }
         }
+        if (Lanes.enabled() && "cross-component".equals(state.get("lane"))) {
+            String stale = Lanes.staleSlice(w, story);
+            if (stale != null) {
+                w.console.err(stale);
+                return 1;
+            }
+        }
         if (Ctx.cfg.bool("tests.lockAcceptance", false) && !sdlc.core.Locks.hasStory(Ctx.root, story)) {
             w.console.err("QE has not locked " + story + "'s acceptance tests yet (tests.lockAcceptance): qa-verifier drafts them in .sdlc/" + story
                     + "/drafts/acceptance/, a QE person reviews and runs: java .agent/Sdlc.java tests lock " + story);

@@ -99,7 +99,7 @@ Then in Copilot Chat, Claude Code or Codex: `/analyse` once, and per story `/tes
 
 ## What was tested
 
-- **Self test:** `java .agent/Sdlc.java selftest` - 520 checks of the shell, file, MCP, git,
+- **Self test:** `java .agent/Sdlc.java selftest` - 522 checks of the shell, file, MCP, git,
   secret, scope, gate and parsing rules, and of the multi-component additions (catalog, scans,
   contract diffs, solution design, stories, lanes, test locks, co-change, upgrade).
 - **Full flow against mocks:** a scratch Maven repository with a mock Jira Cloud, Confluence
@@ -140,7 +140,13 @@ Then in Copilot Chat, Claude Code or Codex: `/analyse` once, and per story `/tes
   new-code coverage gate (the digest named the file and its 11 uncovered lines), green after a
   reviewed fix.
 
-Not tested: Jira/Confluence Data Center, a Windows machine, GitHub Enterprise Server, the
-multi-component additions against real services (GitHub commit search, a QE hold-out job), and a
+- **Multi-component flow against real services** (November 2026): Jira Cloud, Confluence Cloud,
+  a private GitHub repository and Jenkins, with a provider and a consumer repository: solution
+  design and its approval, stories per component, slices, lanes, the contract check, locked
+  acceptance tests, a pull request through Jenkins, a solution change that re-opened only the
+  consumer's design, hold-out results, the scoping eval and co-change. What it covered, the four
+  bugs it found, and what it did not cover: [docs/08](docs/08-multi-component.md#testing-it).
+
+Not tested: Jira/Confluence Data Center, a Windows machine, GitHub Enterprise Server, and a
 live VS Code + Copilot session (its hooks were driven with the payloads VS Code and the Copilot
 CLI send). Do the 10-minute hook test in docs/02 on your machine, with every tool you use.
