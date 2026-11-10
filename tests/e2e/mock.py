@@ -32,6 +32,8 @@ S = {
     "attachments": [],
     "ci_round": 0,  # which CI round the PR checks report
     "prs": {},
+    "commits": [],  # {repo, sha, message} for gh api search/commits
+    "files": {},  # "owner/repo:path" -> text for gh api repos/<repo>/contents/<path>
     "auth_seen": [],  # (path, auth header) seen by Jenkins/Sonar endpoints
     "requests": [],
 }
@@ -152,6 +154,20 @@ class H(BaseHTTPRequestHandler):
             elif m == "PUT":
                 S["prs"][data["branch"]].update(data["fields"])
             return self.send(S["prs"].get(q.get("branch", data.get("branch", "")), {}))
+        if path == "/__gh/commits" and m == "POST":
+            S["commits"] = data["commits"]
+            return self.send({})
+        if path == "/__gh/commits":
+            words = [w.strip('"') for w in q.get("q", "").split() if not w.startswith("org:")]
+            items = [{"sha": c["sha"], "repository": {"full_name": c["repo"]}, "commit": {"message": c["message"]}}
+                     for c in S["commits"] if all(w in c["message"] for w in words)]
+            return self.send({"total_count": len(items), "items": items})
+        if path == "/__gh/files" and m == "POST":
+            S["files"].update(data["files"])
+            return self.send({})
+        if path == "/__gh/file":
+            f = S["files"].get(q.get("ref", ""))
+            return self.send(None, 200, text=f) if f is not None else self.send({"message": "Not Found"}, 404)
         if path == "/__gh/checks":
             head = q.get("head", "")
             if S.get("ci_auto") and head and S["prs"]:
@@ -190,10 +206,13 @@ class H(BaseHTTPRequestHandler):
             f = data["fields"]
             key = "PAY-%d" % S["next_issue"]
             S["next_issue"] += 1
-            S["issues"][key] = {"summary": f["summary"], "type": "Sub-task", "status": "To Do", "parent": f["parent"]["key"], "description": f.get("description")}
+            S["issues"][key] = {"summary": f["summary"], "type": f.get("issuetype", {}).get("name", "Sub-task"), "status": "To Do",
+                                "parent": (f.get("parent") or {}).get("key"), "description": f.get("description")}
             return self.send({"id": key, "key": key}, 201)
         if path in ("/rest/api/3/search/jql", "/rest/api/2/search"):
-            return self.send({"issues": [issue_json(k) for k in S["issues"]]})
+            mp_ = re.match(r"^parent\s*=\s*(\S+)$", (data.get("jql") or "").strip())
+            keys = [k for k, v in S["issues"].items() if v.get("parent") == mp_.group(1)] if mp_ else list(S["issues"])
+            return self.send({"issues": [issue_json(k) for k in keys]})
         # ---------------- Confluence ----------------
         if path == "/wiki/rest/api/search":
             mt2 = re.search(r'title ~ "\\"([^\\"]+)\\""', q["cql"])

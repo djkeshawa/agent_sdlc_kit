@@ -69,6 +69,9 @@ public final class Main {
             jira get <KEY> [--comments N] | jira search "<JQL>" | jira comment <KEY> --file F | --text T
             jira transitions <KEY> | jira transition <KEY> "<Status>" | jira link <KEY> <URL>
             confluence get <PAGE_ID> [--storage]  (--storage: raw page markup)
+
+            eval collect <EPIC>...               scoping eval: case input + ground truth from commits per Jira key (gh)
+            eval score [--runs r1,r2]            score agent answers in .sdlc/eval/inbox/<run>/ against the truth
             """;
 
     private Main() {}
@@ -200,6 +203,11 @@ public final class Main {
             case "sync" -> w.sync.run(pos(a, 1), false);
             case "retro", "mistakes" -> Mistakes.retro(w.issues, a.length > 1 && !a[1].startsWith("--") ? a[1] : Work.currentStory(), opt.containsKey("comment"));
             case "jira" -> jira(w.issues, c1, a, opt);
+            case "eval" -> switch (c1) {
+                case "collect" -> w.eval.collect(positional(a, 2));
+                case "score" -> w.eval.score(opt.containsKey("runs") ? List.of(opt.get("runs").split(",")) : List.of());
+                default -> usage();
+            };
             case "confluence" -> {
                 Wiki.Page p = w.wiki.page(need(a, 2, "PAGE_ID"));
                 System.out.println(opt.containsKey("storage") ? p.storage() // the raw storage format, to debug the Markdown conversion
@@ -260,6 +268,19 @@ public final class Main {
     private static String need(String[] a, int i, String what) {
         if (i >= a.length || a[i].startsWith("--") || a[i].isBlank()) throw new UsageException("missing " + what + "\n" + USAGE);
         return a[i];
+    }
+
+    /** The arguments from index i on that are not options. */
+    private static List<String> positional(String[] a, int i) {
+        List<String> out = new ArrayList<>();
+        for (int j = i; j < a.length; j++) {
+            if (a[j].startsWith("--")) {
+                j++; // skip the option's value
+                continue;
+            }
+            out.add(a[j]);
+        }
+        return out;
     }
 
     private static String pos(String[] a, int i) {

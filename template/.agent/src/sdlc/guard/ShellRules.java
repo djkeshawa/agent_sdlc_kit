@@ -174,7 +174,7 @@ public final class ShellRules {
     private Decision secretsAndToolCopy(ShellCommand c) {
         for (String w : c.words()) {
             if (w.toUpperCase(Locale.ROOT).contains(Markers.APPROVAL_WORD)) return Decision.deny("approvals are posted by a human in Jira, never by an agent.");
-            if (g.files.isSecretWord(w)) return Decision.deny("`" + w + "` holds credentials. Agents never read secrets.");
+            if (g.files.isSecretWord(w)) return Decision.deny("`" + w + "` holds credentials or hidden test data. Agents never read it.");
             if (w.replace('\\', '/').contains(".agent/.build") || !w.startsWith("-") && (g.files.relative(w).startsWith(".agent/.build")
                     || g.files.otherReadings(w).stream().anyMatch(r -> r.startsWith(".agent/.build")))) return Decision.deny("the compiled tool copy is managed by the tool only.");
         }

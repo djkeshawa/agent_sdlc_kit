@@ -74,6 +74,7 @@ agentic-sdlc-java-kit/
 | 5 | [CI: Jenkins, SonarQube, GitHub](docs/05-ci-jenkins-sonar.md) - what the kit needs from CI | 45 min |
 | 6 | [Guardrails reference and limits](docs/06-guardrails-reference.md) | read once |
 | 7 | [Troubleshooting](docs/07-troubleshooting.md) | when needed |
+| 8 | [Features across several components and repositories](docs/08-multi-component.md) - scoping eval, catalog, solution design, contracts, locked and hold-out tests | when you need it |
 
 ## Quick start (if you already know the tools)
 

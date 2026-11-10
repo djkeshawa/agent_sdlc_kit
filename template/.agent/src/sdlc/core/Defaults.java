@@ -47,7 +47,10 @@ public final class Defaults {
               mindmapImage: true
             github:
               host: github.com
+              org: ""
               relatedRepos: []
+            eval:
+              dir: docs/agent/eval
             ci:
               waitMinutes: 60
               pollSeconds: 30
@@ -86,6 +89,8 @@ public final class Defaults {
               reviewer: {model: ""}
               qa-verifier: {model: ""}
               ci-fixer: {model: ""}
+              impact-analyst: {model: ""}
+              eval-runner: {model: ""}
             git:
               protectedBranches: [main, master, develop, "release/*"]
               branchPattern: "^(feature|bugfix|hotfix|chore)/[A-Z][A-Z0-9]+-[0-9]+(-[a-z0-9._-]+)?$"
@@ -172,6 +177,9 @@ public final class Defaults {
                 - "**/.composer/auth.json"
                 - "**/.gem/credentials"
                 - "/proc/*/environ"
+              hidden:
+                - "docs/agent/eval/**/truth/**"
+                - ".sdlc/hidden/**"
               doc: [docs/**, README.md, CHANGELOG.md]
             build:
               preCommit: ""

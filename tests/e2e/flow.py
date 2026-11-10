@@ -533,6 +533,9 @@ check("Claude settings wire PreToolUse to the guard", "PreToolUse" in json.dumps
 code, out = sdlc("selftest")
 check("selftest in the project", code == 0 and "SELFTEST PASSED" in out, out[-400:])
 
+# =============================== 7. multi-component delivery (tests/e2e/multi.py) ===============================
+exec((HERE / "multi.py").read_text())
+
 passed = sum(1 for _, ok in RESULTS if ok)
 print("\n%d/%d checks passed" % (passed, len(RESULTS)))
 sys.exit(0 if passed == len(RESULTS) else 1)

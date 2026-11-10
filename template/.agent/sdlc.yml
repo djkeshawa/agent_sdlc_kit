@@ -63,6 +63,7 @@ confluence:
 # ---------------------------------------------------------------------------------------
 github:
   host: github.com                # or your GitHub Enterprise host, e.g. github.yourcompany.com
+  org: ""                         # your GitHub organisation: limits commit searches (eval collect, catalog cochange)
   relatedRepos: []
   # relatedRepos:
   #   - name: orders-service
@@ -125,6 +126,8 @@ agents:
   reviewer: {model: ""}
   qa-verifier: {model: ""}
   ci-fixer: {model: ""}
+  impact-analyst: {model: ""}     # scoping (multi-component); a different family than the architect helps
+  eval-runner: {model: ""}
 
 # ---------------------------------------------------------------------------------------
 # Optional overrides (defaults depend on the stack; see docs/03-configuration.md)
