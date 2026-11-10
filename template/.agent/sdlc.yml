@@ -92,6 +92,7 @@ gates:
     testDesign: []
     lld: []
   botAccounts: []                 # accounts whose comments never count as approval
+  allowSelfApproval: false        # true = the person who published a page may approve it (a team of one)
 
 loops:
   review: {min: 2, max: 5}        # implementer <-> blind reviewer rounds per task

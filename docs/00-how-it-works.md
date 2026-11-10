@@ -74,7 +74,9 @@ counts only if all of these hold:
 - it is in a **new** comment on the issue that owns the page (never an edited comment);
 - the page is still at that version **and** that content (any edit in Confluence needs a new line);
 - the author is not a bot account (`gates.botAccounts`) and not the tool itself;
-- the author is in `gates.approvers.<type>`, when that list is not empty.
+- the author is in `gates.approvers.<type>`, when that list is not empty;
+- the author is not the person who saved that version of the page (four eyes; a team of one sets
+  `gates.allowSelfApproval: true`).
 
 Agents cannot post it: the hook refuses any command containing `SDLC-APPROVED`, the tool refuses
 to post it, and the Atlassian MCP server is read-only for agents.

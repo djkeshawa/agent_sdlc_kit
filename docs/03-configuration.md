@@ -76,6 +76,7 @@ human changes. Secrets never go here: they go in `.agent/local.env` ([docs/02 st
 | `gates.testDesign` / `gates.lld` | `required` | `required` blocks, `optional` warns, `off` skips the approval |
 | `gates.approvers.testDesign` / `.lld` | `[]` | who may approve (Cloud account ids, DC usernames); empty = any human |
 | `gates.botAccounts` | `[]` | accounts whose comments never count as approval (put the tool's bot here) |
+| `gates.allowSelfApproval` | `false` | `false` = the account that saved the page version cannot approve it (four eyes). With a shared bot token the page author is the bot, so this only bites when people publish with their own token |
 | `loops.review.min` / `.max` | `2` / `5` | review rounds per task; the PR gate needs `min` with the last one APPROVE; past `max` the tool refuses and hands over |
 | `loops.qa.max` | `3` | failed QA rounds before handing over |
 | `loops.ci.max` | `3` | failed CI rounds before pushes are refused and a human takes over |
@@ -135,20 +136,21 @@ The **Node preset** (`stack: node`) replaces the Java values:
 
 | Key | Node default |
 | --- | --- |
-| `build.verify` | `npm run lint --if-present && npm test && npm run build --if-present` (pnpm/yarn: set your own) |
+| `build.verify` | `npm run lint --if-present && npm test && npm run build --if-present`. Left at this default, a `pnpm-lock.yaml` or `yarn.lock` in the repository switches the same steps to pnpm or yarn (yarn: lint and build only when `package.json` has the script) |
 | `build.testOne` | `npm test -- <path/to/file.test.ts> -t '<test name>'` |
 | `build.tools` | `npm`, `npx`, `yarn`, `pnpm`, `jest`, `vitest`, `mocha`, `ng`, `nx` |
 | `build.forbiddenArgs` | `--passWithNoTests`, `--no-verify`, `--ignore-scripts`, `--forceExit`, `--bail=0` |
 | `build.askArgs` | `-u`, `--updateSnapshot`, `install`, `i`, `add`, `ci`, `dlx`, `exec` (dependencies, snapshots) |
 | `build.forbiddenGoals` | `publish`, `version`, `release` |
-| `paths.code` / `paths.main` | `src/**`, `lib/**`, `app/**`, `apps/**`, `packages/**`, `libs/**`, `components/**`, `pages/**`, `server/**`, `client/**` (+ test folders for code) |
+| `paths.code` | every `*.js`, `*.jsx`, `*.ts`, `*.tsx`, `*.mjs`, `*.cjs`, `*.vue`, `*.svelte` file anywhere, plus `src/**`, `lib/**`, `app/**`, `apps/**`, `packages/**`, `libs/**`, `components/**`, `pages/**`, `server/**`, `client/**` and the test folders |
+| `paths.main` | `src/**`, `lib/**`, `app/**`, `apps/**`, `packages/**`, `libs/**`, `components/**`, `pages/**`, `server/**`, `client/**`, `routes/**`, `controllers/**`, `models/**`, `middleware/**`, `services/**`, `api/**`, `utils/**`, `helpers/**`, `hooks/**`, `store/**`, `features/**`, `modules/**`, and `index`/`server`/`app`/`main` files in the root (main code needs a test change) |
 | `paths.test` | `**/*.{test,spec}.{js,jsx,ts,tsx,mjs,cjs}`, `**/__tests__/**`, `test/**`, `tests/**`, `e2e/**`, `cypress/**`, `playwright/**` |
 | `paths.ask` | `package.json`, lockfiles, `tsconfig*.json`, `jest/vitest/vite/playwright/cypress` configs, ESLint/Prettier/Babel/webpack configs, `.nvmrc` |
 | `tests.codeExtensions` | `js`, `jsx`, `ts`, `tsx`, `mjs`, `cjs`, `vue`, `svelte` |
 | `tests.disabledPatterns` | `it/test/describe.skip/.only/.todo`, `xit`, `xdescribe`, `fit`, `fdescribe`, `@ts-nocheck`, file-wide `eslint-disable` (in test files) |
 
 Gradle differs from Maven only in the build keys (`./gradlew build`, `-x` refused). See
-`.agent/src/sdlc/Defaults.java` for the exact lists. Test links for JS name the test by its
+`.agent/src/sdlc/core/Defaults.java` for the exact lists. Test links for JS name the test by its
 string: `| TS-01 | src/refund/policy.test.ts#refuses a refund after day 30 |`.
 
 ## Guard
@@ -156,6 +158,7 @@ string: `| TS-01 | src/refund/policy.test.ts#refuses a refund after day 30 |`.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `guard.requireTaskForCodeEdits` | `true` | code edits need `task start` |
+| `guard.minScopeDepth` | Java `4`, Node `2` | folders a task scope must name before its first wildcard: `src/main/java/com/**` passes, `src/main/java/**` and `**/src/**` are refused by `tasks create` |
 | `guard.maxFileKb` | `1024` | larger files are refused at commit |
 | `guard.maxStopBlocks` | `3` | how often the Stop hook sends an agent back to run `verify` before giving the turn to you |
 

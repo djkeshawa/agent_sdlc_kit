@@ -39,7 +39,10 @@ Refusals are logged in `.sdlc/logs/guard-decisions.jsonl`; Jira/Confluence write
 | `not in gates.approvers.lld` | The author is not in the approvers list. Add their account id, or have a listed person approve. |
 | Approval comment ignored | Bot comments (`gates.botAccounts`, or containing `[sdlc-bot]`) never count. Pasting the line inside a code block is fine. |
 | `the LLD has no work breakdown` | The LLD needs a ```` ```yaml ```` block starting with `# sdlc-tasks` (see `.agent/templates/lld.md`). |
-| `scope 'src/**' is too broad` | Narrow the task's scope in the LLD. |
+| `scope 'src/**' is too broad` | Narrow the task's scope in the LLD: name at least `guard.minScopeDepth` folders before the first wildcard (Java 4: `src/main/java/com/acme/refund/**`; Node 2: `src/refund/**`). |
+| `the person who saved this version of the page cannot approve it` | Four eyes: someone other than the page's last author approves. A team of one sets `gates.allowSelfApproval: true`. |
+| `VERIFY REFUSED: MAVEN_OPTS passes -DskipTests to the build` | A variable in your terminal switches checks off. `unset MAVEN_OPTS` (or the variable named) and run `verify` again. |
+| An agent is asked to approve `python3 x.py` / `sh x.sh` / `npx <pkg>` | The file is not committed (or the package is not installed), so nobody has reviewed what it runs. Read it, then approve, or commit the script first. |
 | `The LLD changed since the tasks were created` | Re-approve the new version, then `tasks create STORY` again. |
 
 ## Hooks and agents

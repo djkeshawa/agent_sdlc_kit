@@ -112,7 +112,9 @@ At most three, with why they were not chosen.
 ## 9. Work breakdown
 
 Each task becomes a Jira sub-task and one inner loop (implement -> review). Keep scopes narrow;
-agents can edit only these paths. Every TS of this team must appear in exactly one task.
+agents can edit only these paths. `tasks create` refuses a scope that starts with a wildcard or
+names fewer folders than `guard.minScopeDepth` before it (Java 4: `src/main/java/com/acme/refund/**`,
+not `src/main/java/**`; Node 2: `src/refunds/**`, not `src/**`). Every TS of this team must appear in exactly one task.
 
 Node/TypeScript scopes look the same, with your folders, e.g.
 `src/refunds/**`, `test/refunds/**`, `src/db/migrations/2026*-refund*.ts`.
