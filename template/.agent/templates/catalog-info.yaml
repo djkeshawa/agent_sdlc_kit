@@ -1,0 +1,45 @@
+# This repository in the component catalog (Backstage descriptor format: works with or without
+# Backstage). Copy to the repository root as catalog-info.yaml and fill it in; check it with
+#   java .agent/Sdlc.java catalog check
+# Agents read it to decide which components a feature changes; they cannot edit it (CODEOWNERS).
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: payments-service                      # lower case; the name used in solution designs
+  description: Takes payments and refunds for orders
+  annotations:
+    github.com/project-slug: yourorg/payments-service
+    # The domain nouns this component is the SOURCE OF TRUTH for (comma separated):
+    sdlc/owns: "payment, refund, payment-method"
+    # Rules that must stay true whatever a feature changes (semicolon separated):
+    sdlc/invariants: "a captured payment is never deleted; refunds never exceed the captured amount"
+spec:
+  type: service                               # service | website | library
+  lifecycle: production
+  owner: group:team-payments
+  system: checkout                            # optional
+  providesApis: [payments-api, payment-events]
+  consumesApis: [orders-api]                  # APIs of other components this one calls or listens to
+  dependsOn: [resource:payments-db]           # optional: databases, queues, shared libraries
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: payments-api
+spec:
+  type: openapi
+  lifecycle: production
+  owner: group:team-payments
+  definition:
+    $text: ./api/openapi.yaml                 # the contract file; the tool compares it per pull request
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: payment-events
+spec:
+  type: asyncapi
+  lifecycle: production
+  owner: group:team-payments
+  definition:
+    $text: ./api/events.yaml

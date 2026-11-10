@@ -121,6 +121,8 @@ Node/TypeScript scopes look the same, with your folders, e.g.
 
 ```yaml
 # sdlc-tasks
+lane: patch                    # patch | component (a task edits an API file) | cross-component (from a solution slice)
+# solutionSlice: 3f2a9c1b7d04  # cross-component only: the hash from sources/solution-slice.md
 tasks:
   - id: T1
     title: Refund persistence and migration

@@ -32,6 +32,12 @@ public final class Json {
         throw new IllegalArgumentException("expected a JSON object");
     }
 
+    /** The object, or an empty one when the value is missing or not an object (lenient reading of specs and catalogs). */
+    @SuppressWarnings("unchecked")
+    public static Map<String, Object> map(Object o) {
+        return o instanceof Map<?, ?> m ? (Map<String, Object>) m : new java.util.LinkedHashMap<>();
+    }
+
     @SuppressWarnings("unchecked")
     public static List<Object> list(Object o) {
         return o instanceof List<?> l ? (List<Object>) l : new ArrayList<>();

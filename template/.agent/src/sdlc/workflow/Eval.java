@@ -103,9 +103,9 @@ public final class Eval {
     public int score(List<String> runs) throws IOException {
         Report r = report(runs);
         String text = render(r);
-        Store.writeText(Ctx.work("eval", "report.md"), text);
+        Store.writeText(Ctx.work("hidden", "eval", "report.md"), text);
         w.console.out(text);
-        w.console.out("Saved: " + Ctx.rel(Ctx.work("eval", "report.md")));
+        w.console.out("Saved: " + Ctx.rel(Ctx.work("hidden", "eval", "report.md")));
         return 0;
     }
 

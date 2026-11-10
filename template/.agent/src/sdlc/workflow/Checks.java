@@ -138,6 +138,11 @@ public final class Checks {
             check(outside.isEmpty(), "Changed code stays inside the allowed paths of " + story + "'s tasks"
                     + (outside.isEmpty() ? "" : ": outside -> " + outside + " (change the LLD's task scope and get it re-approved, or move this change to its own story)"), passes, fails);
         }
+        List<String> patchContracts = Lanes.contractChangesInPatch(story, files);
+        if (Lanes.enabled() && !story.isEmpty()) {
+            check(patchContracts.isEmpty(), "No contract file changed in a patch-lane story" + (patchContracts.isEmpty() ? ""
+                    : ": " + patchContracts + " changed (raise the LLD's lane to component, get it approved, run tasks create again)"), passes, fails);
+        }
         List<String> guardrails = files.stream().filter(f -> Glob.any(Ctx.cfg.list("paths.protected"), f)).toList();
         if (!guardrails.isEmpty()) warns.add(guardrails.size() + " guardrail file(s) changed (CODEOWNERS review required)");
         if (withTrace) {

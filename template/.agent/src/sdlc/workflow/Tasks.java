@@ -53,8 +53,18 @@ public final class Tasks {
 
     /** Parses the tasks block from a Confluence page (storage format). */
     public static List<Map<String, Object>> parseStorage(String storage) {
-        for (String[] b : Markdown.codeBlocks(storage)) if (b[1].stripLeading().startsWith("# sdlc-tasks")) return fromYaml(b[1]);
+        return fromYaml(blockText(storage));
+    }
+
+    private static String blockText(String storage) {
+        for (String[] b : Markdown.codeBlocks(storage)) if (b[1].stripLeading().startsWith("# sdlc-tasks")) return b[1];
         throw new UsageException("the approved LLD page has no '# sdlc-tasks' code block");
+    }
+
+    /** The whole # sdlc-tasks block of a page: tasks, and lane / solutionSlice when present. */
+    static Map<String, Object> blockStorage(String storage) {
+        Object root = Yaml.parse(blockText(storage));
+        return root instanceof Map<?, ?> ? Json.obj(root) : new LinkedHashMap<>();
     }
 
     @SuppressWarnings("unchecked")
@@ -115,7 +125,22 @@ public final class Tasks {
         if (lld == null) throw new UsageException("no LLD found for " + story);
         Wiki.Page page = w.wiki.page(lld.id());
         List<Map<String, Object>> tasks = parseStorage(page.storage());
+        String lane = "";
+        if (Lanes.enabled()) {
+            Map<String, Object> block = blockStorage(page.storage());
+            List<List<String>> scopes = new ArrayList<>();
+            for (Map<String, Object> t : tasks) scopes.add(Work.strings(t.get("scope")));
+            List<String> problems = Lanes.problems(w, story, block, scopes);
+            if (!problems.isEmpty()) {
+                w.console.err("Tasks NOT created: the LLD does not fit its lane:\n- " + String.join("\n- ", problems));
+                return 1;
+            }
+            String declared = Work.str(block.getOrDefault("lane", "patch")).strip();
+            String floor = Lanes.floor(w, story, scopes).lane();
+            lane = Lanes.rank(declared) >= Lanes.rank(floor) ? declared : floor;
+        }
         Map<String, Object> state = Work.state(story);
+        if (!lane.isEmpty()) state.put("lane", lane);
         state.put("lld", Store.map("key", lld.key(), "id", page.id(), "version", page.version(), "hash", Approvals.hash(page.storage()), "url", page.url()));
         state.put("qaScenarios", qaScenarios(story));
         Map<String, String> existing = new LinkedHashMap<>();
@@ -146,7 +171,7 @@ public final class Tasks {
         }
         Work.save(story, state);
         Work.setCurrent(story, "");
-        w.console.out("\n" + tasks.size() + " task(s) for " + story + " from LLD v" + page.version() + ". Start one with: java .agent/Sdlc.java task start <TASK-KEY>");
+        w.console.out("\n" + tasks.size() + " task(s) for " + story + " from LLD v" + page.version() + (lane.isEmpty() ? "" : ", lane " + lane) + ". Start one with: java .agent/Sdlc.java task start <TASK-KEY>");
         return 0;
     }
 

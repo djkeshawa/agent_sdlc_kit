@@ -18,9 +18,151 @@ d, why = hook("read_file", {"filePath": str(truth)})
 check("eval: agent cannot read the ground truth", d == "deny", why)
 d, why = bash("grep -r components docs/agent/eval/scoping/truth")
 check("eval: nor grep it", d == "deny", why)
+d, why = bash("java .agent/Sdlc.java eval score")
+check("eval: agents cannot run the scorer (its report shows the truth)", d == "deny", why)
 agent_write(".sdlc/eval/inbox/run1/PAY-10.yml", "components:\n  - name: payments-service\n  - name: orders-service\n")
 agent_write(".sdlc/eval/inbox/run2/PAY-10.yml", "components: [payments-service]\n")
 code, out = sdlc("eval", "score")
 check("eval score: pass@k, pass^k, recall per case", code == 0 and "| pass@k (some run exactly right) | 1.00 |" in out
       and "| pass^k (every run exactly right) | 0.00 |" in out and "| Recall (mean) | 0.75 |" in out
-      and (PROJ / ".sdlc/eval/report.md").exists(), out)
+      and (PROJ / ".sdlc/hidden/eval/report.md").exists(), out)
+
+# ---------- Phase 1: catalog, solution design, stories, lanes ----------
+OPENAPI = """openapi: 3.0.3
+paths:
+  /orders/{orderId}/refunds:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount: {type: string}
+                reason: {type: string, enum: [DAMAGED, OTHER]}
+      responses:
+        "201": {description: created}
+        "409": {description: window closed}
+"""
+CATALOG = """apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: payments-service
+  annotations:
+    sdlc/owns: "payment, refund"
+    sdlc/invariants: "refunds never exceed the captured amount"
+spec:
+  type: service
+  owner: group:team-payments
+  providesApis: [payments-api]
+  consumesApis: [orders-api]
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: payments-api
+spec:
+  type: openapi
+  owner: group:team-payments
+  definition:
+    $text: ./api/openapi.yaml
+"""
+ORDERS = """apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: orders-service
+  annotations:
+    sdlc/owns: "order"
+spec:
+  owner: group:team-orders
+  providesApis: [orders-api]
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: orders-api
+spec:
+  type: openapi
+  definition:
+    $text: ./api/orders.yaml
+"""
+yml = (PROJ / ".agent/sdlc.yml").read_text()
+yml = yml.replace("  relatedRepos: []\n", "  relatedRepos:\n    - {name: orders-service, repo: acme/orders-service, team: orders, purpose: owns orders}\n", 1)
+yml = yml.replace("  enabled: false                  # true = tasks create", "  enabled: true                   # true = tasks create", 1)
+(PROJ / ".agent/sdlc.yml").write_text(yml)
+check("config with lanes and a related repository is valid", sdlc("config", "check")[0] == 0)
+
+d, why = hook("create_file", {"filePath": str(PROJ / "catalog-info.yaml")})
+check("catalog-info.yaml is not agent-editable", d == "deny", why)
+write("catalog-info.yaml", CATALOG)
+write("api/openapi.yaml", OPENAPI)
+write("src/main/resources/application.yml", "orders:\n  url: http://orders-service.internal\n")
+write("src/main/java/com/acme/payments/orders/OrdersClient.java", 'package com.acme.payments.orders;\n\n@FeignClient(name = "orders", url = "${orders.url}")\n'
+      'interface OrdersClient {\n    @GetMapping("/orders/{id}")\n    String get(String id);\n}\n')
+code, out = sdlc("catalog", "check")
+check("catalog check: complete catalog-info.yaml", code == 0 and "component payments-service" in out, out)
+admin("/__gh/files", {"files": {"acme/orders-service:catalog-info.yaml": ORDERS,
+                                "acme/orders-service:api/orders.yaml": "openapi: 3.0.3\npaths:\n  /orders/{id}:\n    get:\n      responses:\n        \"200\": {description: ok}\n"}})
+code, out = sdlc("catalog", "sync")
+check("catalog sync: related repository's catalog and API file through gh", code == 0 and "component orders-service, 1 API definition(s)" in out
+      and (PROJ / ".sdlc/catalog/apis/orders-api.yaml").exists(), out)
+code, out = sdlc("catalog", "scan", "--write")
+check("catalog scan: the Feign call resolves to orders-service", code == 0 and "GET /orders/{id}" in out and "orders-service" in out
+      and (PROJ / "docs/agent/catalog-edges.json").exists(), out)
+code, out = sdlc("catalog", "graph")
+check("catalog graph: page for agents", code == 0 and (PROJ / ".sdlc/catalog/graph.md").exists() and "| orders-service | acme/orders-service |" in out, out)
+
+SOLUTION = """# PAY-10 - Solution design
+
+## 1. Requirements
+
+- R-01: When a paid order is less than 30 days old, the payments service shall accept a refund request.
+- R-02: When a refund is requested, the orders service shall show the refund status on the order.
+
+## 8. The block the tool reads
+
+```yaml
+# sdlc-solution
+requirements: [R-01, R-02]
+components:
+  - name: payments-service
+    role: provider
+    change: refund endpoint
+    requirements: [R-01]
+  - name: orders-service
+    role: consumer
+    change: show refund status
+    requirements: [R-02]
+ruledOut: []
+disputed: [%s]
+contracts:
+  - {provider: payments-service, api: payments-api, add: ["POST /orders/{orderId}/refunds"], compatibility: additive}
+order: [payments-service, orders-service]
+```
+"""
+agent_write(".sdlc/PAY-10/drafts/solution.md", SOLUTION % "notification-service")
+code, out = sdlc("docs", "publish", "PAY-10", "solution", "--file", ".sdlc/PAY-10/drafts/solution.md")
+check("solution publish refused while a component is disputed", code != 0 and "disputed" in out, out)
+agent_write(".sdlc/PAY-10/drafts/solution.md", SOLUTION % "")
+code, out = sdlc("docs", "publish", "PAY-10", "solution", "--file", ".sdlc/PAY-10/drafts/solution.md")
+check("solution design published to ARCH with an approval request on the epic", code == 0 and "Published Solution design v1" in out
+      and any(p["title"] == "PAY-10 - Solution design" and p["space"] == "ARCH" for p in state()["pages"].values()), out)
+code, out = sdlc("stories", "create", "PAY-10")
+check("stories refused before the architect approves", code != 0 and "NOT approved" in out, out)
+line = next(l.strip() for l in out.splitlines() if l.strip().startswith("SDLC-APPROVED PAY-10 solution"))
+admin("/__admin/comment", {"key": "PAY-10", "body": line, "accountId": "architect-1", "name": "Architect"})
+code, out = sdlc("stories", "create", "PAY-10")
+st = state()
+stories = {v["summary"].split("]")[0][1:]: k for k, v in st["issues"].items() if v.get("parent") == "PAY-10" and v["type"] == "Story" and v["summary"].startswith("[")}
+check("one Jira story per component under the epic", code == 0 and set(stories) == {"payments-service", "orders-service"}, out)
+PAY_STORY = stories.get("payments-service", "PAY-0")
+code, out = sdlc("stories", "create", "PAY-10")
+check("stories create again creates nothing", code == 0 and "0 created" in out, out)
+code, out = sdlc("docs", "pull", PAY_STORY)
+slice_file = PROJ / (".sdlc/%s/sources/solution-slice.md" % PAY_STORY)
+check("docs pull of the component story writes its solution slice", code == 0 and slice_file.exists() and "solutionSlice:" in slice_file.read_text(), out)
+code, out = sdlc("classify", PAY_STORY)
+check("classify: a story under a solution is cross-component", code == 0 and "Lowest lane for %s: cross-component" % PAY_STORY in out, out)
+code, out = sdlc("feature", "status", "PAY-10")
+check("feature status: approved solution, stories without LLDs", code == 1 and "APPROVED by Architect" in out and "no LLD yet" in out and "0 of 2" in out, out)

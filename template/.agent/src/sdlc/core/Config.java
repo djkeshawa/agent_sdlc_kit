@@ -169,7 +169,7 @@ public final class Config {
         for (String doc : List.of("testDesign", "lld")) {
             if (str("confluence.publish." + doc + ".space").isBlank()) p.add("confluence.publish." + doc + ".space is empty");
         }
-        for (String gate : List.of("testDesign", "lld")) {
+        for (String gate : List.of("testDesign", "lld", "solution")) {
             String g = str("gates." + gate);
             if (!g.matches("required|optional|off")) p.add("gates." + gate + " must be required, optional or off");
         }

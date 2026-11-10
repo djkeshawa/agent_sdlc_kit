@@ -38,6 +38,7 @@ human changes. Secrets never go here: they go in `.agent/local.env` ([docs/02 st
 | `jira.url` | | site URL; `JIRA_BASE_URL` in local.env overrides it for API calls (scoped tokens) |
 | `jira.projectKeys` | `[]` | keys accepted in branches, commits and PR titles |
 | `jira.issueTypes.task` | `Sub-task` | issue type created for each LLD task |
+| `jira.issueTypes.story` | `Story` | issue type `stories create <EPIC>` creates per component of a solution design |
 | `jira.epicLinkField` | `""` | Data Center only: the epic link custom field, to find a story's epic |
 | `jira.statuses.inProgress` / `inReview` / `done` | `In Progress` / `In Review` / `Done` | exact status names of your workflow |
 | `jira.agentMayClose` | `false` | `true` lets `sync` move tickets to Done after the merge |
@@ -48,9 +49,10 @@ human changes. Secrets never go here: they go in `.agent/local.env` ([docs/02 st
 | --- | --- | --- |
 | `confluence.url` | | e.g. `https://yourcompany.atlassian.net/wiki` (may be another site than Jira); `CONFLUENCE_BASE_URL` overrides it for API calls |
 | `confluence.searchSpaces` | `[]` | spaces searched for one pagers, HLDs, test designs, LLDs (all teams) |
-| `confluence.titlePatterns.onePager` / `hld` / `lld` / `testDesign` | see `sdlc.yml` | regexes that classify a page by its title |
+| `confluence.titlePatterns.onePager` / `hld` / `lld` / `testDesign` / `solution` | see `sdlc.yml` | regexes that classify a page by its title |
 | `confluence.publish.testDesign.space` / `.parentId` / `.title` | `""` / `""` / `{key} - Test scenarios` | where `/test-design` publishes |
 | `confluence.publish.lld.space` / `.parentId` / `.title` | `""` / `""` / `{key} - LLD - {team}` | where `/design` publishes |
+| `confluence.publish.solution.space` / `.parentId` / `.title` | `""` / `""` / `{key} - Solution design` | where `/solution` publishes an epic's solution design ([docs/08](08-multi-component.md)) |
 | `confluence.mermaidMacro` | `""` | name of your Mermaid macro, if you have the app; else diagrams stay as code blocks |
 | `confluence.mindmapImage` | `true` | attach the test design's mind map as a PNG |
 
@@ -75,8 +77,8 @@ human changes. Secrets never go here: they go in `.agent/local.env` ([docs/02 st
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `gates.testDesign` / `gates.lld` | `required` | `required` blocks, `optional` warns, `off` skips the approval |
-| `gates.approvers.testDesign` / `.lld` | `[]` | who may approve (Cloud account ids, DC usernames); empty = any human |
+| `gates.testDesign` / `gates.lld` / `gates.solution` | `required` | `required` blocks, `optional` warns, `off` skips the approval |
+| `gates.approvers.testDesign` / `.lld` / `.solution` | `[]` | who may approve (Cloud account ids, DC usernames); empty = any human. For another team's LLD (`feature status`) the list is not applied: that team's own config holds it |
 | `gates.botAccounts` | `[]` | accounts whose comments never count as approval (put the tool's bot here) |
 | `gates.allowSelfApproval` | `false` | `false` = the account that saved the page version cannot approve it (four eyes). With a shared bot token the page author is the bot, so this only bites when people publish with their own token |
 | `loops.review.min` / `.max` | `2` / `5` | review rounds per task; the PR gate needs `min` with the last one APPROVE; past `max` the tool refuses and hands over |
@@ -85,6 +87,14 @@ human changes. Secrets never go here: they go in `.agent/local.env` ([docs/02 st
 | `delivery.baseBranch` | `develop` | PR base; `origin/<base>` is compared for policy checks |
 | `delivery.createSubtasks` | `true` | `false` = tasks tracked locally only (small stories) |
 | `delivery.qa` | `auto` | `auto` (when the test design has integration / contract / e2e / api scenarios), `always`, `never` |
+
+## Several components ([docs/08](08-multi-component.md))
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `catalog.file` | `catalog-info.yaml` | this repository in the component catalog (Backstage format); protected, CODEOWNERS |
+| `catalog.repos` | `[]` | more repositories (`owner/name`) for `catalog sync`, besides `github.relatedRepos` |
+| `lanes.enabled` | `false` | `true`: `tasks create` checks the LLD's `lane:` and `solutionSlice:`, the PR policy refuses contract file changes in a patch-lane story |
 
 ## Coding agents, models and MCP
 

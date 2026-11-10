@@ -45,6 +45,9 @@ public interface IssueTracker {
     /** Creates a sub-task and returns its key. */
     String createSubtask(String parent, String summary, String description);
 
+    /** Creates an issue of the given type under a parent (a story under an epic) and returns its key. */
+    String createChild(String parent, String type, String summary, String description);
+
     /** A search in the tracker's own query language (JQL). */
     List<Issue> search(String query, int max);
 

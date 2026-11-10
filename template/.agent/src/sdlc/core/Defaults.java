@@ -20,6 +20,7 @@ public final class Defaults {
               projectKeys: []
               issueTypes:
                 task: Sub-task
+                story: Story
               epicLinkField: ""
               statuses:
                 inProgress: In Progress
@@ -34,6 +35,7 @@ public final class Defaults {
                 hld: "(?i)\\\\bhld\\\\b|high[ -]?level design"
                 lld: "(?i)\\\\blld\\\\b|low[ -]?level design"
                 testDesign: "(?i)test (scenarios|design|cases)"
+                solution: "(?i)solution design"
               publish:
                 testDesign:
                   space: ""
@@ -43,6 +45,10 @@ public final class Defaults {
                   space: ""
                   parentId: ""
                   title: "{key} - LLD - {team}"
+                solution:
+                  space: ""
+                  parentId: ""
+                  title: "{key} - Solution design"
               mermaidMacro: ""
               mindmapImage: true
             github:
@@ -51,6 +57,11 @@ public final class Defaults {
               relatedRepos: []
             eval:
               dir: docs/agent/eval
+            catalog:
+              file: catalog-info.yaml
+              repos: []
+            lanes:
+              enabled: false
             ci:
               waitMinutes: 60
               pollSeconds: 30
@@ -62,9 +73,11 @@ public final class Defaults {
             gates:
               testDesign: required
               lld: required
+              solution: required
               approvers:
                 testDesign: []
                 lld: []
+                solution: []
               botAccounts: []
               allowSelfApproval: false
             loops:
@@ -89,6 +102,7 @@ public final class Defaults {
               reviewer: {model: ""}
               qa-verifier: {model: ""}
               ci-fixer: {model: ""}
+              architect: {model: ""}
               impact-analyst: {model: ""}
               eval-runner: {model: ""}
             git:
@@ -131,6 +145,7 @@ public final class Defaults {
                 - sonar-project.properties
                 - .gitattributes
                 - .sdlc/**
+                - catalog-info.yaml
                 - .git/config
                 - .git/hooks/**
                 - .git/info/**

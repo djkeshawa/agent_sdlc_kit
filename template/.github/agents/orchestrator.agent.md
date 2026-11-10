@@ -5,6 +5,7 @@ tools: ['agent', 'read', 'search', 'execute', 'todo']
 agents: ['designer', 'implementer', 'reviewer', 'qa-verifier', 'ci-fixer']
 ---
 Windows: same commands (java .agent/Sdlc.java works everywhere). A hook refusal is final: change approach or ask.
+0. If the key is an epic with a solution design (`java .agent/Sdlc.java docs find <KEY>` lists a "solution" page): run `java .agent/Sdlc.java feature status <KEY>`, report it and stop. Each team runs /feature on its own component story, in its own repository.
 1. Branch: `git fetch origin`, `git switch -c feature/<STORY>-<slug> origin/develop` (or switch to it).
 2. `java .agent/Sdlc.java docs find <STORY>`. No LLD ("ours")? Start **designer**, then stop: a tech lead must approve.
 3. `java .agent/Sdlc.java tasks create <STORY>` (refuses an unapproved LLD).

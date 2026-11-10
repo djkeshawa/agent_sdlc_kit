@@ -28,6 +28,9 @@ import sdlc.selftest.SelfTest;
 import sdlc.util.Http;
 import sdlc.util.Markdown;
 import sdlc.workflow.Approvals;
+import sdlc.workflow.Catalog;
+import sdlc.workflow.CatalogScan;
+import sdlc.workflow.Lanes;
 import sdlc.workflow.Checks;
 import sdlc.workflow.Ci;
 import sdlc.workflow.Gates;
@@ -53,8 +56,8 @@ public final class Main {
             analyse                              collect repository facts for /analyse
 
             docs find|pull <KEY>                 one pager, HLD, test design, LLDs (this and other teams) in Confluence
-            docs publish <KEY> test-design|lld --file <draft.md>
-            approval line|check <KEY> test-design|lld
+            docs publish <KEY> test-design|lld|solution --file <draft.md>
+            approval line|check <KEY> test-design|lld|solution
             mindmap --file <test-design.md> [--out mindmap.png]
             repos sync                           local read-only copies of related repositories
 
@@ -69,6 +72,12 @@ public final class Main {
             jira get <KEY> [--comments N] | jira search "<JQL>" | jira comment <KEY> --file F | --text T
             jira transitions <KEY> | jira transition <KEY> "<Status>" | jira link <KEY> <URL>
             confluence get <PAGE_ID> [--storage]  (--storage: raw page markup)
+
+            catalog check|sync|graph            this repo's catalog-info.yaml | copy related repos' catalogs | page for agents
+            catalog scan [--write]               dependencies found in this repo's code (HTTP calls, topics, queues, config)
+            stories create <EPIC>                one Jira story per component of the approved solution design
+            feature status <EPIC>                solution approval, stories, LLDs and slices of a cross-component feature
+            classify <KEY>                       lowest delivery lane the facts allow (lanes.enabled)
 
             eval collect <EPIC>...               scoping eval: case input + ground truth from commits per Jira key (gh)
             eval score [--runs r1,r2]            score agent answers in .sdlc/eval/inbox/<run>/ against the truth
@@ -185,10 +194,10 @@ public final class Main {
             case "docs" -> switch (c1) {
                 case "find" -> w.docs.printFind(need(a, 2, "KEY"));
                 case "pull" -> w.docs.pull(need(a, 2, "KEY"));
-                case "publish" -> w.docs.publish(need(a, 2, "KEY"), Approvals.fromCli(need(a, 3, "test-design|lld")), file(opt));
+                case "publish" -> w.docs.publish(need(a, 2, "KEY"), Approvals.fromCli(need(a, 3, "test-design|lld|solution")), file(opt));
                 default -> usage();
             };
-            case "approval" -> w.approvals.cli(c1, need(a, 2, "KEY"), Approvals.fromCli(need(a, 3, "test-design|lld")));
+            case "approval" -> w.approvals.cli(c1, need(a, 2, "KEY"), Approvals.fromCli(need(a, 3, "test-design|lld|solution")));
             case "mindmap" -> MindMap.cli(file(opt), Path.of(opt.getOrDefault("out", file(opt).resolveSibling("mindmap.png").toString())));
             case "repos" -> Repos.sync();
             case "tasks" -> c1.equals("create") ? w.tasks.create(need(a, 2, "STORY")) : w.tasks.list(pos(a, 2));
@@ -203,6 +212,16 @@ public final class Main {
             case "sync" -> w.sync.run(pos(a, 1), false);
             case "retro", "mistakes" -> Mistakes.retro(w.issues, a.length > 1 && !a[1].startsWith("--") ? a[1] : Work.currentStory(), opt.containsKey("comment"));
             case "jira" -> jira(w.issues, c1, a, opt);
+            case "catalog" -> switch (c1) {
+                case "check" -> Catalog.check();
+                case "sync" -> Catalog.sync();
+                case "graph" -> Catalog.graph();
+                case "scan" -> CatalogScan.run(opt.containsKey("write"));
+                default -> usage();
+            };
+            case "stories" -> c1.equals("create") ? w.stories.create(need(a, 2, "EPIC")) : usage();
+            case "feature" -> c1.equals("status") ? w.feature.status(need(a, 2, "EPIC")) : usage();
+            case "classify" -> Lanes.classify(w, need(a, 1, "KEY"));
             case "eval" -> switch (c1) {
                 case "collect" -> w.eval.collect(positional(a, 2));
                 case "score" -> w.eval.score(opt.containsKey("runs") ? List.of(opt.get("runs").split(",")) : List.of());

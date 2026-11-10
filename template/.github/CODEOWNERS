@@ -15,3 +15,5 @@
 /Jenkinsfile                  @your-org/tech-leads
 /sonar-project.properties     @your-org/tech-leads
 /docs/adr/                    @your-org/tech-leads
+/catalog-info.yaml            @your-org/tech-leads
+/docs/test-locks/             @your-org/qe-leads
