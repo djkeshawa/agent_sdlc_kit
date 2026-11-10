@@ -92,7 +92,7 @@ Then in Copilot Chat, Claude Code or Codex: `/analyse` once, and per story `/tes
 
 ## What was tested
 
-- **Self test:** `java .agent/Sdlc.java selftest` - 408 checks of the shell, file, MCP, git,
+- **Self test:** `java .agent/Sdlc.java selftest` - 413 checks of the shell, file, MCP, git,
   secret, scope, gate and parsing rules.
 - **Full flow against mocks:** a scratch Maven repository with a mock Jira Cloud, Confluence
   Cloud, Jenkins and SonarQube and a fake `gh`: setup, doctor, ~30 hook decisions, docs
