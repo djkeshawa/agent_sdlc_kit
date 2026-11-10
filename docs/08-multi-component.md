@@ -214,3 +214,58 @@ files is compared with the base branch (OpenAPI 3 / 2 paths, AsyncAPI 2 / 3 mess
 
 `build.mutation` runs after the build in `verify`; see `snippets/contracts-and-mutation.md`
 for PIT and Stryker on changed code, and for consumer-driven contract tests.
+
+## Phase 3: hidden coupling, runtime calls, one kit version for every repository
+
+### Components that change together
+
+```bash
+java .agent/Sdlc.java catalog cochange PAY-10 PAY-42 PAY-77 [--min 2]
+```
+
+For each epic, GitHub commit search by the epic's and its stories' Jira keys gives the
+components that changed (every commit carries its key, so this needs no extra data). Each pair
+that changed together is explained by the catalog (declared), by a scan or trace (found but not
+declared), or by nothing. A pair that changes together at least `--min` times with nothing to
+explain it is usually a hidden coupling: a shared table, a shared library, a copied DTO. Fix the
+catalog (or the coupling). The table is saved in `.sdlc/catalog/cochange.md` and appears in
+`catalog graph`, so impact analysts see it.
+
+### Calls your tracing system saw
+
+```bash
+java .agent/Sdlc.java catalog import-traces --file jaeger-dependencies.json
+```
+
+accepts Jaeger's `/api/dependencies` output (`{"data": [{"parent", "child", "callCount"}]}`) or a
+plain list `[{"from", "to", "calls"}]` exported from any APM service map. The calls become edges
+in `catalog graph` and count as "found" in `cochange`.
+
+### One kit version for every repository
+
+```bash
+java .agent/Sdlc.java upgrade --from <kit checkout or git URL> [--version r4] --check   # report drift (exit 1), e.g. in CI
+java .agent/Sdlc.java upgrade --from <kit checkout or git URL> [--version r4]           # bring the kit files to that version
+```
+
+Only kit-owned files are copied (`.agent/Sdlc.java`, `.agent/src`, `.agent/bin`,
+`.agent/templates`, `.agent/org.yml`, `.githooks`, `.github/agents`, `prompts`, `skills`,
+`instructions`, `hooks`, `copilot-instructions.md`, `AGENTS.md`). `.agent/sdlc.yml`,
+`local.env`, `CODEOWNERS` and the PR template stay yours, agent model lines are re-applied from
+your `sdlc.yml`, and files you added (your own skills or agents) are kept and listed. The version
+is pinned in `.agent/kit.version` (`config check` shows it). Agents are refused: a human runs it
+and commits on a branch, and CODEOWNERS review the guardrail changes.
+
+**Organisation rules.** An organisation that keeps its own fork of the kit puts its shared rules
+in `template/.agent/org.yml` (same keys as `sdlc.yml`). `upgrade` ships it, and the configuration
+is merged as: built-in defaults < stack preset < `.agent/org.yml` < `.agent/sdlc.yml`. A key
+ending in `+` adds to a list at any layer (`protected+: [docs/legal/**]`).
+
+## Testing it
+
+`java .agent/Sdlc.java selftest` includes the multi-component rules (catalog parsing, scans,
+OpenAPI / AsyncAPI diffs, solution checks, slices, stories, lanes, locks, contract policy,
+co-change, upgrade). `python3 tests/e2e/run.py` runs the epic flow against the mock Jira,
+Confluence, Jenkins and a fake `gh` (`tests/e2e/multi.py`). Not tested against real services yet:
+GitHub commit search on a real organisation, a real QE hold-out job, and Jira Data Center's
+Epic Link field.

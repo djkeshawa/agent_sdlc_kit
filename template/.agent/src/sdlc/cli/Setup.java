@@ -74,6 +74,9 @@ public final class Setup {
     public static int configCheck() {
         List<String> problems = Ctx.cfg.problems();
         System.out.println("Stack: " + Ctx.cfg.stack() + "   verify: " + Ctx.cfg.verifyCommand());
+        if (Files.exists(Ctx.root.resolve(".agent/org.yml"))) System.out.println("Layers: built-in defaults < stack preset < .agent/org.yml < .agent/sdlc.yml");
+        Path kit = Ctx.root.resolve(".agent/kit.version");
+        if (Files.exists(kit)) System.out.println("Kit: " + sdlc.core.Store.read(kit).getOrDefault("version", "?") + " (sdlc upgrade)");
         System.out.println("Jira: " + Ctx.cfg.str("jira.url") + " " + Ctx.cfg.projectKeys() + " (" + (Ctx.cfg.cloud() ? "cloud" : "data center") + ")");
         System.out.println("Confluence: " + Ctx.cfg.str("confluence.url") + " search " + Ctx.cfg.list("confluence.searchSpaces"));
         System.out.println("Gates: test design " + Ctx.cfg.str("gates.testDesign") + ", LLD " + Ctx.cfg.str("gates.lld"));

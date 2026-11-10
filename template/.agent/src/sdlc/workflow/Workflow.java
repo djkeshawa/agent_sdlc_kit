@@ -20,6 +20,7 @@ public final class Workflow {
     public final Stories stories;
     public final Feature feature;
     public final Holdout holdout;
+    public final CoChange cochange;
 
     public Workflow(IssueTracker issues, Wiki wiki, Console console) {
         this.issues = issues;
@@ -33,5 +34,6 @@ public final class Workflow {
         this.stories = new Stories(this);
         this.feature = new Feature(this);
         this.holdout = new Holdout(this);
+        this.cochange = new CoChange(this);
     }
 }

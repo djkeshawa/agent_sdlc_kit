@@ -1,5 +1,8 @@
 # 3. Configuration (`.agent/sdlc.yml`)
 
+An organisation can add a layer: `.agent/org.yml` (same keys, shipped by `sdlc upgrade` from the
+organisation's kit). The merge is built-in defaults < stack preset < `.agent/org.yml` < `.agent/sdlc.yml`.
+
 `sdlc.yml` is the only file you configure. Anything you leave out comes from built-in defaults:
 first the common ones, then the preset for your `stack`. After editing:
 

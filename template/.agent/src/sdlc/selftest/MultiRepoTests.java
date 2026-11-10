@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import sdlc.cli.Upgrade;
 import sdlc.core.Config;
 import sdlc.core.Locks;
 import sdlc.core.Ctx;
@@ -23,6 +24,7 @@ import sdlc.util.Proc;
 import sdlc.workflow.Approvals;
 import sdlc.workflow.Catalog;
 import sdlc.workflow.CatalogScan;
+import sdlc.workflow.CoChange;
 import sdlc.workflow.Contracts;
 import sdlc.workflow.Eval;
 import sdlc.workflow.Lanes;
@@ -47,6 +49,7 @@ final class MultiRepoTests {
             epicFlow(tmp);
             locks(tmp);
             contractPolicy(tmp);
+            phase3(tmp);
         } finally {
             Ctx.cfg = saved;
             for (String f : List.of("catalog-info.yaml", "api/openapi.yaml", "api/events.yaml")) Files.deleteIfExists(tmp.resolve(f));
@@ -449,6 +452,49 @@ final class MultiRepoTests {
         }
         Files.deleteIfExists(allow);
         Proc.run(tmp, "git", "switch", "-q", "feature/PROJ-7-refunds");
+    }
+
+    private static void phase3(Path tmp) throws IOException {
+        Config layered = Config.parseLayers("gates:\n  lld: optional\n  testDesign: optional\npaths:\n  protected+: [docs/legal/**]\n", "gates:\n  testDesign: required\n");
+        check("org layer: org rule applies", layered.str("gates.lld").equals("optional"));
+        check("org layer: the repository overrides the org", layered.str("gates.testDesign").equals("required"));
+        check("org layer: org list additions keep the defaults", layered.list("paths.protected").contains("docs/legal/**") && layered.list("paths.protected").contains(".agent/**"));
+
+        Map<String, Set<String>> byEpic = new java.util.LinkedHashMap<>();
+        byEpic.put("E-1", Set.of("orders", "payments", "ledger"));
+        byEpic.put("E-2", Set.of("orders", "payments"));
+        byEpic.put("E-3", Set.of("payments", "ledger"));
+        List<CoChange.Pair> pairs = CoChange.pairs(byEpic, Set.of("orders|payments"), Set.of());
+        check("cochange: pairs counted over epics, most frequent first", pairs.get(0).count() == 2 && pairs.size() == 3);
+        check("cochange: a declared pair is explained", pairs.stream().anyMatch(p -> p.a().equals("orders") && p.b().equals("payments") && p.known().startsWith("declared")));
+        check("cochange: an undeclared frequent pair is unexplained", pairs.stream().anyMatch(p -> p.a().equals("ledger") && p.b().equals("payments") && p.count() == 2 && p.known().equals("none")));
+
+        java.io.PrintStream out = System.out;
+        System.setOut(new java.io.PrintStream(java.io.OutputStream.nullOutputStream()));
+        try {
+            Path traces = tmp.resolve(".sdlc/PROJ-90/drafts/deps.json");
+            Store.writeText(traces, "{\"data\": [{\"parent\": \"payments-service\", \"child\": \"orders-service\", \"callCount\": 42}, {\"parent\": \"x\", \"child\": \"x\"}]}");
+            CoChange.importTraces(traces);
+            Catalog c = Catalog.load();
+            check("traces: Jaeger dependencies become edges from the calling service", c.graphText().contains("| payments-service | runtime host orders-service | orders-service | traces (42 calls)"));
+
+            Path kit = tmp.resolve("kit/template");
+            Store.writeText(kit.resolve(".agent/Sdlc.java"), "class Sdlc {}\n");
+            Store.writeText(kit.resolve(".agent/sdlc.yml"), "stack: node\n");
+            Store.writeText(kit.resolve(".agent/org.yml"), "gates:\n  lld: required\n");
+            Store.writeText(kit.resolve(".github/agents/reviewer.agent.md"), "---\nname: reviewer\ntools: ['read']\n---\nReview.\n");
+            Store.writeText(tmp.resolve(".github/skills/our-own/SKILL.md"), "ours\n");
+            String repoYml = Files.readString(tmp.resolve(".agent/sdlc.yml"));
+            check("upgrade --check: out of date, nothing written", Upgrade.run(tmp.resolve("kit").toString(), "r4", true) == 1 && !Files.exists(tmp.resolve(".agent/org.yml")));
+            check("upgrade: copies kit files and pins the version", Upgrade.run(tmp.resolve("kit").toString(), "r4", false) == 0
+                    && Files.exists(tmp.resolve(".agent/org.yml")) && Store.read(tmp.resolve(".agent/kit.version")).get("version").equals("r4"));
+            check("upgrade: the repository's sdlc.yml and its own skills stay", Files.readString(tmp.resolve(".agent/sdlc.yml")).equals(repoYml) && Files.exists(tmp.resolve(".github/skills/our-own/SKILL.md")));
+            check("upgrade --check: up to date afterwards", Upgrade.run(tmp.resolve("kit").toString(), "r4", true) == 0);
+        } finally {
+            System.setOut(out);
+            for (String f : List.of(".agent/Sdlc.java", ".agent/org.yml", ".agent/kit.version", ".github/agents/reviewer.agent.md", ".github/skills/our-own/SKILL.md")) Files.deleteIfExists(tmp.resolve(f));
+        }
+        expect("upgrade: agents cannot run it", shell("java .agent/Sdlc.java upgrade --from ../kit"), Decision.Kind.DENY);
     }
 
     private static String[] concat(String[] a, String... b) {

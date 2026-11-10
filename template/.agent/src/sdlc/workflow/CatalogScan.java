@@ -133,7 +133,7 @@ public final class CatalogScan {
                 String comp = Work.str(doc.get("component"));
                 for (Object o : Json.list(doc.get("edges"))) {
                     Map<String, Object> e = Json.map(o);
-                    out.add(new Edge(comp, Work.str(e.get("kind")), Work.str(e.get("target")), Work.str(e.get("file")), (int) Double.parseDouble(Work.str(e.getOrDefault("line", "0")))));
+                    out.add(new Edge(e.containsKey("from") ? Work.str(e.get("from")) : comp, Work.str(e.get("kind")), Work.str(e.get("target")), Work.str(e.get("file")), (int) Double.parseDouble(Work.str(e.getOrDefault("line", "0")))));
                 }
             }
         } catch (IOException | RuntimeException e) {

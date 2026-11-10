@@ -348,6 +348,14 @@ public final class Catalog {
                         .append(" | ").append(e.file()).append(':').append(e.line()).append(" |\n");
             }
         }
+        Path co = dir().resolve("cochange.md");
+        if (Files.isRegularFile(co)) {
+            try {
+                sb.append('\n').append(Files.readString(co).strip()).append('\n');
+            } catch (IOException e) {
+                // the graph stands without it
+            }
+        }
         return sb.toString();
     }
 }

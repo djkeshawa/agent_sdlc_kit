@@ -67,7 +67,7 @@ layer-1 and layer-2 rules (413 checks).
 | Printing the environment (`env`, `printenv`, `set`, `Get-ChildItem env:`, `ps e`, `/proc/<pid>/environ`), `$...TOKEN` variables | deny | - | - | - |
 | Recursive deletes outside build output; deleting outside the project or `.git` | ask / deny | - | - | - |
 | Encoded PowerShell (`-EncodedCommand`) | deny | - | - | - |
-| Running the hooks, `setup` or `config apply` by hand | deny | - | - | - |
+| Running the hooks, `setup`, `upgrade` or `config apply` by hand; `tests lock` (QE's approval); `eval` (its report shows the ground truth) | deny | - | - | - |
 | Docker, kubectl, helm, terraform; `pip install` | ask | - | - | - |
 
 Shell commands are split and checked part by part, through `bash -c`, `sh -c`, `cmd /c`,

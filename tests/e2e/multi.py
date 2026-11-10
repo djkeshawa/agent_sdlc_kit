@@ -211,3 +211,29 @@ check("holdout status: per-scenario results from QE's job, with titles", code ==
 digest = sorted((PROJ / ".sdlc/PAY-100/rounds").glob("holdout-*.md"))
 check("holdout digest never shows the hidden test's inputs", "SECRET-INPUT-42" not in out and digest and "SECRET-INPUT-42" not in digest[-1].read_text(), out)
 check("holdout: Jenkins token sent to the configured job", any(a[0] == "holdout" and a[2].startswith("Basic") for a in state()["auth_seen"]))
+
+# ---------- Phase 3: co-change, runtime traces, pinned kit version ----------
+code, out = sdlc("catalog", "cochange", "PAY-10")
+check("cochange: components that changed together for an epic, explained by the catalog", code == 0 and "orders-service + payments-service" in out
+      and "declared in the catalog" in out and (PROJ / ".sdlc/catalog/cochange.md").exists(), out)
+deps = WORK / "jaeger-deps.json"
+deps.write_text(json.dumps({"data": [{"parent": "payments-service", "child": "ledger-service", "callCount": 7}]}))
+code, out = sdlc("catalog", "import-traces", "--file", str(deps))
+check("import-traces: Jaeger dependencies", code == 0 and "1 service-to-service call(s) imported" in out, out)
+code, out = sdlc("catalog", "graph")
+check("graph shows runtime calls and co-change", code == 0 and "runtime host ledger-service" in out and "Components that change together" in out, out)
+
+d, why = bash("java .agent/Sdlc.java upgrade --from /tmp/kit")
+check("agents cannot upgrade the kit", d == "deny", why)
+code, out = sdlc("upgrade", "--from", str(TEMPLATE), "--check")
+check("upgrade --check: the project matches the kit it was installed from", code == 0 and "up to date" in out, out)
+hookfile = PROJ / ".githooks/pre-commit"
+original = hookfile.read_text()
+hookfile.write_text(original + "\n# local edit\n")
+code, out = sdlc("upgrade", "--from", str(TEMPLATE), "--check")
+check("upgrade --check: a drifted kit file is reported", code == 1 and "changed  .githooks/pre-commit" in out, out)
+code, out = sdlc("upgrade", "--from", str(TEMPLATE), "--version", "r4")
+check("upgrade: restores the kit files and pins the version", code == 0 and hookfile.read_text() == original
+      and json.loads((PROJ / ".agent/kit.version").read_text())["version"] == "r4", out)
+code, out = sdlc("config", "check")
+check("config check shows the pinned kit", code == 0 and "Kit: r4" in out, out)

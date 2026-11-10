@@ -17,6 +17,7 @@ import sdlc.cli.Hooks;
 import sdlc.cli.Repos;
 import sdlc.cli.Setup;
 import sdlc.cli.Status;
+import sdlc.cli.Upgrade;
 import sdlc.core.Console;
 import sdlc.core.Ctx;
 import sdlc.core.UsageException;
@@ -32,6 +33,7 @@ import sdlc.workflow.Catalog;
 import sdlc.workflow.CatalogScan;
 import sdlc.workflow.Lanes;
 import sdlc.workflow.Checks;
+import sdlc.workflow.CoChange;
 import sdlc.workflow.Ci;
 import sdlc.workflow.Gates;
 import sdlc.workflow.IssueTracker;
@@ -76,6 +78,9 @@ public final class Main {
 
             catalog check|sync|graph            this repo's catalog-info.yaml | copy related repos' catalogs | page for agents
             catalog scan [--write]               dependencies found in this repo's code (HTTP calls, topics, queues, config)
+            catalog cochange <EPIC>... [--min 2] components that changed together per epic (gh); hidden coupling
+            catalog import-traces --file <json>  service calls seen by tracing (Jaeger dependencies or [{from,to,calls}])
+            upgrade --from <kit> [--version V] [--check]   pin this repo's kit to a version (a human runs it)
             stories create <EPIC>                one Jira story per component of the approved solution design
             feature status <EPIC>                solution approval, stories, LLDs and slices of a cross-component feature
             classify <KEY>                       lowest delivery lane the facts allow (lanes.enabled)
@@ -186,6 +191,7 @@ public final class Main {
             case "hook" -> Hooks.run(c1, stdin, hookFormat(a), w.sync);
             case "git-hook" -> GitHooks.run(c1, Arrays.copyOfRange(a, 2, a.length), stdin);
             case "setup" -> Setup.setup(Main::selfTest);
+            case "upgrade" -> Upgrade.run(opt.getOrDefault("from", ""), opt.getOrDefault("version", ""), opt.containsKey("check"));
             case "doctor" -> Setup.doctor(w.issues, w.wiki);
             case "selftest" -> SelfTest.run();
             case "config" -> c1.equals("apply") ? Setup.configApply() : Setup.configCheck();
@@ -220,6 +226,8 @@ public final class Main {
                 case "sync" -> Catalog.sync();
                 case "graph" -> Catalog.graph();
                 case "scan" -> CatalogScan.run(opt.containsKey("write"));
+                case "cochange" -> w.cochange.run(positional(a, 2), Integer.parseInt(opt.getOrDefault("min", "2")));
+                case "import-traces" -> CoChange.importTraces(file(opt));
                 default -> usage();
             };
             case "stories" -> c1.equals("create") ? w.stories.create(need(a, 2, "EPIC")) : usage();
