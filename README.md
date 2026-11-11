@@ -1,4 +1,4 @@
-# Agentic SDLC kit for Java (Copilot / Claude Code / Codex + Jira + Confluence + GitHub + Jenkins + SonarQube)
+# Agentic SDLC kit
 
 A ready-to-copy setup that lets coding agents (GitHub Copilot, Claude Code or Codex) deliver Jira stories in a Java (or
 Node) repository **inside guardrails**. QE and developers design in Confluence, humans approve
