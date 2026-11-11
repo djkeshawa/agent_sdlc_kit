@@ -20,17 +20,34 @@ public final class Config {
         this.root = root;
     }
 
+    /**
+     * .agent/sdlc.yml over .agent/org.yml (the organisation's rules, shipped with the kit by
+     * `sdlc upgrade`) over the stack preset over the built-in defaults.
+     */
     static Config load(Path file) throws IOException {
         Map<String, Object> user = Files.exists(file) ? asMap(Yaml.parse(Files.readString(file)), "sdlc.yml") : new LinkedHashMap<>();
-        return fromUser(user);
+        Path orgFile = file.resolveSibling("org.yml");
+        Map<String, Object> org = Files.exists(orgFile) ? asMap(Yaml.parse(Files.readString(orgFile)), "org.yml") : new LinkedHashMap<>();
+        return fromLayers(org, user);
     }
 
     static Config fromUser(Map<String, Object> user) {
+        return fromLayers(new LinkedHashMap<>(), user);
+    }
+
+    static Config fromLayers(Map<String, Object> org, Map<String, Object> user) {
         Map<String, Object> merged = asMap(Yaml.parse(Defaults.COMMON), "defaults");
-        String stack = user.get("stack") instanceof String s && !s.isBlank() ? s : "java-maven";
+        Object st = user.get("stack") != null ? user.get("stack") : org.get("stack");
+        String stack = st instanceof String s && !s.isBlank() ? s : "java-maven";
         merge(merged, asMap(Yaml.parse(Defaults.preset(stack)), "preset"));
+        merge(merged, org);
         merge(merged, user);
         return new Config(merged);
+    }
+
+    /** Test hook: the merge of an organisation layer and a repository layer. */
+    public static Config parseLayers(String orgYaml, String repoYaml) {
+        return fromLayers(asMap(Yaml.parse(orgYaml), "org.yml"), asMap(Yaml.parse(repoYaml), "sdlc.yml"));
     }
 
     public static Config parse(String yaml) {
@@ -169,7 +186,7 @@ public final class Config {
         for (String doc : List.of("testDesign", "lld")) {
             if (str("confluence.publish." + doc + ".space").isBlank()) p.add("confluence.publish." + doc + ".space is empty");
         }
-        for (String gate : List.of("testDesign", "lld")) {
+        for (String gate : List.of("testDesign", "lld", "solution")) {
             String g = str("gates." + gate);
             if (!g.matches("required|optional|off")) p.add("gates." + gate + " must be required, optional or off");
         }

@@ -166,10 +166,19 @@ public final class FileRules {
         return new ArrayList<>(out);
     }
 
-    public boolean isSecret(String path) {
+    /** A credential file (paths.secret only): never committed. Hidden files (paths.hidden) are kept out of agents' reach but may be committed. */
+    public boolean isCredential(String path) {
         String clean = path.replace('\\', '/');
         String name = clean.substring(clean.lastIndexOf('/') + 1);
         List<String> globs = g.cfg.list("paths.secret");
+        return Glob.any(globs, relative(path)) || Glob.any(globs, clean) || Glob.any(globs, "x/" + name);
+    }
+
+    public boolean isSecret(String path) {
+        String clean = path.replace('\\', '/');
+        String name = clean.substring(clean.lastIndexOf('/') + 1);
+        List<String> globs = new java.util.ArrayList<>(g.cfg.list("paths.secret"));
+        globs.addAll(g.cfg.list("paths.hidden")); // eval truth and hold-out tests: never read by agents either
         return Glob.any(globs, relative(path)) || Glob.any(globs, clean) || Glob.any(globs, "x/" + name) || otherReadings(path).stream().anyMatch(r -> Glob.any(globs, r));
     }
 
@@ -314,12 +323,12 @@ public final class FileRules {
     }
 
     boolean isProtected(String rel) {
-        return Glob.any(g.cfg.list("paths.protected"), rel) && !Glob.any(g.cfg.list("paths.agentWritable"), rel);
+        return Glob.any(g.cfg.list("paths.protected"), rel) && !Glob.any(g.cfg.list("paths.agentWritable"), rel) || sdlc.core.Locks.isLocked(g.root, rel);
     }
 
     public Decision checkRead(List<String> paths) {
         for (String path : paths) {
-            if (isSecret(path) || writeTargets(path).stream().anyMatch(this::isSecret)) return Decision.deny("`" + path + "` holds credentials. Agents never read secrets.");
+            if (isSecret(path) || writeTargets(path).stream().anyMatch(this::isSecret)) return Decision.deny("`" + path + "` holds credentials or hidden test data. Agents never read it.");
         }
         return Decision.allow();
     }
@@ -334,7 +343,8 @@ public final class FileRules {
         }
         for (String path : paths) for (String rel : writeTargets(path)) { // the path, and the file a symbolic link on the way leads to
             if (rel.startsWith("..")) return Decision.deny("`" + path + "` is outside the repository.");
-            if (isSecret(path) || isSecret(rel)) return Decision.deny("`" + rel + "` holds credentials. Agents never touch secrets.");
+            if (isSecret(path) || isSecret(rel)) return Decision.deny("`" + rel + "` holds credentials or hidden test data. Agents never touch it.");
+            if (sdlc.core.Locks.isLocked(g.root, rel)) return Decision.deny("`" + rel + "` is an acceptance test locked by QE (" + sdlc.core.Locks.DIR + "). Make the code pass it; if the test is wrong, ask QE to change and lock it again.");
             if (isProtected(rel)) return Decision.deny("`" + rel + "` is a guardrail or state file. Only a human changes it (CODEOWNERS review), or the sdlc tool itself.");
             boolean scratch = Glob.any(g.cfg.list("paths.agentWritable"), rel);
             if (!scratch && g.cfg.isProtectedBranch(branch)) {

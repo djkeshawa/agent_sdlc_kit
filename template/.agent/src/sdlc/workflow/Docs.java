@@ -26,7 +26,7 @@ import sdlc.util.Markdown;
 public final class Docs {
     record Doc(String type, String key, String id, String title, String space, String version, String url, boolean ours) {}
 
-    static final List<String> TYPES = List.of("testDesign", "lld", "hld", "onePager");
+    static final List<String> TYPES = List.of("testDesign", "lld", "hld", "onePager", "solution");
 
     private final Workflow w;
 
@@ -76,7 +76,7 @@ public final class Docs {
     }
 
     private static boolean isOurs(String type, String key, String title, String space) {
-        if (!type.equals("lld") && !type.equals("testDesign")) return false;
+        if (!type.equals("lld") && !type.equals("testDesign") && !type.equals("solution")) return false;
         return title.equalsIgnoreCase(title(type, key)) && space.equalsIgnoreCase(Ctx.cfg.str("confluence.publish." + type + ".space"));
     }
 
@@ -133,6 +133,7 @@ public final class Docs {
                     .append(approval.isEmpty() ? "" : " - " + approval).append(" -> `").append(Ctx.rel(f)).append("`\n");
         }
         for (String type : List.of("onePager", "hld")) if (!counts.containsKey(type)) index.append("- ").append(label(type)).append(": NOT FOUND\n");
+        index.append(solutionSlice(key, dir));
         if (!Ctx.cfg.maps("github.relatedRepos").isEmpty()) {
             index.append("\nRelated repositories (read with the GitHub MCP tools, or `sdlc repos sync` for local copies in .sdlc/repos/):\n");
             for (Map<String, Object> r : Ctx.cfg.maps("github.relatedRepos")) index.append("- ").append(r.get("name")).append(" (").append(r.getOrDefault("repo", r.get("url"))).append(") team ").append(r.getOrDefault("team", "?")).append(": ").append(r.getOrDefault("purpose", "")).append('\n');
@@ -142,12 +143,56 @@ public final class Docs {
         return 0;
     }
 
+    /** The solution design that governs this issue (its own, or a parent's), or null. */
+    Doc solution(String key) {
+        Doc own = own(key, "solution");
+        if (own != null) return own;
+        for (Doc d : find(key)) if (d.type().equals("solution")) return d;
+        return null;
+    }
+
+    /**
+     * Writes sources/solution-slice.md when a parent epic has a solution design that names this
+     * repository's component: what the team designs from, and the hash its LLD must carry.
+     */
+    private String solutionSlice(String key, Path dir) {
+        Doc d;
+        try {
+            d = solution(key);
+        } catch (RuntimeException e) {
+            return "- Solution design: could not look it up (" + e.getMessage() + ")\n";
+        }
+        if (d == null) return "";
+        Wiki.Page p = w.wiki.page(d.id());
+        Solution s;
+        try {
+            s = Solution.parseStorage(p.storage());
+        } catch (UsageException e) {
+            return "- Solution design " + p.title() + ": " + e.getMessage() + "\n";
+        }
+        String self = Catalog.selfName();
+        String approval = w.approvals.statusLine(d.key(), "solution");
+        if (!s.components.containsKey(self)) {
+            return "- Solution design " + p.title() + " v" + p.version() + " (" + approval + "): this repository's component '" + self
+                    + "' is NOT in it. Its components: " + s.components.keySet() + ". Ask the architect before designing anything here.\n";
+        }
+        String hash = s.sliceHash(self);
+        Path f = dir.resolve("solution-slice.md");
+        Store.writeText(f, "<!-- solution-slice " + hash + " | " + p.title() + " v" + p.version() + " | " + p.url() + " | " + approval + " -->\n"
+                + "# Solution slice for " + self + "\n\nYour component's part of the approved solution design. Design only this. "
+                + "Your LLD's `# sdlc-tasks` block must carry:\n\n```yaml\nlane: cross-component\nsolutionSlice: " + hash + "\n```\n\n"
+                + "Contracts: add or remove only what `provides` lists. Anything else needs a solution change request "
+                + "(.sdlc/" + key + "/inbox/scr-1.md) and a new solution version.\n\n```yaml\n" + s.slice(self) + "```\n");
+        return "- Solution slice for " + self + " (from " + p.title() + " v" + p.version() + ", " + approval + "), hash " + hash + " -> `" + Ctx.rel(f) + "`\n";
+    }
+
     static String label(String type) {
         return switch (type) {
             case "onePager" -> "One pager";
             case "hld" -> "HLD";
             case "lld" -> "LLD";
             case "testDesign" -> "Test design";
+            case "solution" -> "Solution design";
             default -> "Related page";
         };
     }
@@ -184,11 +229,15 @@ public final class Docs {
 
     /** Publishes a local Markdown draft as the test design or our LLD, then asks for approval. */
     public int publish(String key, String type, Path file) throws IOException {
-        if (!type.equals("testDesign") && !type.equals("lld")) throw new UsageException("type must be test-design or lld");
+        if (!type.equals("testDesign") && !type.equals("lld") && !type.equals("solution")) throw new UsageException("type must be test-design, lld or solution");
         String space = Ctx.cfg.str("confluence.publish." + type + ".space");
         if (space.isBlank()) throw new UsageException("confluence.publish." + type + ".space is not set in .agent/sdlc.yml");
         String md = Files.readString(file);
         if (type.equals("lld")) Tasks.parse(md); // refuse an LLD whose tasks block is broken
+        if (type.equals("solution")) {
+            List<String> problems = Solution.parse(md).problems(Catalog.load());
+            if (!problems.isEmpty()) throw new UsageException("the solution design is not ready to publish:\n- " + String.join("\n- ", problems));
+        }
         if (type.equals("testDesign") && Ctx.cfg.bool("confluence.mindmapImage", true)) md = MindMap.addImage(md, file);
         Markdown.Converted c = Markdown.toStorage(md, Ctx.cfg.str("confluence.mermaidMacro"));
         String title = title(type, key);

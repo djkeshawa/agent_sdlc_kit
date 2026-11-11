@@ -45,11 +45,13 @@ public final class GitHooks {
         for (String f : staged) {
             Path p = Ctx.root.resolve(f);
             if (Files.isRegularFile(p) && Files.size(p) > maxKb * 1024L) errors.add("File too large (> " + maxKb + " KB): " + f);
-            if (files.isSecret(f)) errors.add("Credential file staged: " + f);
+            if (files.isCredential(f)) errors.add("Credential file staged: " + f);
             if (f.startsWith(".sdlc/")) errors.add("Local state staged: " + f + " (add .sdlc/ to .gitignore)");
             if (Glob.any(Ctx.cfg.list("paths.protected"), f)) guardrails.add(f);
         }
         if (!guardrails.isEmpty()) warnings.add(guardrails.size() + " guardrail file(s) changed; a tech lead reviews them (CODEOWNERS)");
+        List<String> deleted = Git.lines(Proc.run(Ctx.root, "git", "diff", "--cached", "--name-only", "--diff-filter=D").out());
+        for (String b : stagedLockProblems(staged, deleted)) errors.add("Locked acceptance test " + b + ". The code must pass it as QE locked it; if the test is wrong, QE changes it and runs tests lock again.");
         if (Checks.testsMissing(staged)) warnings.add("Main code changed without a test change in this commit.");
         String quick = Ctx.WINDOWS ? Ctx.cfg.str("build.preCommitWindows", Ctx.cfg.str("build.preCommit")) : Ctx.cfg.str("build.preCommit");
         if (errors.isEmpty() && !quick.isBlank()) {
@@ -57,6 +59,25 @@ public final class GitHooks {
             if (Proc.shell(Ctx.root, quick) != 0) errors.add("Pre-commit command failed: " + quick);
         }
         return report("pre-commit", errors, warnings);
+    }
+
+    /**
+     * Locked acceptance tests this commit would change or delete, and lock files that cannot be read.
+     * The staged content is what is checked (git show :path), not the working tree: that is what gets committed.
+     */
+    public static List<String> stagedLockProblems(List<String> staged, List<String> deleted) {
+        List<String> out = new ArrayList<>(sdlc.core.Locks.damaged(Ctx.root));
+        for (sdlc.core.Locks.Entry e : sdlc.core.Locks.locked(Ctx.root).values()) {
+            String what = e.path() + " (" + e.story() + ")";
+            if (deleted.contains(e.path())) {
+                out.add(what + ": deleted");
+            } else if (staged.contains(e.path())) {
+                Proc blob = Proc.run(Ctx.root, "git", "show", ":" + e.path());
+                if (blob.code() != 0) out.add(what + ": unreadable");
+                else if (!sdlc.core.Locks.hash(blob.out().getBytes(java.nio.charset.StandardCharsets.UTF_8)).equals(e.hash())) out.add(what + ": changed");
+            }
+        }
+        return out;
     }
 
     static int commitMsg(Path file) throws IOException {

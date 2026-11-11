@@ -60,6 +60,12 @@ story -> epic), so an HLD titled with the epic key is found for every story of t
 HUMAN GATE 3: a human reviews the PR (CODEOWNERS for guardrail files) and merges
 ```
 
+For a feature across several components, an epic level comes first: `/solution EPIC`
+(architect agent, approved by an architect on the epic), `stories create EPIC` (one story per
+component, each with its slice of the solution), then the flow above in each repository.
+Lanes, locked acceptance tests, hold-out scenarios and contract checks keep each team to its
+slice. See [docs/08](08-multi-component.md).
+
 ## The approval line
 
 `java .agent/Sdlc.java docs publish` prints, and comments on the story, a line like
@@ -97,6 +103,9 @@ and the skills in their formats (`tools` in `sdlc.yml`, [docs/02 step 8](02-setu
 | `reviewer` | orchestrator, `/review TASK` | Blind review against LLD, test design, profile | only its report |
 | `qa-verifier` | orchestrator | Runs integration / contract / e2e scenarios | tests in scope |
 | `ci-fixer` | orchestrator, `/fix-ci STORY` | Fixes a red Jenkins build or Sonar gate | the task's scope |
+| `architect` | `/solution EPIC` | Solution design for a feature across components: requirements, impact analysis, contracts, order | `.sdlc/*/drafts` |
+| `impact-analyst` | architect (k times), `/eval-scoping` | Which components change, with evidence; started fresh each time | its answer file |
+| `eval-runner` | `/eval-scoping RUN` | Runs the scoping eval: one fresh impact-analyst per case | answers in `.sdlc/eval/inbox` |
 
 Tip: give the **reviewer a different model family** than the implementer (`agents.reviewer.model`
 in `sdlc.yml`, then `java .agent/Sdlc.java config apply`). Different models miss different things.

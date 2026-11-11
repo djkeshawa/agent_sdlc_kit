@@ -20,6 +20,7 @@ public final class Defaults {
               projectKeys: []
               issueTypes:
                 task: Sub-task
+                story: Story
               epicLinkField: ""
               statuses:
                 inProgress: In Progress
@@ -34,6 +35,7 @@ public final class Defaults {
                 hld: "(?i)\\\\bhld\\\\b|high[ -]?level design"
                 lld: "(?i)\\\\blld\\\\b|low[ -]?level design"
                 testDesign: "(?i)test (scenarios|design|cases)"
+                solution: "(?i)solution design"
               publish:
                 testDesign:
                   space: ""
@@ -43,11 +45,24 @@ public final class Defaults {
                   space: ""
                   parentId: ""
                   title: "{key} - LLD - {team}"
+                solution:
+                  space: ""
+                  parentId: ""
+                  title: "{key} - Solution design"
               mermaidMacro: ""
               mindmapImage: true
             github:
               host: github.com
+              org: ""
+              commitPages: 3
               relatedRepos: []
+            eval:
+              dir: docs/agent/eval
+            catalog:
+              file: catalog-info.yaml
+              repos: []
+            lanes:
+              enabled: false
             ci:
               waitMinutes: 60
               pollSeconds: 30
@@ -59,9 +74,11 @@ public final class Defaults {
             gates:
               testDesign: required
               lld: required
+              solution: required
               approvers:
                 testDesign: []
                 lld: []
+                solution: []
               botAccounts: []
               allowSelfApproval: false
             loops:
@@ -86,6 +103,9 @@ public final class Defaults {
               reviewer: {model: ""}
               qa-verifier: {model: ""}
               ci-fixer: {model: ""}
+              architect: {model: ""}
+              impact-analyst: {model: ""}
+              eval-runner: {model: ""}
             git:
               protectedBranches: [main, master, develop, "release/*"]
               branchPattern: "^(feature|bugfix|hotfix|chore)/[A-Z][A-Z0-9]+-[0-9]+(-[a-z0-9._-]+)?$"
@@ -126,6 +146,9 @@ public final class Defaults {
                 - sonar-project.properties
                 - .gitattributes
                 - .sdlc/**
+                - catalog-info.yaml
+                - docs/test-locks/**
+                - docs/agent/contracts/**
                 - .git/config
                 - .git/hooks/**
                 - .git/info/**
@@ -172,12 +195,18 @@ public final class Defaults {
                 - "**/.composer/auth.json"
                 - "**/.gem/credentials"
                 - "/proc/*/environ"
+              hidden:
+                - ".sdlc/hidden/**"
               doc: [docs/**, README.md, CHANGELOG.md]
             build:
               preCommit: ""
               preCommitWindows: ""
+              mutation: ""
             tests:
               requireTestsForMainChanges: true
+              lockAcceptance: false
+            holdout:
+              jenkinsJob: ""
             """;
 
     static final String JAVA_MAVEN = """

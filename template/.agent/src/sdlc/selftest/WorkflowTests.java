@@ -8,13 +8,8 @@ import static sdlc.selftest.Asserts.tool;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 
 import sdlc.core.Config;
-import sdlc.core.Console;
 import sdlc.core.Ctx;
 import sdlc.core.Markers;
 import sdlc.core.Store;
@@ -24,7 +19,6 @@ import sdlc.guard.Guard;
 import sdlc.guard.Repo;
 import sdlc.util.Proc;
 import sdlc.workflow.Approvals;
-import sdlc.workflow.IssueTracker;
 import sdlc.workflow.Wiki;
 import sdlc.workflow.Workflow;
 
@@ -37,9 +31,9 @@ final class WorkflowTests {
         Ctx.cfg = Config.parse("stack: java-maven\nproject:\n  team: pay\njira:\n  projectKeys: [PROJ]\nconfluence:\n  publish:\n    lld: {space: DEV}\n    testDesign: {space: QE}\n"
                 + "gates:\n  approvers:\n    lld: [lead]\n  botAccounts: [bot]\n");
         try {
-            FakeTracker tracker = new FakeTracker();
-            FakeWiki wiki = new FakeWiki();
-            Recorder said = new Recorder();
+            Fakes.Tracker tracker = new Fakes.Tracker();
+            Fakes.Wiki wiki = new Fakes.Wiki();
+            Fakes.Recorder said = new Fakes.Recorder();
             Workflow w = new Workflow(tracker, wiki, said);
             Proc.run(tmp, "git", "switch", "-q", "-c", "feature/PROJ-7-refunds");
             Path draft = tmp.resolve(".sdlc/PROJ-7/drafts/lld.md");
@@ -102,82 +96,6 @@ final class WorkflowTests {
                     && guard.shell.check("python3 new.py").kind() == Decision.Kind.ASK);
         } finally {
             Ctx.cfg = saved;
-        }
-    }
-
-    /** A console that keeps what the steps say, so a test can read it and the test run stays quiet. */
-    private static final class Recorder implements Console {
-        final List<String> out = new ArrayList<>(), err = new ArrayList<>();
-
-        public void out(String line) { out.add(line); }
-
-        public void err(String line) { err.add(line); }
-    }
-
-    /** An issue tracker in memory. */
-    private static final class FakeTracker implements IssueTracker {
-        final Map<String, List<Comment>> comments = new LinkedHashMap<>();
-        final Map<String, String> status = new LinkedHashMap<>();
-        final Map<String, String> parent = new LinkedHashMap<>();
-        final List<Issue> created = new ArrayList<>();
-        private int clock;
-
-        void say(String key, String body, String who, boolean edited) {
-            String at = "t" + (++clock);
-            comments.computeIfAbsent(key, k -> new ArrayList<>()).add(new Comment(body, who, who, at, edited ? at + "-edited" : at));
-        }
-
-        public String text(String key, int maxComments) { return "# " + key; }
-        public List<String> parents(String key) { return List.of(); }
-        public List<Comment> comments(String key) { return comments.getOrDefault(key, List.of()); }
-        public void comment(String key, String body, boolean fromAgent) { say(key, body, "bot", false); }
-        public List<Transition> transitions(String key) { return List.of(); }
-        public boolean transition(String key, String to, boolean fromAgent) { return forward(key, to); }
-        public boolean forward(String key, String target) { return !target.equals(status.put(key, target)); }
-        public List<Issue> children(String p) { return created.stream().filter(i -> p.equals(parent.get(i.key()))).toList(); }
-        public List<Issue> search(String query, int max) { return List.of(); }
-        public void link(String key, String url, String title) { }
-        public String login() { return "as a fake"; }
-
-        public String createSubtask(String p, String summary, String description) {
-            Issue i = new Issue("PROJ-" + (101 + created.size()), summary, "To Do", "Sub-task");
-            created.add(i);
-            parent.put(i.key(), p);
-            return i.key();
-        }
-    }
-
-    /** A wiki in memory. */
-    private static final class FakeWiki implements Wiki {
-        final Map<String, Page> pages = new LinkedHashMap<>();
-
-        void edit(String id, String append, String author) {
-            Page p = pages.get(id);
-            pages.put(id, new Page(id, p.title(), p.space(), p.version() + 1, p.storage() + append, p.url(), author));
-        }
-
-        public Page page(String id) { return pages.get(id); }
-        public void attach(String pageId, String fileName, byte[] data, String mime) { }
-        public void ping() { }
-
-        public List<Ref> titled(String words, List<String> spaces) {
-            return pages.values().stream().filter(p -> p.title().contains(words) && (spaces.isEmpty() || spaces.contains(p.space()))).map(FakeWiki::ref).toList();
-        }
-
-        public Ref byTitle(String space, String title) {
-            return pages.values().stream().filter(p -> p.space().equals(space) && p.title().equals(title)).map(FakeWiki::ref).findFirst().orElse(null);
-        }
-
-        public Page publish(String space, String parentId, String title, String storage) {
-            Ref old = byTitle(space, title);
-            String id = old == null ? String.valueOf(5000 + pages.size()) : old.id();
-            Page p = new Page(id, title, space, old == null ? 1 : pages.get(id).version() + 1, storage, "https://wiki.test/" + id, "bot");
-            pages.put(id, p);
-            return p;
-        }
-
-        private static Ref ref(Page p) {
-            return new Ref(p.id(), p.title(), p.space(), String.valueOf(p.version()), p.url());
         }
     }
 }

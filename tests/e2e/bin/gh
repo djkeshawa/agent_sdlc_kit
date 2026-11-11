@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
 import urllib.request
 
 PORT = os.environ.get("MOCK_PORT", "18080")
@@ -44,5 +46,26 @@ if args[:2] == ["pr", "checks"]:
         sys.exit(1)
     print(json.dumps(cs))
     sys.exit(0)
+if args[:1] == ["api"]:
+    if "search/commits" in args:
+        q = next(a[2:] for a in args if a.startswith("q="))
+        print(json.dumps(call("GET", "/__gh/commits?q=" + urllib.parse.quote(q))))
+        sys.exit(0)
+    listing = next((a for a in args[1:] if a.startswith("repos/") and ("/branches" in a or "/commits" in a)), None)
+    if listing:
+        repo = "/".join(listing[len("repos/"):].split("/")[:2])
+        kind = "branches" if "/branches" in listing else "commits"
+        page = urllib.parse.parse_qs(urllib.parse.urlparse(listing).query).get("page", ["1"])[0]
+        print(json.dumps(call("GET", "/__gh/repo?repo=%s&kind=%s&page=%s" % (urllib.parse.quote(repo), kind, page))))
+        sys.exit(0)
+    target = next((a for a in args[1:] if a.startswith("repos/") and "/contents/" in a), None)
+    if target:
+        repo, path = target[len("repos/"):].split("/contents/", 1)
+        try:
+            print(urllib.request.urlopen(BASE + "/__gh/file?ref=" + urllib.parse.quote(repo + ":" + path)).read().decode(), end="")
+            sys.exit(0)
+        except urllib.error.HTTPError:
+            print("gh: Not Found (HTTP 404)", file=sys.stderr)
+            sys.exit(1)
 print("fake gh: unsupported " + " ".join(args), file=sys.stderr)
 sys.exit(1)

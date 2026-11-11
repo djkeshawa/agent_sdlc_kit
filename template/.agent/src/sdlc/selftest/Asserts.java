@@ -13,6 +13,9 @@ import sdlc.util.Json;
 final class Asserts {
     private Asserts() {}
 
+    /** Where failures are reported, kept from the start: a test may silence System.out around a noisy command. */
+    private static final java.io.PrintStream REPORT = System.out;
+
     static int passed;
     static int failed;
 
@@ -53,7 +56,7 @@ final class Asserts {
         if (d.kind() == want) passed++;
         else {
             failed++;
-            System.out.println("FAIL " + name + ": expected " + want + " got " + d.kind() + " " + d.reason());
+            REPORT.println("FAIL " + name + ": expected " + want + " got " + d.kind() + " " + d.reason());
         }
     }
 
@@ -61,7 +64,7 @@ final class Asserts {
         if (ok) passed++;
         else {
             failed++;
-            System.out.println("FAIL " + name);
+            REPORT.println("FAIL " + name);
         }
     }
 }

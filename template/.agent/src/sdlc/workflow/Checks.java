@@ -138,6 +138,14 @@ public final class Checks {
             check(outside.isEmpty(), "Changed code stays inside the allowed paths of " + story + "'s tasks"
                     + (outside.isEmpty() ? "" : ": outside -> " + outside + " (change the LLD's task scope and get it re-approved, or move this change to its own story)"), passes, fails);
         }
+        List<String> broken = sdlc.core.Locks.broken(Ctx.root);
+        if (!sdlc.core.Locks.locked(Ctx.root).isEmpty() || !broken.isEmpty()) check(broken.isEmpty(), "Locked acceptance tests unchanged" + (broken.isEmpty() ? "" : ": " + broken), passes, fails);
+        List<String> lockChanges = files.stream().filter(f -> f.startsWith(sdlc.core.Locks.DIR + "/")).toList();
+        if (!lockChanges.isEmpty()) warns.add("acceptance test locks changed: " + lockChanges + " (a QE lead reviews them, CODEOWNERS)");
+        Contracts.Policy contracts = Contracts.prPolicy(story.isEmpty() ? storyFromBranch(branch) : story, base, files);
+        passes.addAll(contracts.passes());
+        fails.addAll(contracts.fails());
+        warns.addAll(contracts.warns());
         List<String> guardrails = files.stream().filter(f -> Glob.any(Ctx.cfg.list("paths.protected"), f)).toList();
         if (!guardrails.isEmpty()) warns.add(guardrails.size() + " guardrail file(s) changed (CODEOWNERS review required)");
         if (withTrace) {
@@ -149,13 +157,21 @@ public final class Checks {
         return new Result(passes, fails, warns);
     }
 
+    /** The Jira key in a branch name (feature/PAY-101-refunds -> PAY-101): the story in CI, where no local state exists. */
+    static String storyFromBranch(String branch) {
+        Matcher m = Ctx.cfg.keyPattern().matcher(branch);
+        return m.find() ? m.group() : "";
+    }
+
     /** Changed code files outside every task's scope, or null when the story has no tasks (nothing to compare with). */
     public static List<String> outsideScope(String story, List<String> changed) {
         List<String> scopes = new ArrayList<>();
         for (Object t : Work.tasks(Work.state(story)).values()) scopes.addAll(Work.strings(Json.obj(t).get("scope")));
         if (scopes.isEmpty()) return null;
-        // guardrail files (the kit's own .agent/src among them) have their own rule: CODEOWNERS review
-        return changed.stream().filter(f -> Glob.any(Ctx.cfg.list("paths.code"), f) && !Glob.any(scopes, f) && !Glob.any(Ctx.cfg.list("paths.ask"), f)
+        // guardrail files (the kit's own .agent/src among them) have their own rule: CODEOWNERS review.
+        // Acceptance tests locked by QE belong to no task: they come with the lock, and the lock check guards them.
+        Map<String, sdlc.core.Locks.Entry> locked = sdlc.core.Locks.locked(Ctx.root);
+        return changed.stream().filter(f -> Glob.any(Ctx.cfg.list("paths.code"), f) && !Glob.any(scopes, f) && !locked.containsKey(f) && !Glob.any(Ctx.cfg.list("paths.ask"), f)
                 && !Glob.any(Ctx.cfg.list("paths.protected"), f) && !Glob.any(Ctx.cfg.list("paths.doc"), f)).toList();
     }
 

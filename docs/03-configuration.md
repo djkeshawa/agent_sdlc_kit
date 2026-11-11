@@ -1,5 +1,8 @@
 # 3. Configuration (`.agent/sdlc.yml`)
 
+An organisation can add a layer: `.agent/org.yml` (same keys, shipped by `sdlc upgrade` from the
+organisation's kit). The merge is built-in defaults < stack preset < `.agent/org.yml` < `.agent/sdlc.yml`.
+
 `sdlc.yml` is the only file you configure. Anything you leave out comes from built-in defaults:
 first the common ones, then the preset for your `stack`. After editing:
 
@@ -38,6 +41,7 @@ human changes. Secrets never go here: they go in `.agent/local.env` ([docs/02 st
 | `jira.url` | | site URL; `JIRA_BASE_URL` in local.env overrides it for API calls (scoped tokens) |
 | `jira.projectKeys` | `[]` | keys accepted in branches, commits and PR titles |
 | `jira.issueTypes.task` | `Sub-task` | issue type created for each LLD task |
+| `jira.issueTypes.story` | `Story` | issue type `stories create <EPIC>` creates per component of a solution design |
 | `jira.epicLinkField` | `""` | Data Center only: the epic link custom field, to find a story's epic |
 | `jira.statuses.inProgress` / `inReview` / `done` | `In Progress` / `In Review` / `Done` | exact status names of your workflow |
 | `jira.agentMayClose` | `false` | `true` lets `sync` move tickets to Done after the merge |
@@ -48,9 +52,10 @@ human changes. Secrets never go here: they go in `.agent/local.env` ([docs/02 st
 | --- | --- | --- |
 | `confluence.url` | | e.g. `https://yourcompany.atlassian.net/wiki` (may be another site than Jira); `CONFLUENCE_BASE_URL` overrides it for API calls |
 | `confluence.searchSpaces` | `[]` | spaces searched for one pagers, HLDs, test designs, LLDs (all teams) |
-| `confluence.titlePatterns.onePager` / `hld` / `lld` / `testDesign` | see `sdlc.yml` | regexes that classify a page by its title |
+| `confluence.titlePatterns.onePager` / `hld` / `lld` / `testDesign` / `solution` | see `sdlc.yml` | regexes that classify a page by its title |
 | `confluence.publish.testDesign.space` / `.parentId` / `.title` | `""` / `""` / `{key} - Test scenarios` | where `/test-design` publishes |
 | `confluence.publish.lld.space` / `.parentId` / `.title` | `""` / `""` / `{key} - LLD - {team}` | where `/design` publishes |
+| `confluence.publish.solution.space` / `.parentId` / `.title` | `""` / `""` / `{key} - Solution design` | where `/solution` publishes an epic's solution design ([docs/08](08-multi-component.md)) |
 | `confluence.mermaidMacro` | `""` | name of your Mermaid macro, if you have the app; else diagrams stay as code blocks |
 | `confluence.mindmapImage` | `true` | attach the test design's mind map as a PNG |
 
@@ -60,6 +65,9 @@ human changes. Secrets never go here: they go in `.agent/local.env` ([docs/02 st
 | --- | --- | --- |
 | `github.host` | `github.com` | or your Enterprise host (changes the generated MCP config) |
 | `github.relatedRepos` | `[]` | other teams' repos the designer may read: `{name, repo, team, purpose}`; `sdlc repos sync` makes local read-only copies |
+| `github.commitPages` | `3` | pages of 100 commits read per branch when looking for a Jira key in the known repositories |
+| `github.org` | `""` | your GitHub organisation; limits the commit search of `eval collect` (and `catalog cochange`) to it |
+| `eval.dir` | `docs/agent/eval` | the scoping eval's cases (`scoping/cases/`); the ground truth lives in `.sdlc/hidden/eval/truth/`, [docs/08](08-multi-component.md#phase-0-the-scoping-eval) |
 
 ## CI (read only)
 
@@ -73,8 +81,8 @@ human changes. Secrets never go here: they go in `.agent/local.env` ([docs/02 st
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `gates.testDesign` / `gates.lld` | `required` | `required` blocks, `optional` warns, `off` skips the approval |
-| `gates.approvers.testDesign` / `.lld` | `[]` | who may approve (Cloud account ids, DC usernames); empty = any human |
+| `gates.testDesign` / `gates.lld` / `gates.solution` | `required` | `required` blocks, `optional` warns, `off` skips the approval |
+| `gates.approvers.testDesign` / `.lld` / `.solution` | `[]` | who may approve (Cloud account ids, DC usernames); empty = any human. For another team's LLD (`feature status`) the list is not applied: that team's own config holds it |
 | `gates.botAccounts` | `[]` | accounts whose comments never count as approval (put the tool's bot here) |
 | `gates.allowSelfApproval` | `false` | `false` = the account that saved the page version cannot approve it (four eyes). With a shared bot token the page author is the bot, so this only bites when people publish with their own token |
 | `loops.review.min` / `.max` | `2` / `5` | review rounds per task; the PR gate needs `min` with the last one APPROVE; past `max` the tool refuses and hands over |
@@ -83,6 +91,17 @@ human changes. Secrets never go here: they go in `.agent/local.env` ([docs/02 st
 | `delivery.baseBranch` | `develop` | PR base; `origin/<base>` is compared for policy checks |
 | `delivery.createSubtasks` | `true` | `false` = tasks tracked locally only (small stories) |
 | `delivery.qa` | `auto` | `auto` (when the test design has integration / contract / e2e / api scenarios), `always`, `never` |
+
+## Several components ([docs/08](08-multi-component.md))
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `catalog.file` | `catalog-info.yaml` | this repository in the component catalog (Backstage format); protected, CODEOWNERS |
+| `catalog.repos` | `[]` | more repositories (`owner/name`) for `catalog sync`, besides `github.relatedRepos` |
+| `tests.lockAcceptance` | `false` | `true`: `task start` refuses until QE has locked the story's acceptance tests (`tests lock`) |
+| `holdout.jenkinsJob` | `""` | QE's Jenkins job that runs the hold-out scenarios against the PR build (on `ci.jenkins.url`); read by `holdout status` |
+| `build.mutation` | `""` | optional mutation test command run by `verify` after the build (e.g. PIT on changed code); non-zero fails verify |
+| `lanes.enabled` | `false` | `true`: `tasks create` checks the LLD's `lane:` and `solutionSlice:`, the PR policy refuses contract file changes in a patch-lane story |
 
 ## Coding agents, models and MCP
 
@@ -109,6 +128,7 @@ human changes. Secrets never go here: they go in `.agent/local.env` ([docs/02 st
 | `paths.protected` | `.agent/**`, `.githooks/**`, `.github/{hooks,agents,prompts,skills,instructions,workflows}/**`, `.github/copilot-instructions.md`, `.github/CODEOWNERS`, `AGENTS.md`, `CLAUDE.md`, `.claude/**`, `.codex/**`, `.agents/**`, `.mcp.json`, `Jenkinsfile`, `.vscode/**`, `sonar-project.properties`, `.gitattributes`, `.sdlc/**` | agents never edit these (tool or shell); CODEOWNERS reviews human changes |
 | `paths.agentWritable` | `.sdlc/*/drafts/**`, `.sdlc/*/inbox/**` | the exceptions inside `.sdlc/` |
 | `paths.secret` | `.agent/local.env`, `**/*.env`, `**/.env.*`, `**/.netrc`, `**/.m2/settings.xml`, keystores, ssh and private keys (`**/*.key`, `**/*key.pem`), the token files of `gh`, cloud CLIs, Docker and Kubernetes (`**/.config/gh/**`, `**/.aws/**`, `**/.kube/config`, ...), `/proc/*/environ`, `**/secrets/**`, ... | agents never read or write these; commits of them are blocked |
+| `paths.hidden` | `.sdlc/hidden/**` | agents never read or write these (eval ground truth and report, any local copy of hold-out tests); unlike `paths.secret`, a commit of them is not blocked, but keep them out of git: git commands would show them |
 | `paths.code` | Java: `src/**`, `**/src/**` | code: edits need a started task and must be in its scope |
 | `paths.main` / `paths.test` | Java: `**/src/main/**` / `**/src/test/**`, `**/src/it/**`, `**/src/integrationTest/**` | main vs test code (tests-with-changes, disabled-test checks) |
 | `paths.ask` | Java: `pom.xml`, `.mvn/**`, `mvnw*`, DB migrations, checkstyle/spotbugs configs, `lombok.config` | edits need a human click (build, dependencies, schema) |

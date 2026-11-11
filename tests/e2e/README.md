@@ -20,6 +20,7 @@ temporary folder, then stops the mock.
 | `mock.py` | Jira Cloud, Confluence Cloud, Jenkins and SonarQube in one small HTTP server, plus a PR store for the fake `gh`. Test control is under `/__admin/*` |
 | `bin/gh` | a fake GitHub CLI: `pr create`, `pr view`, `pr checks`, `auth status` |
 | `flow.py` | the test itself: installs the template into a scratch repository and walks the flow |
+| `multi.py` | the multi-component checks (scoping eval, catalog, solution design, stories, contracts, locks, hold-outs), run by `flow.py` in its namespace |
 | `run.py` | starts and stops everything |
 
 `flow.py` covers: setup, `config check` / `config apply`, doctor, the git hooks, `docs pull`,

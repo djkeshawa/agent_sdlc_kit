@@ -17,6 +17,7 @@ import sdlc.cli.Hooks;
 import sdlc.cli.Repos;
 import sdlc.cli.Setup;
 import sdlc.cli.Status;
+import sdlc.cli.Upgrade;
 import sdlc.core.Console;
 import sdlc.core.Ctx;
 import sdlc.core.UsageException;
@@ -28,7 +29,11 @@ import sdlc.selftest.SelfTest;
 import sdlc.util.Http;
 import sdlc.util.Markdown;
 import sdlc.workflow.Approvals;
+import sdlc.workflow.Catalog;
+import sdlc.workflow.CatalogScan;
+import sdlc.workflow.Lanes;
 import sdlc.workflow.Checks;
+import sdlc.workflow.CoChange;
 import sdlc.workflow.Ci;
 import sdlc.workflow.Gates;
 import sdlc.workflow.IssueTracker;
@@ -36,6 +41,7 @@ import sdlc.workflow.Loops;
 import sdlc.workflow.MindMap;
 import sdlc.workflow.Mistakes;
 import sdlc.workflow.Tasks;
+import sdlc.workflow.TestLocks;
 import sdlc.workflow.Trace;
 import sdlc.workflow.Verify;
 import sdlc.workflow.Wiki;
@@ -53,8 +59,8 @@ public final class Main {
             analyse                              collect repository facts for /analyse
 
             docs find|pull <KEY>                 one pager, HLD, test design, LLDs (this and other teams) in Confluence
-            docs publish <KEY> test-design|lld --file <draft.md>
-            approval line|check <KEY> test-design|lld
+            docs publish <KEY> test-design|lld|solution --file <draft.md>
+            approval line|check <KEY> test-design|lld|solution
             mindmap --file <test-design.md> [--out mindmap.png]
             repos sync                           local read-only copies of related repositories
 
@@ -69,6 +75,20 @@ public final class Main {
             jira get <KEY> [--comments N] | jira search "<JQL>" | jira comment <KEY> --file F | --text T
             jira transitions <KEY> | jira transition <KEY> "<Status>" | jira link <KEY> <URL>
             confluence get <PAGE_ID> [--storage]  (--storage: raw page markup)
+
+            catalog check|sync|graph            this repo's catalog-info.yaml | copy related repos' catalogs | page for agents
+            catalog scan [--write]               dependencies found in this repo's code (HTTP calls, topics, queues, config)
+            catalog cochange <EPIC>... [--min 2] components that changed together per epic (gh); hidden coupling
+            catalog import-traces --file <json>  service calls seen by tracing (Jaeger dependencies or [{from,to,calls}])
+            upgrade --from <kit> [--version V] [--check]   pin this repo's kit to a version (a human runs it)
+            stories create <EPIC>                one Jira story per component of the approved solution design
+            feature status <EPIC>                solution approval, stories, LLDs and slices of a cross-component feature
+            classify <KEY>                       lowest delivery lane the facts allow (lanes.enabled)
+            tests lock <STORY> [--paths g1,g2]   QE: lock acceptance tests (drafts/acceptance and/or paths) | tests status [<STORY>]
+            holdout status [<STORY>] [--build N] results of QE's hold-out scenarios (ids, titles, pass/fail only)
+
+            eval collect <EPIC>...               scoping eval: case input + ground truth from commits per Jira key (gh)
+            eval score [--runs r1,r2]            score agent answers in .sdlc/eval/inbox/<run>/ against the truth
             """;
 
     private Main() {}
@@ -171,6 +191,7 @@ public final class Main {
             case "hook" -> Hooks.run(c1, stdin, hookFormat(a), w.sync);
             case "git-hook" -> GitHooks.run(c1, Arrays.copyOfRange(a, 2, a.length), stdin);
             case "setup" -> Setup.setup(Main::selfTest);
+            case "upgrade" -> Upgrade.run(opt.getOrDefault("from", ""), opt.getOrDefault("version", ""), opt.containsKey("check"));
             case "doctor" -> Setup.doctor(w.issues, w.wiki);
             case "selftest" -> SelfTest.run();
             case "config" -> c1.equals("apply") ? Setup.configApply() : Setup.configCheck();
@@ -182,10 +203,10 @@ public final class Main {
             case "docs" -> switch (c1) {
                 case "find" -> w.docs.printFind(need(a, 2, "KEY"));
                 case "pull" -> w.docs.pull(need(a, 2, "KEY"));
-                case "publish" -> w.docs.publish(need(a, 2, "KEY"), Approvals.fromCli(need(a, 3, "test-design|lld")), file(opt));
+                case "publish" -> w.docs.publish(need(a, 2, "KEY"), Approvals.fromCli(need(a, 3, "test-design|lld|solution")), file(opt));
                 default -> usage();
             };
-            case "approval" -> w.approvals.cli(c1, need(a, 2, "KEY"), Approvals.fromCli(need(a, 3, "test-design|lld")));
+            case "approval" -> w.approvals.cli(c1, need(a, 2, "KEY"), Approvals.fromCli(need(a, 3, "test-design|lld|solution")));
             case "mindmap" -> MindMap.cli(file(opt), Path.of(opt.getOrDefault("out", file(opt).resolveSibling("mindmap.png").toString())));
             case "repos" -> Repos.sync();
             case "tasks" -> c1.equals("create") ? w.tasks.create(need(a, 2, "STORY")) : w.tasks.list(pos(a, 2));
@@ -200,6 +221,25 @@ public final class Main {
             case "sync" -> w.sync.run(pos(a, 1), false);
             case "retro", "mistakes" -> Mistakes.retro(w.issues, a.length > 1 && !a[1].startsWith("--") ? a[1] : Work.currentStory(), opt.containsKey("comment"));
             case "jira" -> jira(w.issues, c1, a, opt);
+            case "catalog" -> switch (c1) {
+                case "check" -> Catalog.check();
+                case "sync" -> Catalog.sync();
+                case "graph" -> Catalog.graph();
+                case "scan" -> CatalogScan.run(opt.containsKey("write"));
+                case "cochange" -> w.cochange.run(positional(a, 2), Integer.parseInt(opt.getOrDefault("min", "2")));
+                case "import-traces" -> CoChange.importTraces(file(opt));
+                default -> usage();
+            };
+            case "stories" -> c1.equals("create") ? w.stories.create(need(a, 2, "EPIC")) : usage();
+            case "feature" -> c1.equals("status") ? w.feature.status(need(a, 2, "EPIC")) : usage();
+            case "classify" -> Lanes.classify(w, need(a, 1, "KEY"));
+            case "tests" -> c1.equals("lock") ? TestLocks.lock(need(a, 2, "STORY"), opt.getOrDefault("paths", "")) : TestLocks.status(pos(a, 2));
+            case "holdout" -> w.holdout.status(pos(a, 2), opt.getOrDefault("build", ""));
+            case "eval" -> switch (c1) {
+                case "collect" -> w.eval.collect(positional(a, 2));
+                case "score" -> w.eval.score(opt.containsKey("runs") ? List.of(opt.get("runs").split(",")) : List.of());
+                default -> usage();
+            };
             case "confluence" -> {
                 Wiki.Page p = w.wiki.page(need(a, 2, "PAGE_ID"));
                 System.out.println(opt.containsKey("storage") ? p.storage() // the raw storage format, to debug the Markdown conversion
@@ -260,6 +300,19 @@ public final class Main {
     private static String need(String[] a, int i, String what) {
         if (i >= a.length || a[i].startsWith("--") || a[i].isBlank()) throw new UsageException("missing " + what + "\n" + USAGE);
         return a[i];
+    }
+
+    /** The arguments from index i on that are not options. */
+    private static List<String> positional(String[] a, int i) {
+        List<String> out = new ArrayList<>();
+        for (int j = i; j < a.length; j++) {
+            if (a[j].startsWith("--")) {
+                j++; // skip the option's value
+                continue;
+            }
+            out.add(a[j]);
+        }
+        return out;
     }
 
     private static String pos(String[] a, int i) {

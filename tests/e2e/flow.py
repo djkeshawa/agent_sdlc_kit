@@ -138,7 +138,7 @@ for old, new in [("url: https://yourcompany.atlassian.net\n", "url: %s\n" % base
                  ("url: https://yourcompany.atlassian.net/wiki", "url: %s/wiki" % base),
                  ("url: https://jenkins.yourcompany.com", "url: %s" % base), ("url: https://sonar.yourcompany.com", "url: %s" % base),
                  ("projectKey: com.yourcompany:payments-service", "projectKey: acme:payments"),
-                 ("    testDesign: []\n    lld: []\n  botAccounts: []", "    testDesign: [qe-lead-1]\n    lld: [tech-lead-1]\n  botAccounts: [bot-1]"),
+                 ("    testDesign: []\n    lld: []\n    solution: []\n  botAccounts: []", "    testDesign: [qe-lead-1]\n    lld: [tech-lead-1]\n    solution: [architect-1]\n  botAccounts: [bot-1]"),
                  ("tools: [copilot] ", "tools: [copilot, claude, codex]"), ("pollSeconds: 30", "pollSeconds: 10")]:
     assert old in yml, old
     yml = yml.replace(old, new, 1)
@@ -532,6 +532,9 @@ gen = json.loads((PROJ / ".claude/settings.json").read_text())
 check("Claude settings wire PreToolUse to the guard", "PreToolUse" in json.dumps(gen) and "hook pre-tool-use" in json.dumps(gen))
 code, out = sdlc("selftest")
 check("selftest in the project", code == 0 and "SELFTEST PASSED" in out, out[-400:])
+
+# =============================== 7. multi-component delivery (tests/e2e/multi.py) ===============================
+exec((HERE / "multi.py").read_text())
 
 passed = sum(1 for _, ok in RESULTS if ok)
 print("\n%d/%d checks passed" % (passed, len(RESULTS)))

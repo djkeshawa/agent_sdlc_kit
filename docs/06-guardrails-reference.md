@@ -5,7 +5,7 @@
 hooks (Copilot, Claude Code, Codex: the same rules; each tool's edit and shell tools are
 understood, including Codex's `apply_patch` and `bash -lc "..."`), 2 = git hooks, 3 = your CI (with the optional `check-pr` stage, [docs/05](05-ci-jenkins-sonar.md)),
 4 = GitHub branch protection and CODEOWNERS. `java .agent/Sdlc.java selftest` checks the
-layer-1 and layer-2 rules (413 checks).
+layer-1 and layer-2 rules (532 checks, with the multi-component ones).
 
 ## Files
 
@@ -23,6 +23,9 @@ layer-1 and layer-2 rules (413 checks).
 | Archives unpacked into the repository (`tar -x`, `unzip`, `7z x`, `jar x`, `cpio -i`), except into build output or the drafts folder | ask | pre-push: changed code outside the tasks' paths | - | - |
 | Build, dependency and schema files (`pom.xml`, `.mvn/`, migrations, lint configs) | ask | - | - | review |
 | No edits on a protected branch | deny | commit refused | - | - |
+| Hidden files (`paths.hidden`: `.sdlc/hidden/**`, the scoping eval's truth and report) are read and written like secrets: never by agents | deny | - | - | - |
+| Locked acceptance tests (`docs/test-locks/<STORY>.json` lists them): no agent edits them, by tools or shell writes; the lock files themselves are protected | deny | commit of a changed locked test refused | check-pr: FAIL when a locked test differs from its lock; WARN when a lock changed | CODEOWNERS (QE) on `docs/test-locks/` |
+| `catalog-info.yaml` and the contract allowances (`docs/agent/contracts/`) are protected | deny | warn | warn | CODEOWNERS |
 | Docs (`docs/**`, `README.md`) | allowed | | | |
 
 ## Commands
@@ -64,7 +67,7 @@ layer-1 and layer-2 rules (413 checks).
 | Printing the environment (`env`, `printenv`, `set`, `Get-ChildItem env:`, `ps e`, `/proc/<pid>/environ`), `$...TOKEN` variables | deny | - | - | - |
 | Recursive deletes outside build output; deleting outside the project or `.git` | ask / deny | - | - | - |
 | Encoded PowerShell (`-EncodedCommand`) | deny | - | - | - |
-| Running the hooks, `setup` or `config apply` by hand | deny | - | - | - |
+| Running the hooks, `setup`, `upgrade` or `config apply` by hand; `tests lock` (QE's approval); `eval` (its report shows the ground truth) | deny | - | - | - |
 | Docker, kubectl, helm, terraform; `pip install` | ask | - | - | - |
 
 Shell commands are split and checked part by part, through `bash -c`, `sh -c`, `cmd /c`,
@@ -98,6 +101,11 @@ GitHub Enterprise and SonarQube servers in read-only mode.
 | Every scenario linked to a real test | `trace`, PR gate |
 | PR only when all of the above hold | PreToolUse on `gh pr create` |
 | Every fix reviewed and verified before it is pushed to an open PR; max failed CI rounds | PreToolUse on `git push` |
+| Solution design approved before component stories; publish refused while components are disputed, requirements uncovered, removals not marked breaking, or names unknown to the catalog | `docs publish ... solution`, `stories create` |
+| The LLD's lane is at least what the facts imply; a cross-component LLD names the current slice hash of an approved solution that includes this component | `tasks create` (lanes.enabled) |
+| Contract files change only as the story's lane allows: nothing in patch, additions in component, exactly the slice's operations in cross-component; breaking changes only when the solution says `compatibility: breaking` | `check-pr` and the PR gate (from the committed `docs/agent/contracts/<STORY>.json`) |
+| Acceptance tests locked by QE before code (`tests.lockAcceptance`) | `task start`; `verify` refuses while a locked test is changed |
+| Agents cannot lock tests or run the scoping eval | PreToolUse on `sdlc tests lock` / `sdlc eval` |
 
 ## Limits - be honest with your team
 
@@ -140,6 +148,19 @@ GitHub Enterprise and SonarQube servers in read-only mode.
 - **Tokens travel only over https** (or to this machine), and the tool does not follow a redirect
   to another address. A server that only speaks http inside your network needs
   `guard.allowPlainHttp: true`.
+
+### Limits of the multi-component checks
+
+- The contract check reads OpenAPI and AsyncAPI files one level deep: removed operations and
+  messages, removed response codes, new required fields and parameters, removed enum values,
+  changed property types, removed response properties. Not: nested schemas, `oneOf` / `allOf`,
+  formats, patterns, security. Add `oasdiff` to CI for more, and keep contract tests.
+- `catalog scan` is a regular-expression scan with file and line for every finding: it misses
+  calls built in unusual ways, and it can be fooled by commented-out code.
+- A locked test can still be passed by code that special-cases its inputs. That is what the
+  hold-out scenarios are for: QE's tests the agent never sees.
+- Hold-out results show ids, titles and pass/fail only, but code under test sees the inputs at
+  run time: keep the hold-out environment's logs away from agents.
 
 ## Changing a rule
 

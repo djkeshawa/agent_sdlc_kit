@@ -174,7 +174,7 @@ public final class ShellRules {
     private Decision secretsAndToolCopy(ShellCommand c) {
         for (String w : c.words()) {
             if (w.toUpperCase(Locale.ROOT).contains(Markers.APPROVAL_WORD)) return Decision.deny("approvals are posted by a human in Jira, never by an agent.");
-            if (g.files.isSecretWord(w)) return Decision.deny("`" + w + "` holds credentials. Agents never read secrets.");
+            if (g.files.isSecretWord(w)) return Decision.deny("`" + w + "` holds credentials or hidden test data. Agents never read it.");
             if (w.replace('\\', '/').contains(".agent/.build") || !w.startsWith("-") && (g.files.relative(w).startsWith(".agent/.build")
                     || g.files.otherReadings(w).stream().anyMatch(r -> r.startsWith(".agent/.build")))) return Decision.deny("the compiled tool copy is managed by the tool only.");
         }
@@ -193,8 +193,10 @@ public final class ShellRules {
                 return Decision.deny("Java options (`" + brief(String.join(" ", words.subList(1, i))) + "`) change how the guard's tool runs. Run it plainly: java .agent/Sdlc.java <command>");
             }
             if (sub.equals("hook") || sub.equals("git-hook")) return Decision.deny("hooks are run by the IDE and git, not by hand.");
-            if (sub.equals("setup") || sub.equals("config") && sub2.equals("apply")) return Decision.deny("setup and config apply change guardrail files; a human runs them.");
+            if (sub.equals("setup") || sub.equals("upgrade") || sub.equals("config") && sub2.equals("apply")) return Decision.deny("setup, upgrade and config apply change guardrail files; a human runs them.");
             if (sub.equals("review") && sub2.equals("record")) return g.gate.recordReview();
+            if (sub.equals("tests") && sub2.equals("lock")) return Decision.deny("locking acceptance tests is QE's approval; a human runs tests lock.");
+            if (sub.equals("eval")) return Decision.deny("the scoping eval is collected and scored by a human (its report shows the ground truth); agents only answer cases with /eval-scoping.");
             return Decision.allow();
         }
         return null;

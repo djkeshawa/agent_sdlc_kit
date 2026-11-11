@@ -34,6 +34,11 @@ public final class Verify {
                 return 1;
             }
         }
+        List<String> broken = sdlc.core.Locks.broken(Ctx.root);
+        if (!broken.isEmpty()) {
+            System.err.println("[sdlc] VERIFY REFUSED: locked acceptance tests changed: " + broken + ". Restore them (git checkout -- <file>); QE changes and re-locks a wrong test.");
+            return 1;
+        }
         String before = fingerprint();
         System.out.println("[sdlc] running: " + cmd);
         int code = Proc.shell(Ctx.root, cmd);
@@ -41,6 +46,16 @@ public final class Verify {
             if (!fingerprint().equals(before)) {
                 System.err.println("[sdlc] files changed while the build ran; run verify again.");
                 return 1;
+            }
+            String mutation = Ctx.cfg.str("build.mutation");
+            if (!mutation.isBlank()) {
+                System.out.println("[sdlc] running mutation tests: " + mutation);
+                int m = Proc.shell(Ctx.root, mutation);
+                if (m != 0) {
+                    System.err.println("[sdlc] VERIFY FAILED: mutation tests (exit " + m + "): changed code has mutants no test kills. Add assertions that would notice the code breaking.");
+                    Store.log("verify", Store.map("exit", m, "step", "mutation", "commit", Git.shortHead(), "story", Work.currentStory()));
+                    return 1;
+                }
             }
             Store.write(Ctx.work("verify.json"), Store.map("fingerprint", before, "at", Instant.now().toString(), "commit", Git.head(), "command", cmd));
             System.out.println("[sdlc] VERIFY PASSED for the current files.");

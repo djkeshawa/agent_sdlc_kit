@@ -44,6 +44,7 @@ public final class SelfTest {
             NodeGuardTests.run(tmp);
             TextTests.run();
             WorkflowTests.run(tmp);
+            MultiRepoTests.run(tmp);
         } finally {
             Ctx.root = savedRoot;
             Ctx.cfg = savedCfg;

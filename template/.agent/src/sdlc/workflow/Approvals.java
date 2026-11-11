@@ -34,7 +34,8 @@ public final class Approvals {
         return switch (arg) {
             case "test-design", "testDesign", "test", "qa" -> "testDesign";
             case "lld", "design" -> "lld";
-            default -> throw new UsageException("document type must be test-design or lld, not " + arg);
+            case "solution", "solution-design" -> "solution";
+            default -> throw new UsageException("document type must be test-design, lld or solution, not " + arg);
         };
     }
 
@@ -53,9 +54,15 @@ public final class Approvals {
             reasons.add("no " + Docs.label(type) + " titled '" + Docs.title(type, key) + "' (or for a parent issue) in space " + Ctx.cfg.str("confluence.publish." + type + ".space"));
             return new Result(false, "", null, reasons, "");
         }
+        return checkDoc(doc, type);
+    }
+
+    /** The approval of a given page (also another team's LLD): the same rules, on the page's own issue. */
+    public Result checkDoc(Docs.Doc doc, String type) {
+        List<String> reasons = new ArrayList<>();
         Wiki.Page page = w.wiki.page(doc.id());
         String expected = line(doc.key(), type, page);
-        List<String> approvers = Ctx.cfg.list("gates.approvers." + type);
+        List<String> approvers = doc.ours() ? Ctx.cfg.list("gates.approvers." + type) : List.of(); // another team's page: its own team's approvers, unknown here
         List<String> bots = Ctx.cfg.list("gates.botAccounts");
         boolean selfApproval = Ctx.cfg.bool("gates.allowSelfApproval", false);
         for (IssueTracker.Comment c : w.issues.comments(doc.key())) {

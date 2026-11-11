@@ -195,6 +195,21 @@ public final class Jira implements IssueTracker {
     }
 
     @Override
+    public String createChild(String parent, String type, String summary, String description) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("project", Store.map("key", parent.substring(0, parent.indexOf('-'))));
+        String epicField = cfg.str("jira.epicLinkField");
+        if (epicField.isBlank()) fields.put("parent", Store.map("key", parent)); // Cloud: epics are parents
+        else fields.put(epicField, parent); // Data Center: the Epic Link field
+        fields.put("summary", summary);
+        fields.put("issuetype", Store.map("name", type));
+        fields.put("description", description);
+        Map<String, Object> r = Json.obj(call("POST", "/rest/api/2/issue", Store.map("fields", fields)));
+        Store.log("atlassian", Store.map("action", "jira-create", "parent", parent, "key", r.get("key"), "summary", summary, "type", type));
+        return String.valueOf(r.get("key"));
+    }
+
+    @Override
     public List<Issue> search(String jql, int max) {
         Map<String, Object> body = Store.map("jql", jql, "maxResults", max, "fields", List.of("summary", "status", "issuetype", "assignee", "parent"));
         Object r = cfg.cloud() ? call("POST", "/rest/api/3/search/jql", body) : call("POST", "/rest/api/2/search", body);
@@ -207,7 +222,8 @@ public final class Jira implements IssueTracker {
 
     @Override
     public List<Issue> children(String parent) {
-        return search("parent = " + parent, 200);
+        java.util.regex.Matcher cf = java.util.regex.Pattern.compile("customfield_(\\d+)").matcher(cfg.str("jira.epicLinkField"));
+        return search("parent = " + parent + (cf.matches() ? " OR cf[" + cf.group(1) + "] = " + parent : ""), 200); // Data Center: stories hang on the Epic Link
     }
 
     @Override
