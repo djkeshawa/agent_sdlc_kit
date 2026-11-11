@@ -259,7 +259,7 @@ public final class Contracts {
 
     /**
      * For check-pr and the PR gate: every changed contract file of this repository, compared with
-     * the base branch. With lanes.enabled, each added or removed operation must be allowed by the
+     * the point where the branch left the base branch. With lanes.enabled, each added or removed operation must be allowed by the
      * story's docs/agent/contracts/<STORY>.json (written by tasks create from its lane and slice),
      * and a breaking change needs compatibility: breaking in the solution. Without lanes, breaking
      * changes are warnings.
@@ -279,13 +279,14 @@ public final class Contracts {
         List<String> all = new ArrayList<>(touched);
         for (String d : deleted) if (fileToApi.containsKey(d) && !all.contains(d)) all.add(d);
         if (all.isEmpty()) return new Policy(passes, fails, warns);
+        String from = mergeBase(base);
         boolean lanes = Lanes.enabled();
         Map<String, Object> allowance = story.isBlank() ? Map.of() : sdlc.core.Store.read(Lanes.allowanceFile(story));
         for (String file : all) {
             String api = fileToApi.get(file);
             List<Change> changes;
             try {
-                changes = diff(parse(show(base, file)), parse(show("HEAD", file)));
+                changes = diff(parse(show(from, file)), parse(show("HEAD", file)));
             } catch (RuntimeException e) {
                 fails.add("Contract " + file + " could not be read: " + e.getMessage());
                 continue;
@@ -324,6 +325,16 @@ public final class Contracts {
             else fails.add("Contract " + api + " (" + file + "): " + String.join("; ", problems) + ". Change the code, or ask the architect for a solution change.");
         }
         return new Policy(passes, fails, warns);
+    }
+
+    /**
+     * Where this branch left the base branch. The old contract is read there, as `git diff base...HEAD` does,
+     * so an operation the base branch gained later is not seen as removed by this branch. Without a common
+     * ancestor (a shallow clone), the base itself.
+     */
+    public static String mergeBase(String base) {
+        sdlc.util.Proc r = sdlc.util.Proc.run(sdlc.core.Ctx.root, "git", "merge-base", base, "HEAD");
+        return r.code() == 0 && !r.out().isBlank() ? r.out().strip() : base;
     }
 
     private static String show(String ref, String file) {

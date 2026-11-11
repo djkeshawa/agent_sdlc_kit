@@ -415,8 +415,32 @@ final class MultiRepoTests {
         } finally {
             Ctx.cfg = before;
         }
+        // pre-commit checks what is staged, not the working tree
+        Store.writeText(tmp.resolve(test), "class RefundAcceptanceTest { /* weakened */ }\n");
+        Proc.run(tmp, "git", "add", "-f", test);
+        Store.writeText(tmp.resolve(test), "class RefundAcceptanceTest { /* TS-01 */ }\n");
+        check("locks: a weakened test that is staged is caught although the working tree is restored", Locks.broken(tmp).isEmpty()
+                && sdlc.cli.GitHooks.stagedLockProblems(List.of(test), List.of()).stream().anyMatch(b -> b.startsWith(test + " (PROJ-70): changed")));
+        Proc.run(tmp, "git", "add", "-f", test);
+        Store.writeText(tmp.resolve(test), "class RefundAcceptanceTest { /* weakened, not staged */ }\n");
+        check("locks: an unstaged change does not block a good staged test", sdlc.cli.GitHooks.stagedLockProblems(List.of(test), List.of()).isEmpty());
+        check("locks: a staged deletion of a locked test is caught", sdlc.cli.GitHooks.stagedLockProblems(List.of(), List.of(test)).stream().anyMatch(b -> b.endsWith(": deleted")));
+        Proc.run(tmp, "git", "rm", "-q", "-f", "--cached", test);
+        Store.writeText(tmp.resolve(test), "class RefundAcceptanceTest { /* weakened */ }\n");
+        // a lock file that cannot be read must not switch the protection off
+        Store.writeText(tmp.resolve("docs/test-locks/PROJ-70.json"), "{ \"story\": \"PROJ-70\", \"files\": {");
+        check("locks: a damaged lock file is reported as broken", Locks.locked(tmp).isEmpty() && Locks.broken(tmp).stream().anyMatch(b -> b.startsWith("docs/test-locks/PROJ-70.json (lock file)")));
+        check("locks: a damaged lock file does not count as the story's lock", !Locks.hasStory(tmp, "PROJ-70"));
+        check("locks: pre-commit refuses while a lock file is damaged", sdlc.cli.GitHooks.stagedLockProblems(List.of(), List.of()).size() == 1);
+        Ctx.cfg = Config.parse(CONFIG + "build:\n  verify: \"true\"\n");
+        try {
+            check("locks: verify refuses while a lock file is damaged", Verify.run() == 1);
+        } finally {
+            Ctx.cfg = before;
+        }
         Files.delete(tmp.resolve(test));
         Files.delete(tmp.resolve("docs/test-locks/PROJ-70.json"));
+        check("locks: with the lock gone, nothing is broken", Locks.broken(tmp).isEmpty());
     }
 
     private static void contractPolicy(Path tmp) throws IOException {
@@ -455,6 +479,16 @@ final class MultiRepoTests {
         } finally {
             Ctx.cfg = before;
         }
+        // the base branch moves on after the feature branched off: its new operation is not "removed" by the feature
+        Proc.run(tmp, "git", "switch", "-q", "-c", "base-moved", base);
+        Store.writeText(tmp.resolve("api/openapi.yaml"), OPENAPI.replace("\ncomponents:", "\n  /base-only:\n    get:\n      responses:\n        \"200\": {description: ok}\ncomponents:"));
+        Proc.run(tmp, "git", "add", "api/openapi.yaml");
+        Proc.run(tmp, concat(git, "commit", "-q", "-m", "feat(PROJ-81): base only"));
+        Proc.run(tmp, "git", "switch", "-q", "feature/PROJ-80-contract");
+        Store.write(allow, Store.map("story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds"), "remove", List.of(), "breaking", true))));
+        Contracts.Policy moved = Contracts.prPolicy("PROJ-80", "base-moved", changed);
+        check("contracts: an operation added on the base branch later is not seen as removed", moved.fails().isEmpty() && Contracts.mergeBase("base-moved").equals(base));
+        check("contracts: without a common ancestor the base itself is compared", Contracts.mergeBase("no-such-ref").equals("no-such-ref"));
         Files.deleteIfExists(allow);
         Proc.run(tmp, "git", "switch", "-q", "feature/PROJ-7-refunds");
     }

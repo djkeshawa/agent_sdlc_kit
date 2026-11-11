@@ -5,7 +5,7 @@
 hooks (Copilot, Claude Code, Codex: the same rules; each tool's edit and shell tools are
 understood, including Codex's `apply_patch` and `bash -lc "..."`), 2 = git hooks, 3 = your CI (with the optional `check-pr` stage, [docs/05](05-ci-jenkins-sonar.md)),
 4 = GitHub branch protection and CODEOWNERS. `java .agent/Sdlc.java selftest` checks the
-layer-1 and layer-2 rules (522 checks, with the multi-component ones).
+layer-1 and layer-2 rules (532 checks, with the multi-component ones).
 
 ## Files
 
