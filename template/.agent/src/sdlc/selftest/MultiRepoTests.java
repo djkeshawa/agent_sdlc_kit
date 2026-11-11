@@ -410,6 +410,10 @@ final class MultiRepoTests {
         check("locks: CI sees a lock the pull request re-hashed", Locks.loosened(tmp, lockedAt).contains(test + " (PROJ-70): lock changed"));
         check("locks: a lock change beside code is not a lock-only pull request", !Checks.lockOnly(List.of("docs/test-locks/PROJ-70.json", test, "src/main/java/A.java"), lockedAt));
         check("locks: QE's pull request with only the lock and its test is lock-only", Checks.lockOnly(List.of("docs/test-locks/PROJ-70.json", test), lockedAt));
+        String sneaky = lockText.replace("\"files\": {", "\"files\": {\"src/main/java/Service.java\": \"" + "0".repeat(64) + "\", ");
+        Store.writeText(lockFile, sneaky);
+        check("locks: production code listed in the pull request's own lock does not make it lock-only", Locks.isLocked(tmp, "src/main/java/Service.java")
+                && !Checks.lockOnly(List.of("docs/test-locks/PROJ-70.json", test, "src/main/java/Service.java"), lockedAt));
         Store.writeText(lockFile, lockText);
         String moved = test.replace("RefundAcceptanceTest", "MovedAcceptanceTest");
         Proc.run(tmp, "git", "mv", test, moved);

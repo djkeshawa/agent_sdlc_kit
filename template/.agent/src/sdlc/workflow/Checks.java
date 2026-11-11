@@ -165,11 +165,16 @@ public final class Checks {
         return new Result(passes, fails, warns);
     }
 
-    /** Every changed file is a lock file or a test locked at {@code ref} or now: QE's own pull request. */
+    /**
+     * Every changed file is a lock file, or test code (paths.test) locked at {@code ref} or now: QE's own pull request.
+     * The test-path check matters because the branch's lock files are the pull request's to edit: listing
+     * production code in a lock must not turn a code change into a "lock-only" one.
+     */
     public static boolean lockOnly(List<String> changed, String ref) {
         Set<String> locked = new LinkedHashSet<>(sdlc.core.Locks.locked(Ctx.root).keySet());
         locked.addAll(sdlc.core.Locks.lockedAt(Ctx.root, ref, new ArrayList<>()).keySet());
-        return changed.stream().allMatch(f -> f.startsWith(sdlc.core.Locks.DIR + "/") || locked.contains(f));
+        List<String> tests = Ctx.cfg.list("paths.test");
+        return changed.stream().allMatch(f -> f.startsWith(sdlc.core.Locks.DIR + "/") || locked.contains(f) && Glob.any(tests, f));
     }
 
     /** The Jira key in a branch name (feature/PAY-101-refunds -> PAY-101): the story in CI, where no local state exists. */
