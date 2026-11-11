@@ -8,10 +8,10 @@ Examples use project key `PAY`, team `payments`, base branch `develop`.
 ## Step 1. Copy the kit into your repository
 
 ```bash
-cp -r agentic-sdlc-java-kit/template/. /path/to/your-repo/
+cp -r agent_sdlc_kit/template/. /path/to/your-repo/
 ```
 
-Windows (PowerShell): `Copy-Item -Recurse -Force agentic-sdlc-java-kit\template\* C:\path\to\your-repo\`
+Windows (PowerShell): `Copy-Item -Recurse -Force agent_sdlc_kit\template\* C:\path\to\your-repo\`
 (and the dot folders: `.agent`, `.githooks`, `.github`, `.vscode`).
 
 If your repository already has some of these files, merge instead of overwriting:

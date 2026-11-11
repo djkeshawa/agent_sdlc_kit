@@ -32,7 +32,7 @@ guardrail layers.
 ## What is in this folder
 
 ```
-agentic-sdlc-java-kit/
+agent_sdlc_kit/
 ├── README.md                      <- you are here
 ├── docs/                          <- the guide (read in order)
 ├── snippets/
@@ -78,7 +78,7 @@ agentic-sdlc-java-kit/
 ## Quick start (if you already know the tools)
 
 ```bash
-cp -r agentic-sdlc-java-kit/template/. /path/to/your-java-repo/
+cp -r agent_sdlc_kit/template/. /path/to/your-java-repo/
 cd /path/to/your-java-repo
 java .agent/Sdlc.java setup          # git hooks, ignores, MCP config, self test
 # edit .agent/sdlc.yml (Jira, Confluence, CI) and .agent/local.env (tokens), then:
@@ -131,3 +131,7 @@ Then in Copilot Chat, Claude Code or Codex: `/analyse` once, and per story `/tes
 Not tested: Jira/Confluence Data Center, a Windows machine, GitHub Enterprise Server, and a
 live VS Code + Copilot session (its hooks were driven with the payloads VS Code and the Copilot
 CLI send). Do the 10-minute hook test in docs/02 on your machine, with every tool you use.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
