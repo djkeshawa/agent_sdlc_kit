@@ -17,3 +17,4 @@
 /docs/adr/                    @your-org/tech-leads
 /catalog-info.yaml            @your-org/tech-leads
 /docs/test-locks/             @your-org/qe-leads
+/docs/agent/contracts/        @your-org/architects

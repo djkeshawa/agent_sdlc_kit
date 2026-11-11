@@ -125,7 +125,9 @@ public final class Checks {
         List<String> subjects = Git.lines(Proc.run(Ctx.root, "git", "log", "--no-merges", "--format=%s", base + "..HEAD").out());
         List<String> bad = subjects.stream().filter(s -> !s.matches(Ctx.cfg.str("git.commitPattern", ".*")) && !s.startsWith("fixup! ") && !s.startsWith("Revert \"")).toList();
         check(bad.isEmpty(), "All " + subjects.size() + " commit subjects follow the format" + (bad.isEmpty() ? "" : ": bad -> " + bad), passes, fails);
-        List<String> files = Git.lines(Proc.run(Ctx.root, "git", "diff", "--name-only", "--diff-filter=ACMR", base + "...HEAD").out());
+        // --no-renames: a rename is a deletion plus an addition, so a moved file cannot hide where it came from
+        List<String> files = Git.lines(Proc.run(Ctx.root, "git", "diff", "--name-only", "--no-renames", "--diff-filter=ACMR", base + "...HEAD").out());
+        List<String> everyChange = Git.lines(Proc.run(Ctx.root, "git", "diff", "--name-only", "--no-renames", base + "...HEAD").out());
         check(!testsMissing(files), "Main code changes come with test changes", passes, fails);
         Map<String, List<String>> added = Git.addedLines(Proc.run(Ctx.root, "git", "diff", "--unified=0", "--no-color", "--no-ext-diff", base + "...HEAD").out());
         List<String> disabled = disabledTests(added);
@@ -133,15 +135,21 @@ public final class Checks {
         List<String> secrets = secrets(added);
         check(secrets.isEmpty(), "No secrets added" + (secrets.isEmpty() ? "" : ": " + secrets), passes, fails);
         String story = Work.currentStory();
-        List<String> outside = story.isEmpty() ? null : outsideScope(story, Git.lines(Proc.run(Ctx.root, "git", "diff", "--name-only", base + "...HEAD").out()));
+        List<String> outside = story.isEmpty() ? null : outsideScope(story, everyChange);
         if (outside != null) {
             check(outside.isEmpty(), "Changed code stays inside the allowed paths of " + story + "'s tasks"
                     + (outside.isEmpty() ? "" : ": outside -> " + outside + " (change the LLD's task scope and get it re-approved, or move this change to its own story)"), passes, fails);
         }
         List<String> broken = sdlc.core.Locks.broken(Ctx.root);
         if (!sdlc.core.Locks.locked(Ctx.root).isEmpty() || !broken.isEmpty()) check(broken.isEmpty(), "Locked acceptance tests unchanged" + (broken.isEmpty() ? "" : ": " + broken), passes, fails);
-        List<String> lockChanges = files.stream().filter(f -> f.startsWith(sdlc.core.Locks.DIR + "/")).toList();
-        if (!lockChanges.isEmpty()) warns.add("acceptance test locks changed: " + lockChanges + " (a QE lead reviews them, CODEOWNERS)");
+        List<String> loosened = sdlc.core.Locks.loosened(Ctx.root, Contracts.mergeBase(base));
+        if (!loosened.isEmpty()) {
+            if (lockOnly(everyChange, Contracts.mergeBase(base))) warns.add("acceptance test locks of the base branch changed in a lock-only pull request: " + loosened + " (QE leads review it, CODEOWNERS)");
+            else fails.add("Locked acceptance tests keep the lock they have on " + base + ": " + loosened
+                    + " (QE changes a lock in its own pull request that holds only the lock files and their tests)");
+        }
+        List<String> lockChanges = everyChange.stream().filter(f -> f.startsWith(sdlc.core.Locks.DIR + "/")).toList();
+        if (!lockChanges.isEmpty() && loosened.isEmpty()) warns.add("acceptance test locks added: " + lockChanges + " (a QE lead reviews them, CODEOWNERS)");
         Contracts.Policy contracts = Contracts.prPolicy(story.isEmpty() ? storyFromBranch(branch) : story, base, files);
         passes.addAll(contracts.passes());
         fails.addAll(contracts.fails());
@@ -155,6 +163,13 @@ public final class Checks {
             }
         }
         return new Result(passes, fails, warns);
+    }
+
+    /** Every changed file is a lock file or a test locked at {@code ref} or now: QE's own pull request. */
+    public static boolean lockOnly(List<String> changed, String ref) {
+        Set<String> locked = new LinkedHashSet<>(sdlc.core.Locks.locked(Ctx.root).keySet());
+        locked.addAll(sdlc.core.Locks.lockedAt(Ctx.root, ref, new ArrayList<>()).keySet());
+        return changed.stream().allMatch(f -> f.startsWith(sdlc.core.Locks.DIR + "/") || locked.contains(f));
     }
 
     /** The Jira key in a branch name (feature/PAY-101-refunds -> PAY-101): the story in CI, where no local state exists. */

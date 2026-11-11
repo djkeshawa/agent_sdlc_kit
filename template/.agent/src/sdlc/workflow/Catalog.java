@@ -68,6 +68,13 @@ public final class Catalog {
         return c;
     }
 
+    /** This repository's catalog from text (catalog-info.yaml as committed at some ref); empty for blank text. */
+    static Catalog parse(String text) {
+        Catalog c = new Catalog();
+        if (!text.isBlank()) c.add(text, "", true, Ctx.root);
+        return c;
+    }
+
     private static String read(Path f) {
         try {
             return Files.readString(f);
