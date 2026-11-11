@@ -266,20 +266,22 @@ public final class Contracts {
      */
     public static Policy prPolicy(String story, String base, List<String> changed) {
         List<String> passes = new ArrayList<>(), fails = new ArrayList<>(), warns = new ArrayList<>();
-        Catalog c = Catalog.load();
-        Catalog.Component self = c.self();
-        if (self == null) return new Policy(passes, fails, warns);
+        String from = mergeBase(base);
+        // the contract files are those of the base branch's catalog and of this branch's: a pull request
+        // that drops an API from its own catalog-info.yaml still has that API's file checked
         Map<String, String> fileToApi = new LinkedHashMap<>();
-        for (String api : self.providesApis()) {
-            Catalog.Api a = c.apis.get(api);
-            if (a != null && !a.definition().isBlank()) fileToApi.put(a.definition(), api);
-        }
+        String catalogFile = sdlc.core.Ctx.root.relativize(Catalog.file()).toString().replace('\\', '/');
+        apiFiles(Catalog.parse(show(from, catalogFile)), fileToApi);
+        apiFiles(Catalog.load(), fileToApi);
+        if (fileToApi.isEmpty()) return new Policy(passes, fails, warns);
         List<String> touched = changed.stream().filter(fileToApi::containsKey).toList();
-        List<String> deleted = sdlc.core.Git.lines(sdlc.util.Proc.run(sdlc.core.Ctx.root, "git", "diff", "--name-only", "--diff-filter=D", base + "...HEAD").out());
+        // --no-renames: `git mv api/openapi.yaml x.yaml` is the contract's removal, not a rename
+        List<String> deleted = sdlc.core.Git.lines(sdlc.util.Proc.run(sdlc.core.Ctx.root, "git", "diff", "--name-only", "--no-renames", "--diff-filter=D", base + "...HEAD").out());
         List<String> all = new ArrayList<>(touched);
         for (String d : deleted) if (fileToApi.containsKey(d) && !all.contains(d)) all.add(d);
         if (all.isEmpty()) return new Policy(passes, fails, warns);
-        String from = mergeBase(base);
+        String allowanceRel = "docs/agent/contracts/" + story + ".json";
+        if (!story.isBlank() && changed.contains(allowanceRel)) warns.add("contract allowance " + allowanceRel + " is added or changed in this pull request (architects review it, CODEOWNERS)");
         boolean lanes = Lanes.enabled();
         Map<String, Object> allowance = story.isBlank() ? Map.of() : sdlc.core.Store.read(Lanes.allowanceFile(story));
         for (String file : all) {
@@ -325,6 +327,15 @@ public final class Contracts {
             else fails.add("Contract " + api + " (" + file + "): " + String.join("; ", problems) + ". Change the code, or ask the architect for a solution change.");
         }
         return new Policy(passes, fails, warns);
+    }
+
+    private static void apiFiles(Catalog c, Map<String, String> fileToApi) {
+        Catalog.Component self = c.self();
+        if (self == null) return;
+        for (String api : self.providesApis()) {
+            Catalog.Api a = c.apis.get(api);
+            if (a != null && !a.definition().isBlank()) fileToApi.putIfAbsent(a.definition(), api);
+        }
     }
 
     /**

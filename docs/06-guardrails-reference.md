@@ -24,8 +24,8 @@ layer-1 and layer-2 rules (532 checks, with the multi-component ones).
 | Build, dependency and schema files (`pom.xml`, `.mvn/`, migrations, lint configs) | ask | - | - | review |
 | No edits on a protected branch | deny | commit refused | - | - |
 | Hidden files (`paths.hidden`: `.sdlc/hidden/**`, the scoping eval's truth and report) are read and written like secrets: never by agents | deny | - | - | - |
-| Locked acceptance tests (`docs/test-locks/<STORY>.json` lists them): no agent edits them, by tools or shell writes; the lock files themselves are protected | deny | commit of a changed locked test refused | check-pr: FAIL when a locked test differs from its lock; WARN when a lock changed | CODEOWNERS (QE) on `docs/test-locks/` |
-| `catalog-info.yaml` and the contract allowances (`docs/agent/contracts/`) are protected | deny | warn | warn | CODEOWNERS |
+| Locked acceptance tests (`docs/test-locks/<STORY>.json` lists them): no agent edits them, by tools or shell writes; the lock files themselves are protected | deny | commit of a changed locked test refused | check-pr: FAIL when a locked test differs from its lock, or a lock of the base branch is removed or changed outside a lock-only PR; WARN when locks are added | CODEOWNERS (QE) on `docs/test-locks/` |
+| `catalog-info.yaml` and the contract allowances (`docs/agent/contracts/`) are protected | deny | warn | warn (check-pr also checks the contract files the base branch's catalog names) | CODEOWNERS (tech leads; architects on `docs/agent/contracts/`) |
 | Docs (`docs/**`, `README.md`) | allowed | | | |
 
 ## Commands

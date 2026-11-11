@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 import sdlc.util.Json;
+import sdlc.util.Proc;
 
 /**
  * Locked acceptance tests. QE approves a story's acceptance tests by locking them:
@@ -105,6 +106,44 @@ public final class Locks {
             } catch (IOException ex) {
                 out.add(e.path() + " (" + e.story() + "): unreadable");
             }
+        }
+        return out;
+    }
+
+    /**
+     * The locks as committed at a git ref, by path. check-pr in CI reads the base branch's locks:
+     * a pull request cannot loosen a lock by editing or deleting its own copy. Lock files that
+     * cannot be read there are added to {@code damaged}.
+     */
+    public static Map<String, Entry> lockedAt(Path root, String ref, List<String> damaged) {
+        Map<String, Entry> out = new LinkedHashMap<>();
+        Proc ls = Proc.run(root, "git", "ls-tree", "--name-only", ref, DIR + "/");
+        if (ls.code() != 0) return out;
+        for (String f : ls.out().split("\\R")) {
+            if (!f.endsWith(".json")) continue;
+            Proc show = Proc.run(root, "git", "show", ref + ":" + f);
+            try {
+                if (show.code() != 0) throw new IllegalStateException(show.err());
+                out.putAll(parse(show.out()));
+            } catch (RuntimeException e) {
+                damaged.add(f + " (lock file at " + ref + "): cannot be read");
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Locks that existed at {@code ref} and that the working tree's lock files removed or re-hashed,
+     * as "path (STORY): lock removed" or "path (STORY): lock changed". With the content check in
+     * {@link #broken}, this means every file locked on the base branch still has its base content.
+     */
+    public static List<String> loosened(Path root, String ref) {
+        List<String> out = new ArrayList<>();
+        Map<String, Entry> now = locked(root);
+        for (Entry e : lockedAt(root, ref, out).values()) {
+            Entry n = now.get(e.path());
+            if (n == null) out.add(e.path() + " (" + e.story() + "): lock removed");
+            else if (!n.hash().equals(e.hash())) out.add(e.path() + " (" + e.story() + "): lock changed");
         }
         return out;
     }

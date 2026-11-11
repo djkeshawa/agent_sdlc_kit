@@ -394,6 +394,35 @@ final class MultiRepoTests {
         Files.delete(tmp.resolve(".sdlc/PROJ-70/drafts/acceptance/src/main/java/Sneaky.java"));
         check("locks: QE locks the drafted acceptance test", TestLocks.lock("PROJ-70", "") == 0 && Files.exists(tmp.resolve(test))
                 && Locks.isLocked(tmp, test) && Locks.broken(tmp).isEmpty());
+        // CI reads the base branch's locks: a pull request cannot loosen a lock by changing its own copy
+        String[] git = {"git", "-c", "user.name=t", "-c", "user.email=t@x", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"};
+        String back = Proc.run(tmp, "git", "rev-parse", "--abbrev-ref", "HEAD").out().strip();
+        Path lockFile = tmp.resolve("docs/test-locks/PROJ-70.json");
+        String lockText = Files.readString(lockFile);
+        Proc.run(tmp, "git", "switch", "-q", "-c", "lock-base");
+        Proc.run(tmp, "git", "add", "-f", test, "docs/test-locks/PROJ-70.json");
+        Proc.run(tmp, concat(git, "commit", "-q", "-m", "test(PROJ-70): lock"));
+        String lockedAt = Proc.run(tmp, "git", "rev-parse", "HEAD").out().strip();
+        check("locks: nothing loosened against the commit that holds the lock", Locks.loosened(tmp, lockedAt).isEmpty());
+        Files.delete(lockFile);
+        check("locks: CI sees a lock the base has and the pull request deleted", Locks.loosened(tmp, lockedAt).contains(test + " (PROJ-70): lock removed"));
+        Store.writeText(lockFile, lockText.replaceAll("[0-9a-f]{64}", "0".repeat(64)));
+        check("locks: CI sees a lock the pull request re-hashed", Locks.loosened(tmp, lockedAt).contains(test + " (PROJ-70): lock changed"));
+        check("locks: a lock change beside code is not a lock-only pull request", !Checks.lockOnly(List.of("docs/test-locks/PROJ-70.json", test, "src/main/java/A.java"), lockedAt));
+        check("locks: QE's pull request with only the lock and its test is lock-only", Checks.lockOnly(List.of("docs/test-locks/PROJ-70.json", test), lockedAt));
+        String sneaky = lockText.replace("\"files\": {", "\"files\": {\"src/main/java/Service.java\": \"" + "0".repeat(64) + "\", ");
+        Store.writeText(lockFile, sneaky);
+        check("locks: production code listed in the pull request's own lock does not make it lock-only", Locks.isLocked(tmp, "src/main/java/Service.java")
+                && !Checks.lockOnly(List.of("docs/test-locks/PROJ-70.json", test, "src/main/java/Service.java"), lockedAt));
+        Store.writeText(lockFile, lockText);
+        String moved = test.replace("RefundAcceptanceTest", "MovedAcceptanceTest");
+        Proc.run(tmp, "git", "mv", test, moved);
+        check("locks: git mv of a locked test is its deletion for the pre-commit hook", sdlc.cli.GitHooks.stagedLockProblems(sdlc.cli.GitHooks.staged("ACMR"), sdlc.cli.GitHooks.staged("D"))
+                .contains(test + " (PROJ-70): deleted"));
+        Proc.run(tmp, "git", "mv", moved, test);
+        Proc.run(tmp, "git", "switch", "-q", back);
+        Store.writeText(tmp.resolve(test), "class RefundAcceptanceTest { /* TS-01 */ }\n");
+        Store.writeText(lockFile, lockText);
         check("locks: a CRLF checkout hashes the same", Locks.hash("a\r\nb\n".getBytes()).equals(Locks.hash("a\nb\n".getBytes())));
         Store.write(tmp.resolve(".sdlc/PROJ-70/state.json"), Store.map("story", "PROJ-70", "tasks", Map.of("PROJ-71", Store.map("scope", List.of("src/main/java/com/acme/refund/**")))));
         check("locks: a locked acceptance test is not 'code outside the tasks' scope'", Checks.outsideScope("PROJ-70", List.of(test, "src/main/java/demo/A.java")).equals(List.of("src/main/java/demo/A.java")));
@@ -489,6 +518,31 @@ final class MultiRepoTests {
         Contracts.Policy moved = Contracts.prPolicy("PROJ-80", "base-moved", changed);
         check("contracts: an operation added on the base branch later is not seen as removed", moved.fails().isEmpty() && Contracts.mergeBase("base-moved").equals(base));
         check("contracts: without a common ancestor the base itself is compared", Contracts.mergeBase("no-such-ref").equals("no-such-ref"));
+        // a rename is the contract's removal: git mv cannot hide it from the check
+        Proc.run(tmp, "git", "switch", "-q", "-c", "feature/PROJ-82-move", base);
+        Proc.run(tmp, "git", "mv", "api/openapi.yaml", "api/moved.yaml");
+        Proc.run(tmp, concat(git, "commit", "-q", "-m", "chore(PROJ-82): move the contract"));
+        Path allow82 = Lanes.allowanceFile("PROJ-82");
+        Store.write(allow82, Store.map("story", "PROJ-82", "lane", "component", "apis", Map.of("payments-api", Store.map("add", List.of("*"), "remove", List.of(), "breaking", false))));
+        check("contracts: a contract moved away with git mv is checked as removed", !Contracts.prPolicy("PROJ-82", base, List.of("api/moved.yaml")).fails().isEmpty());
+        Files.deleteIfExists(allow82);
+        // the base branch's catalog names the contract files: dropping the API from catalog-info.yaml does not skip the check
+        Proc.run(tmp, "git", "switch", "-q", "-c", "catalog-base", base);
+        Proc.run(tmp, "git", "add", "-f", "catalog-info.yaml");
+        Proc.run(tmp, concat(git, "commit", "-q", "-m", "chore(PROJ-83): catalog"));
+        String catalogBase = Proc.run(tmp, "git", "rev-parse", "HEAD").out().strip();
+        Proc.run(tmp, "git", "switch", "-q", "-c", "feature/PROJ-83-hide", catalogBase);
+        Store.writeText(tmp.resolve("catalog-info.yaml"), CATALOG.replace("providesApis: [payments-api, refund-events]", "providesApis: [refund-events]"));
+        Store.writeText(tmp.resolve("api/openapi.yaml"), OPENAPI.replace("\ncomponents:", "\n  /hidden:\n    get:\n      responses:\n        \"200\": {description: ok}\ncomponents:"));
+        Proc.run(tmp, "git", "add", "-f", "catalog-info.yaml", "api/openapi.yaml");
+        Proc.run(tmp, concat(git, "commit", "-q", "-m", "feat(PROJ-83): hidden operation"));
+        Path allow83 = Lanes.allowanceFile("PROJ-83");
+        Store.write(allow83, Store.map("story", "PROJ-83", "lane", "patch", "apis", Map.of()));
+        check("contracts: an API dropped from the pull request's catalog is still checked", Contracts.prPolicy("PROJ-83", catalogBase, List.of("catalog-info.yaml", "api/openapi.yaml")).fails().stream()
+                .anyMatch(f -> f.contains("patch lane of PROJ-83 allows no change")));
+        Files.deleteIfExists(allow83);
+        Proc.run(tmp, "git", "switch", "-q", "feature/PROJ-80-contract");
+        Store.writeText(tmp.resolve("catalog-info.yaml"), CATALOG);
         Files.deleteIfExists(allow);
         Proc.run(tmp, "git", "switch", "-q", "feature/PROJ-7-refunds");
     }

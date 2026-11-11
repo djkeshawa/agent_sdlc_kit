@@ -38,7 +38,7 @@ public final class GitHooks {
         Map<String, List<String>> added = Git.addedLines(Proc.run(Ctx.root, "git", "diff", "--cached", "--unified=0", "--no-color", "--no-ext-diff").out());
         for (String s : Checks.secrets(added)) errors.add("Possible secret: " + s + "  (false positive? add the comment guard:allow-secret on that line)");
         for (String s : Checks.disabledTests(added)) errors.add("Disabled or focused test: " + s + "  (fix the test; do not switch it off)");
-        List<String> staged = Git.lines(Proc.run(Ctx.root, "git", "diff", "--cached", "--name-only", "--diff-filter=ACMR").out());
+        List<String> staged = staged("ACMR");
         int maxKb = Ctx.cfg.num("guard.maxFileKb", 1024);
         List<String> guardrails = new ArrayList<>();
         FileRules files = Gates.guard(null).files;
@@ -50,7 +50,7 @@ public final class GitHooks {
             if (Glob.any(Ctx.cfg.list("paths.protected"), f)) guardrails.add(f);
         }
         if (!guardrails.isEmpty()) warnings.add(guardrails.size() + " guardrail file(s) changed; a tech lead reviews them (CODEOWNERS)");
-        List<String> deleted = Git.lines(Proc.run(Ctx.root, "git", "diff", "--cached", "--name-only", "--diff-filter=D").out());
+        List<String> deleted = staged("D");
         for (String b : stagedLockProblems(staged, deleted)) errors.add("Locked acceptance test " + b + ". The code must pass it as QE locked it; if the test is wrong, QE changes it and runs tests lock again.");
         if (Checks.testsMissing(staged)) warnings.add("Main code changed without a test change in this commit.");
         String quick = Ctx.WINDOWS ? Ctx.cfg.str("build.preCommitWindows", Ctx.cfg.str("build.preCommit")) : Ctx.cfg.str("build.preCommit");
@@ -59,6 +59,14 @@ public final class GitHooks {
             if (Proc.shell(Ctx.root, quick) != 0) errors.add("Pre-commit command failed: " + quick);
         }
         return report("pre-commit", errors, warnings);
+    }
+
+    /**
+     * Staged paths with this git diff filter (ACMR, D). --no-renames: `git mv` of a locked test is its
+     * deletion plus an addition, so the hook sees the locked path go.
+     */
+    public static List<String> staged(String filter) {
+        return Git.lines(Proc.run(Ctx.root, "git", "diff", "--cached", "--name-only", "--no-renames", "--diff-filter=" + filter).out());
     }
 
     /**
