@@ -1,2 +1,5 @@
 media/
 template/.agent/.build/
+
+# packaging/build.sh output
+dist/
