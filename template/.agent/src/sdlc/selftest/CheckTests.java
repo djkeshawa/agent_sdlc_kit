@@ -62,18 +62,17 @@ final class CheckTests {
                 && cases.get(1).status() == sdlc.check.JUnitXml.Status.FAILED && cases.get(1).type().endsWith("AssertionFailedError")
                 && cases.get(2).status() == sdlc.check.JUnitXml.Status.ERRORED && cases.get(3).status() == sdlc.check.JUnitXml.Status.SKIPPED
                 && cases.get(1).suite().equals("demo.RefundsTest"));
-        Path secret = repo.resolve("secret.txt");
-        Files.writeString(secret, "TOP-SECRET");
-        Files.writeString(xml, "<?xml version=\"1.0\"?><!DOCTYPE t [<!ENTITY x SYSTEM \"" + secret.toUri() + "\">]><testsuite><testcase name=\"&x;\" classname=\"a\"/></testsuite>");
-        boolean refused;
+        Files.writeString(xml, "<?xml version=\"1.0\"?><!DOCTYPE t [<!ENTITY x \"y\">]><testsuite><testcase name=\"a\" classname=\"a\"/></testsuite>");
+        boolean refused = false;
         try {
-            refused = sdlc.check.JUnitXml.read(xml).stream().noneMatch(c -> c.name().contains("TOP-SECRET"));
+            sdlc.check.JUnitXml.read(xml);
         } catch (IOException e) {
             refused = true;
         }
-        check("check: a report cannot pull in other files (no DTD, no external entity)", refused);
+        check("check: a report with a DOCTYPE is refused outright", refused);
+        Files.writeString(xml, "<testsuite><testcase name=\"again\" classname=\"a\"><flakyFailure type=\"java.lang.AssertionError\">x</flakyFailure></testcase></testsuite>");
+        check("check: a case the build ran again is flaky, not passed", sdlc.check.JUnitXml.read(xml).get(0).status() == sdlc.check.JUnitXml.Status.FLAKY);
         Files.delete(xml);
-        Files.delete(secret);
         check("check: test names are read from Java", sdlc.check.TestNames.of("ATest.java",
                 "class ATest { @Test void one() {} @ParameterizedTest @ValueSource(ints = {1, 2}) void two(int n) {} void helper() {} }").equals(java.util.Set.of("one", "two")));
         check("check: and from a script", sdlc.check.TestNames.of("a.test.ts", "describe('x', () => { it('adds', () => {}); test.each([1])(\"each %i\", () => {}); it.skip(`later`, () => {}) })")
@@ -164,6 +163,17 @@ final class CheckTests {
         Files.delete(repo.resolve("tests/feature.t"));
         Files.delete(repo.resolve("tests/feature2.t"));
         write(repo, "prod.txt", "v1\nfixed\n");
+
+        // two cases under one name cannot be told apart
+        write(repo, "tests/twins.t", "same: needs fixed\nsame: pass\n");
+        String twins = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: two tests that report one name are not judged", twins.contains("same: more than one test reports this name") && !twins.contains("        same\n"));
+        Files.delete(repo.resolve("tests/twins.t"));
+
+        // in a pull request build the base is the event's branch, or the check stops
+        Trusted.env = name -> name.equals("GITHUB_BASE_REF") ? "not-fetched" : null;
+        check("check: in a pull request build a base branch that was not fetched is an error, not 'nothing changed'", Asserts.throwsUsage(() -> Check.run(Map.of("selftest-runner", "true"))));
+        Trusted.env = name -> null;
 
         // --no-run and a bad option
         String noRun = report(Map.of("no-run", "true"));

@@ -22,8 +22,12 @@ import sdlc.util.Proc;
  * stores the blobs of uncommitted files in its object store, where `git gc` later drops them.
  */
 public final class Change {
-    /** The empty tree of a SHA-1 repository: the base of a repository with no commit. */
-    private static final String EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+    /** The empty tree in this repository's hash format: the base of a repository with no commit, or of a first commit. */
+    private static String emptyTree() {
+        Proc p = Proc.runWithInput(Ctx.root, "", 30, "git", "hash-object", "-t", "tree", "--stdin");
+        if (!p.ok() || p.out().isBlank()) throw new UsageException("git hash-object failed: " + p.err().strip());
+        return p.out().strip();
+    }
 
     /** One changed file: A added, M modified, D deleted. Renames show as a deletion and an addition. */
     public record File(String status, String path) {}
@@ -56,7 +60,7 @@ public final class Change {
         String sha = rev(commit);
         if (sha.isEmpty()) throw new UsageException(commit + " is not a commit of this repository");
         Proc parent = Proc.run(Ctx.root, "git", "rev-parse", "-q", "--verify", sha + "^1^{commit}");
-        String base = parent.ok() ? parent.out().strip() : EMPTY_TREE;
+        String base = parent.ok() ? parent.out().strip() : emptyTree();
         String head = Proc.run(Ctx.root, "git", "rev-parse", sha + "^{tree}").out().strip();
         return new Change(base, "its parent", head, diff(base, head));
     }
@@ -77,9 +81,15 @@ public final class Change {
             if (option.startsWith("-") || !Git.refExists(option + "^{commit}")) throw new UsageException("--base " + option + " is not a commit of this repository");
             return new String[] {hasHead ? mergeBase(option) : rev(option), "--base " + option};
         }
-        if (!hasHead) return new String[] {EMPTY_TREE, "an empty repository (no commit yet)"};
+        if (!hasHead) return new String[] {emptyTree(), "an empty repository (no commit yet)"};
+        if (Trusted.inCi()) {
+            // in a pull request build the base is the event's, or nothing: falling back to HEAD would report "nothing has changed"
+            String ref = Trusted.baseRef();
+            if (!Git.refExists(ref + "^{commit}")) throw new UsageException("the base branch " + Trusted.shortName(ref) + " is not in this checkout: fetch it first (git fetch origin)");
+            if (!Proc.run(Ctx.root, "git", "merge-base", ref, "HEAD").ok()) throw new UsageException("this checkout has no commit in common with " + Trusted.shortName(ref) + " (a shallow clone?): fetch more history");
+            return new String[] {mergeBase(ref), Trusted.shortName(ref)};
+        }
         List<String> candidates = new ArrayList<>();
-        if (Trusted.inCi()) candidates.add(Trusted.baseRef());
         if (Files.isRegularFile(Ctx.root.resolve(".agent/sdlc.yml"))) candidates.add("origin/" + Ctx.cfg.baseBranch());
         Proc remoteHead = Proc.run(Ctx.root, "git", "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD");
         if (remoteHead.ok() && !remoteHead.out().isBlank()) candidates.add(remoteHead.out().strip());

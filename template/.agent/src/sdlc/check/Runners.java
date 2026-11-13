@@ -25,7 +25,10 @@ final class Runners {
     static String nearest(Path checkout, String path, java.util.function.Predicate<Path> accepts) {
         Path dir = checkout.resolve(path).getParent();
         while (dir != null && dir.startsWith(checkout)) {
-            if (accepts.test(dir)) return checkout.relativize(dir).toString().replace('\\', '/');
+            if (accepts.test(dir)) {
+                String rel = checkout.relativize(dir).toString();
+                return Proc.WINDOWS ? rel.replace('\\', '/') : rel; // elsewhere a backslash is part of a name, not a separator
+            }
             dir = dir.getParent();
         }
         return null;
@@ -46,6 +49,30 @@ final class Runners {
             return l.length() > 260 ? l.substring(0, 260) + "..." : l;
         }
         return tail(text, 2).replaceAll("\\s+", " ");
+    }
+
+    /** Names that go into a build tool's arguments: letters, digits and the few signs paths and class names need. Nothing a selector or a shell reads as syntax. */
+    private static final Pattern PLAIN = Pattern.compile("[\\p{L}\\p{N}_$.][\\p{L}\\p{N}_$./-]*");
+
+    /**
+     * Only a failed assertion counts as a failure. Vitest's junit reporter writes every thrown error
+     * as a failure element, and a report can name any type there; anything that is not an
+     * assertion error is "threw something else".
+     */
+    private static JUnitXml.Case assertionOrError(JUnitXml.Case c) {
+        if (c.status() != JUnitXml.Status.FAILED) return c;
+        String type = c.type().toLowerCase(java.util.Locale.ROOT);
+        if (type.contains("assert") || type.contains("comparisonfailure") || type.contains("multiplefailures")) return c;
+        return new JUnitXml.Case(c.suite(), c.name(), JUnitXml.Status.ERRORED, c.type(), c.message());
+    }
+
+    /** True when the folder is a real folder inside the checkout: not a link, and not reached through one. */
+    private static boolean inside(Path checkout, Path dir) {
+        try {
+            return Files.isDirectory(dir, java.nio.file.LinkOption.NOFOLLOW_LINKS) && dir.toRealPath().startsWith(checkout.toRealPath());
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     // ---------------- Maven Surefire ----------------
@@ -92,7 +119,13 @@ final class Runners {
             }
             for (Map.Entry<String, List<String>> m : byModule.entrySet()) {
                 Path reports = checkout.resolve(m.getKey()).resolve("target/surefire-reports");
-                clear(reports);
+                String refused = !m.getKey().isEmpty() && !PLAIN.matcher(m.getKey()).matches() ? "its module folder has characters that cannot be passed to Maven safely"
+                        : m.getValue().stream().anyMatch(f -> !PLAIN.matcher(className(f)).matches()) ? "a test file's name has characters that cannot be passed to Maven safely"
+                        : !clear(checkout, reports) ? "old test reports could not be removed, so a new result could not be told from an old one" : null;
+                if (refused != null) {
+                    for (String f : m.getValue()) out.put(f, FileRun.failed("was not run: " + refused));
+                    continue;
+                }
                 List<String> cmd = new ArrayList<>(launcher);
                 cmd.addAll(List.of("-B", "-q", "-ntp", "-Dtest=" + String.join(",", m.getValue().stream().map(Maven::className).toList()),
                         "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false"));
@@ -101,7 +134,13 @@ final class Runners {
                 Proc p = Proc.runWithEnv(checkout, Map.of(), null, timeoutSeconds, cmd.toArray(new String[0]));
                 List<JUnitXml.Case> cases = new ArrayList<>();
                 String unreadable = null;
-                if (Files.isDirectory(reports)) {
+                if (p.code() == 124) {
+                    // a run that was cut off proves nothing, whatever reports it left
+                    for (String f : m.getValue()) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
+                    continue;
+                }
+                if (Files.exists(reports) && !inside(checkout, reports)) unreadable = "the report folder is a link out of the checkout";
+                else if (Files.isDirectory(reports)) {
                     try (Stream<Path> s = Files.list(reports)) {
                         for (Path r : s.filter(x -> x.getFileName().toString().matches("TEST-.*\\.xml")).sorted().toList()) cases.addAll(JUnitXml.read(r));
                     } catch (IOException e) {
@@ -111,7 +150,7 @@ final class Runners {
                 String text = p.out() + "\n" + p.err();
                 for (String f : m.getValue()) {
                     String cls = className(f);
-                    List<JUnitXml.Case> mine = cases.stream().filter(c -> c.suite().equals(cls) || c.suite().startsWith(cls + "$")).toList();
+                    List<JUnitXml.Case> mine = cases.stream().filter(c -> c.suite().equals(cls) || c.suite().startsWith(cls + "$")).map(Runners::assertionOrError).toList();
                     if (!mine.isEmpty()) out.put(f, new FileRun(mine, null));
                     else if (unreadable != null) out.put(f, FileRun.failed("its report cannot be read (" + unreadable + ")"));
                     else if (p.code() == 124) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
@@ -123,12 +162,18 @@ final class Runners {
             return out;
         }
 
-        private static void clear(Path reports) {
-            if (!Files.isDirectory(reports)) return;
+        /** Removes the reports of an earlier run. False when that cannot be done safely: the folder is a link, or a file stays. */
+        private static boolean clear(Path checkout, Path reports) {
+            if (!Files.exists(reports, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return true;
+            if (!inside(checkout, reports)) return false;
             try (Stream<Path> s = Files.list(reports)) {
-                for (Path r : s.toList()) Files.deleteIfExists(r);
-            } catch (IOException ignored) {
-                // a stale report is then read again; the next run overwrites it
+                for (Path r : s.toList()) {
+                    if (Files.isDirectory(r, java.nio.file.LinkOption.NOFOLLOW_LINKS)) continue;
+                    Files.delete(r); // a link is removed, never followed
+                }
+                return true;
+            } catch (IOException e) {
+                return false;
             }
         }
 
@@ -202,10 +247,19 @@ final class Runners {
                 try {
                     List<String> cmd = new ArrayList<>(List.of("node", entry.toString(), "run", "--reporter=junit", "--outputFile=" + report));
                     List<String> rel = e.getValue().stream().map(f -> e.getKey().isEmpty() ? f : f.substring(e.getKey().length() + 1)).toList();
+                    if (rel.stream().anyMatch(r -> r.startsWith("-"))) {
+                        // vitest would read such a name as an option
+                        for (String f : e.getValue()) out.put(f, FileRun.failed("was not run: a test file's name starts with a dash"));
+                        continue;
+                    }
                     cmd.addAll(rel);
                     Proc p = Proc.runWithEnv(project, Map.of("CI", "1"), null, timeoutSeconds, cmd.toArray(new String[0]));
                     List<JUnitXml.Case> cases = new ArrayList<>();
                     String unreadable = null;
+                    if (p.code() == 124) {
+                        for (String f : e.getValue()) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
+                        continue;
+                    }
                     try {
                         if (Files.size(report) > 0) cases.addAll(JUnitXml.read(report));
                     } catch (IOException ex) {
@@ -213,7 +267,7 @@ final class Runners {
                     }
                     for (int i = 0; i < rel.size(); i++) {
                         String name = rel.get(i);
-                        List<JUnitXml.Case> mine = cases.stream().filter(c -> c.suite().replace('\\', '/').equals(name)).map(Vitest::assertionOrError).toList();
+                        List<JUnitXml.Case> mine = cases.stream().filter(c -> c.suite().replace('\\', '/').equals(name)).map(Runners::assertionOrError).toList();
                         String f = e.getValue().get(i);
                         if (!mine.isEmpty()) out.put(f, new FileRun(mine, null));
                         else if (unreadable != null) out.put(f, FileRun.failed("its report cannot be read (" + unreadable + ")"));
@@ -230,12 +284,6 @@ final class Runners {
                 }
             }
             return out;
-        }
-
-        /** Vitest's junit reporter writes every thrown error as a failure; only an assertion error counts as one here. */
-        private static JUnitXml.Case assertionOrError(JUnitXml.Case c) {
-            if (c.status() != JUnitXml.Status.FAILED || c.type().contains("AssertionError")) return c;
-            return new JUnitXml.Case(c.suite(), c.name(), JUnitXml.Status.ERRORED, c.type(), c.message());
         }
 
         /**

@@ -44,7 +44,7 @@ public final class Integrity {
         return TEST_FOLDER.matcher(p).matches() || TEST_NAME.matcher(p).matches();
     }
 
-    private static boolean testNamed(String path) {
+    static boolean testNamed(String path) {
         return TEST_NAME.matcher("/" + path).matches();
     }
 

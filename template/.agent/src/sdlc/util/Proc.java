@@ -51,9 +51,10 @@ public record Proc(int code, String out, String err) {
                 p.destroyForcibly();
                 return new Proc(124, out.toString(StandardCharsets.UTF_8), "timeout after " + timeoutSeconds + " s");
             }
-            readOut.join();
-            readErr.join();
-            writer.join();
+            // a background child of the command may keep the pipes open after it exits: do not wait for it for ever
+            readOut.join(5000);
+            readErr.join(5000);
+            writer.join(5000);
             return new Proc(p.exitValue(), out.toString(StandardCharsets.UTF_8), err.toString(StandardCharsets.UTF_8));
         } catch (IOException e) {
             return new Proc(127, "", e.toString());

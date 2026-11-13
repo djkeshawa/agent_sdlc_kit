@@ -133,5 +133,13 @@ Claude Code, in `.claude/settings.json`:
   to cheat can write a test that tells the two sides apart without testing the fix.
 - A test that depends on the time, the network or the order of tests may be reported as
   unstable.
+- Two tests in one file that report the same name cannot be told apart and are not judged.
+- A test file whose name or folder has unusual characters (a comma, a space, a leading dash) is
+  not run: such names could be read as options by Maven or Vitest.
+- For Vitest both sides run with the packages installed now. When the change is a new package
+  version, the test passes on both sides; the report says so when `package.json` or a lock file
+  changed.
+- In a pull request build the base branch must be fetched, with enough history to reach the
+  commit the branch started from. Otherwise the check stops with an error.
 - Names of test cases are matched by simple reading of the file. A test shown under another
   name (a display name, a generated name) may be counted as new.

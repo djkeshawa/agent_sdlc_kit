@@ -20,7 +20,11 @@ import org.w3c.dom.NodeList;
 public final class JUnitXml {
     private JUnitXml() {}
 
-    public enum Status { PASSED, FAILED, ERRORED, SKIPPED }
+    /** FLAKY: the build ran the case again and got another result (Surefire's rerun elements). */
+    public enum Status { PASSED, FAILED, ERRORED, SKIPPED, FLAKY }
+
+    /** Reports are written by the code under test: one that is larger than this is not read. */
+    private static final long MAX_BYTES = 50L * 1024 * 1024;
 
     /**
      * One test case of a report. FAILED means an assertion did not hold (a failure element);
@@ -29,6 +33,7 @@ public final class JUnitXml {
     public record Case(String suite, String name, Status status, String type, String message) {}
 
     public static List<Case> read(Path file) throws IOException {
+        if (Files.size(file) > MAX_BYTES) throw new IOException("the report " + file.getFileName() + " is larger than " + (MAX_BYTES >> 20) + " MB");
         try (InputStream in = Files.newInputStream(file)) {
             DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();
             f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
@@ -50,13 +55,14 @@ public final class JUnitXml {
                         case "failure" -> Status.FAILED;
                         case "error" -> Status.ERRORED;
                         case "skipped" -> Status.SKIPPED;
-                        default -> null; // system-out, properties, rerunFailure, flakyFailure
+                        case "flakyFailure", "flakyError", "rerunFailure", "rerunError" -> Status.FLAKY;
+                        default -> null; // system-out, system-err, properties
                     };
                     if (s == null) continue;
                     status = s;
                     type = e.getAttribute("type");
                     message = e.getAttribute("message");
-                    if (s != Status.SKIPPED) break;
+                    if (s == Status.FLAKY) break; // whatever else the case says, its result is not one result
                 }
                 String suite = c.getAttribute("classname");
                 if (suite.isEmpty() && c.getParentNode() instanceof Element p) suite = p.getAttribute("name");

@@ -21,6 +21,11 @@ public final class Check {
     public static int run(Map<String, String> opt) {
         int runs = number(opt, "runs", 3);
         int timeout = number(opt, "timeout", 900);
+        if (sdlc.core.Trusted.inCi()) {
+            // in a pull request build the scan's rules are the base branch's, or the built-in ones: never the checkout's own
+            sdlc.core.Config trusted = sdlc.core.Git.refExists(sdlc.core.Trusted.baseRef()) ? sdlc.core.Trusted.config(sdlc.core.Trusted.baseRef()) : null;
+            sdlc.core.Ctx.cfg = trusted != null ? trusted : sdlc.core.Config.parse("stack: java-maven\n");
+        }
         if (opt.containsKey("since")) return since(opt, runs, timeout);
         if (opt.containsKey("stop-hook")) return stopHook(opt, opt.containsKey("runs") ? runs : 1, timeout);
         Change change = Change.of(opt.get("base"));
@@ -56,6 +61,9 @@ public final class Check {
             if (old > 0) out.println("  " + old + " test" + (old == 1 ? "" : "s") + " that " + (old == 1 ? "was" : "were") + " already in the edited files " + (old == 1 ? "passes" : "pass") + " before and after (not counted)");
             if (w.count(Kind.SENSITIVE) > 0) {
                 out.println("  A test that fails before and passes after is sensitive to the change. That is not evidence that the change is correct.");
+            }
+            if (w.verdicts().stream().anyMatch(v -> v.runner().equals("Vitest")) && change.files.stream().anyMatch(f -> f.path().matches("(.*/)?(package\\.json|package-lock\\.json|yarn\\.lock|pnpm-lock\\.yaml)"))) {
+                out.println("  The change touches package.json or a lock file. Both sides ran with the packages installed now, so a fix that is a new package version shows as passing on both.");
             }
         }
 

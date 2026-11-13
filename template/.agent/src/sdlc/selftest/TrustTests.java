@@ -204,7 +204,9 @@ final class TrustTests {
         check("trust: no commit in common with the base fails, it does not pass on an empty diff", orphan.fails().stream().anyMatch(f -> f.contains("no commit in common with origin/main")));
 
         // a file name git would quote: the lock names it exactly
-        if (System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("linux")) {
+        // only where the file system and this JVM agree on such a name (Linux with a UTF-8 locale)
+        boolean utf8Names = "UTF-8".equalsIgnoreCase(System.getProperty("sun.jnu.encoding", ""));
+        if (utf8Names && System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("linux")) {
             String odd = "src/test/java/\u00c9Test.java";
             git(repo, "switch", "-q", "-c", "feature/PROJ-14-odd-name", "origin/main");
             write(repo, odd, "class \u00c9Test { /* weakened */ }\n");

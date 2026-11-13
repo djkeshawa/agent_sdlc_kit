@@ -28,7 +28,12 @@ final class Scratch implements AutoCloseable {
     static Scratch of(String tree, String label) {
         try {
             Scratch s = new Scratch(Files.createTempDirectory("sdlc-check-" + label + "-").toRealPath());
-            s.write(tree, List.of());
+            try {
+                s.write(tree, List.of());
+            } catch (IOException | RuntimeException e) {
+                s.close();
+                throw e;
+            }
             return s;
         } catch (IOException e) {
             throw new UsageException("cannot create a scratch folder: " + e.getMessage());

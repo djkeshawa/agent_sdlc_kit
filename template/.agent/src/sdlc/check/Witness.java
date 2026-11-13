@@ -48,10 +48,6 @@ final class Witness {
         }
     }
 
-    /** Test-looking files no runner of this version handles. */
-    private static final java.util.regex.Pattern LOOKS_LIKE_A_TEST = java.util.regex.Pattern.compile(
-            ".*(/src/test/|/tests?/|/__tests__/|/spec/).*|.*([._-](test|spec)\\.[A-Za-z]+|Tests?\\.(java|kt|groovy|cs|scala)|_test\\.(go|py|rb|rs)|/test_[^/]*\\.py)$");
-
     static Result run(Change change, List<Runner> runners, int runs, int timeoutSeconds) {
         List<Verdict> verdicts = new ArrayList<>();
         List<String> unsupported = new ArrayList<>();
@@ -61,12 +57,14 @@ final class Witness {
             for (String path : change.paths("AM")) {
                 Runner owner = runners.stream().filter(r -> r.runs(head.dir, path)).findFirst().orElse(null);
                 if (owner != null) owned.computeIfAbsent(owner, k -> new ArrayList<>()).add(path);
-                else if (LOOKS_LIKE_A_TEST.matcher("/" + path).matches() && runners.stream().noneMatch(r -> r.support(path))) unsupported.add(path);
+                else if (Integrity.testNamed(path)) unsupported.add(path);
                 if (runners.stream().anyMatch(r -> r.support(path))) support.add(path);
             }
             if (owned.isEmpty()) return new Result(verdicts, unsupported, 0);
             try (Scratch base = Scratch.of(change.base, "before")) {
                 base.write(change.head, new ArrayList<>(support));
+                // a fixture or helper the change deletes is gone before the change too, as the tests now expect
+                for (String gone : change.paths("D")) if (runners.stream().anyMatch(r -> r.support(gone))) java.nio.file.Files.deleteIfExists(base.dir.resolve(gone));
                 for (Map.Entry<Runner, List<String>> e : owned.entrySet()) {
                     verdicts.addAll(judge(change, e.getKey(), e.getValue(), base, head, Math.max(1, runs), timeoutSeconds));
                 }
@@ -101,16 +99,24 @@ final class Witness {
                 continue;
             }
             Map<String, JUnitXml.Case> was = new LinkedHashMap<>();
-            if (b != null) for (JUnitXml.Case c : b.cases()) was.put(key(c), c);
+            Set<String> twice = new LinkedHashSet<>(); // two cases under one name cannot be told apart, on either side
+            if (b != null) for (JUnitXml.Case c : b.cases()) if (was.put(key(c), c) != null) twice.add(key(c));
+            Set<String> seen = new LinkedHashSet<>();
+            for (JUnitXml.Case c : a.cases()) if (!seen.add(key(c))) twice.add(key(c));
+            seen.clear();
             for (JUnitXml.Case c : a.cases()) {
                 boolean old = existing.contains(TestNames.plain(f, c.name()));
                 JUnitXml.Case p = was.get(key(c));
-                if (c.status() == Status.SKIPPED) out.add(new Verdict(f, c.name(), Kind.SKIPPED, "skipped after the change", runner.name()));
+                if (twice.contains(key(c))) {
+                    if (seen.add(key(c))) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "more than one test reports this name, so they cannot be told apart", runner.name()));
+                } else if (c.status() == Status.FLAKY) out.add(new Verdict(f, c.name(), Kind.UNSTABLE, "the build ran it again and got another result", runner.name()));
+                else if (c.status() == Status.SKIPPED) out.add(new Verdict(f, c.name(), Kind.SKIPPED, "skipped after the change", runner.name()));
                 else if (c.status() != Status.PASSED) out.add(new Verdict(f, c.name(), Kind.FAILS_AFTER, describe(c), runner.name()));
                 else if (b == null || b.problem() != null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "before the change the file " + (b == null ? "gave no result" : b.problem()), runner.name()));
                 else if (p == null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "was not found before the change", runner.name()));
                 else if (p.status() == Status.PASSED) out.add(new Verdict(f, c.name(), old ? Kind.EXISTING_PASSES_ON_BOTH : Kind.PASSES_ON_BOTH, "", runner.name()));
                 else if (p.status() == Status.SKIPPED) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "was skipped before the change", runner.name()));
+                else if (p.status() == Status.FLAKY) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "before the change the build ran it again and got another result", runner.name()));
                 else if (p.status() == Status.ERRORED) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "before the change it threw " + shortType(p) + ", not an assertion", runner.name()));
                 else candidates.computeIfAbsent(f, k -> new LinkedHashSet<>()).add(key(c));
             }
