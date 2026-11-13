@@ -68,6 +68,7 @@ public final class Main {
             task start <TASK> | task finish      scope edits to the task, move Jira
             check [--base REF] [--runs N] [--no-run]   the change in front of you, nothing to configure: its tests before and after it
             check --since 30d [--max N]          the same, replayed over the recent commits of this branch
+            check --stop-hook                    for an agent's Stop hook: keeps the agent working while a new test proves nothing
             verify | trace [<STORY>] | check-pr [--title "..."] [--story KEY]
             review record <TASK> --file <report> | qa record [<STORY>] --file <report>
             ci status|failures|wait [--pr N]     read the PR's Jenkins and SonarQube results

@@ -22,6 +22,7 @@ public final class Check {
         int runs = number(opt, "runs", 3);
         int timeout = number(opt, "timeout", 900);
         if (opt.containsKey("since")) return since(opt, runs, timeout);
+        if (opt.containsKey("stop-hook")) return stopHook(opt, opt.containsKey("runs") ? runs : 1, timeout);
         Change change = Change.of(opt.get("base"));
         PrintStream out = System.out;
         String sha = change.base.length() > 7 ? change.base.substring(0, 7) : change.base;
@@ -135,6 +136,62 @@ public final class Check {
             out.println("  " + problems + " integrity problem" + (problems == 1 ? "" : "s"));
         }
         return 0;
+    }
+
+    /**
+     * --stop-hook: for an agent's Stop hook (Claude Code: exit code 2 keeps the agent working, and
+     * what is on stderr is the reason it is given). It blocks on what the agent can fix and is
+     * certain: a changed test that fails, a new test that passes with or without the change, a test
+     * switched off. Never on "could not be judged". Says nothing when all is well.
+     *
+     * The host says on stdin whether the agent is already continuing because of a stop hook
+     * (stop_hook_active). Then the result is printed and the agent is let go: a second block on
+     * the same condition would only loop.
+     */
+    private static int stopHook(Map<String, String> opt, int runs, int timeout) {
+        boolean again = stdin().replaceAll("\\s+", "").contains("\"stop_hook_active\":true");
+        Change change;
+        try {
+            change = Change.of(opt.get("base"));
+        } catch (UsageException e) {
+            return 0; // not a git repository, or no base: nothing to say, and a hook must not trap the agent
+        }
+        if (change.isEmpty()) return 0;
+        Witness.Result w = Witness.run(change, runners(opt), runs, timeout);
+        List<String> reasons = new ArrayList<>();
+        for (Verdict v : w.verdicts()) {
+            String test = v.file() + (v.name().isEmpty() ? "" : " \u00bb " + v.name());
+            if (v.kind() == Kind.FAILS_AFTER) reasons.add("fails: " + test + (v.detail().isBlank() ? "" : " (" + v.detail() + ")"));
+            else if (v.kind() == Kind.PASSES_ON_BOTH) reasons.add("passes with and without your change, so it does not test it: " + test);
+        }
+        for (Finding f : Integrity.scan(change)) if (f.level() == Finding.Level.PROBLEM) reasons.add(f.kind() + ": " + f.path() + (f.detail().isBlank() ? "" : " (" + f.detail().strip() + ")"));
+        if (reasons.isEmpty()) return 0;
+        StringBuilder msg = new StringBuilder("sdlc check found " + reasons.size() + " thing" + (reasons.size() == 1 ? "" : "s") + " to fix before you finish:\n");
+        for (String r : reasons) msg.append("- ").append(r).append('\n');
+        msg.append("A new test must fail without the change and pass with it. Fix the test or the code; do not delete the test to get past this, and do not switch tests off. "
+                + "If a finding is wrong, say so in your final message and stop.");
+        System.err.println(msg);
+        return again ? 0 : 2;
+    }
+
+    /** What the host wrote on standard input, or "" when nothing arrives within two seconds (run by hand). */
+    private static String stdin() {
+        String[] text = {""};
+        Thread reader = new Thread(() -> {
+            try {
+                text[0] = new String(System.in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            } catch (java.io.IOException e) {
+                // no input
+            }
+        });
+        reader.setDaemon(true);
+        reader.start();
+        try {
+            reader.join(2000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return text[0];
     }
 
     private static void part(List<String> parts, long n, String what) {

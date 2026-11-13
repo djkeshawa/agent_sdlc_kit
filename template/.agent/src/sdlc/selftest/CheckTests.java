@@ -116,11 +116,36 @@ final class CheckTests {
                 Proc.run(repo, "git", "ls-files", "--stage").out().equals(index) && Proc.run(repo, "git", "status", "--porcelain").out().equals(status));
         check("check: nothing is written into the repository", !Files.exists(repo.resolve(".sdlc")) && !Files.exists(repo.resolve(".agent")));
 
+        // as a Stop hook: blocks (exit 2, reasons on stderr) on what is certain and fixable, never on "could not be judged"
+        java.io.InputStream in = System.in;
+        java.io.PrintStream err = System.err;
+        java.io.ByteArrayOutputStream reasons = new java.io.ByteArrayOutputStream();
+        try {
+            System.setErr(new PrintStream(reasons, true, StandardCharsets.UTF_8));
+            System.setIn(new java.io.ByteArrayInputStream("{\"hook_event_name\": \"Stop\", \"stop_hook_active\": false}".getBytes(StandardCharsets.UTF_8)));
+            int first = Check.run(Map.of("selftest-runner", "true", "stop-hook", "true"));
+            String said = reasons.toString(StandardCharsets.UTF_8);
+            check("check: the stop hook blocks on a new test that proves nothing and on a failing one", first == 2
+                    && said.contains("passes with and without your change") && said.contains("proves nothing") && said.contains("fails: tests/new.t"));
+            check("check: the stop hook does not block on what could not be judged", !said.contains("new feature"));
+            System.setIn(new java.io.ByteArrayInputStream("{\"stop_hook_active\": true}".getBytes(StandardCharsets.UTF_8)));
+            check("check: the stop hook does not block a second time in a row", Check.run(Map.of("selftest-runner", "true", "stop-hook", "true")) == 0);
+        } finally {
+            System.setIn(in);
+            System.setErr(err);
+        }
+
         // only good news: exit 0
         write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\n");
         Files.delete(repo.resolve("tests/new.t"));
         String good = report(Map.of("selftest-runner", "true", "runs", "2"));
         check("check: a change whose new test is sensitive passes", code == 0 && good.contains("in 2 of 2 runs") && good.contains("not evidence that the change is correct"));
+        System.setIn(new java.io.ByteArrayInputStream("{}".getBytes(StandardCharsets.UTF_8)));
+        try {
+            check("check: the stop hook is silent when there is nothing to fix", Check.run(Map.of("selftest-runner", "true", "stop-hook", "true")) == 0);
+        } finally {
+            System.setIn(in);
+        }
 
         // a test file no runner knows
         write(repo, "src/test/python/test_x.py", "def test_x(): pass\n");
