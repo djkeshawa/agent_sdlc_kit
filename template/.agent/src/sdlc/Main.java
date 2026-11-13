@@ -66,6 +66,7 @@ public final class Main {
 
             tasks create|list <STORY>            Jira sub-tasks from the approved LLD's work breakdown
             task start <TASK> | task finish      scope edits to the task, move Jira
+            check [--base REF] [--runs N] [--no-run]   the change in front of you, nothing to configure: its tests before and after it
             verify | trace [<STORY>] | check-pr [--title "..."] [--story KEY]
             review record <TASK> --file <report> | qa record [<STORY>] --file <report>
             ci status|failures|wait [--pr N]     read the PR's Jenkins and SonarQube results
@@ -186,6 +187,7 @@ public final class Main {
         String c0 = a[0];
         String c1 = a.length > 1 ? a[1] : "";
         Map<String, String> opt = Checks.options(a, 1);
+        if (c0.equals("check")) return sdlc.check.Check.run(opt); // needs no configuration and no tracker
         Workflow w = new Workflow(new Jira(Ctx.cfg), new Confluence(Ctx.cfg), Console.TERMINAL); // the one place that says the tracker is Jira and the wiki is Confluence
         return switch (c0) {
             case "hook" -> Hooks.run(c1, stdin, hookFormat(a), w.sync);

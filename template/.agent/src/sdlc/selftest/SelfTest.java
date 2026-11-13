@@ -46,6 +46,7 @@ public final class SelfTest {
             WorkflowTests.run(tmp);
             MultiRepoTests.run(tmp);
             TrustTests.run();
+            CheckTests.run();
         } finally {
             Ctx.root = savedRoot;
             Ctx.cfg = savedCfg;

@@ -1,0 +1,267 @@
+package sdlc.check;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
+
+import sdlc.core.Ctx;
+import sdlc.util.Proc;
+
+/** The runners this version has: Maven Surefire and Vitest. */
+final class Runners {
+    private Runners() {}
+
+    static List<Runner> all() {
+        return List.of(new Maven(), new Vitest());
+    }
+
+    /** The nearest folder at or above the file's folder (inside the checkout) that the test accepts, relative, "" for the root; null when none. */
+    static String nearest(Path checkout, String path, java.util.function.Predicate<Path> accepts) {
+        Path dir = checkout.resolve(path).getParent();
+        while (dir != null && dir.startsWith(checkout)) {
+            if (accepts.test(dir)) return checkout.relativize(dir).toString().replace('\\', '/');
+            dir = dir.getParent();
+        }
+        return null;
+    }
+
+    private static String tail(String text, int lines) {
+        String[] all = text.strip().split("\\R");
+        return String.join("\n", List.of(all).subList(Math.max(0, all.length - lines), all.length));
+    }
+
+    /** Maven's own first complaint: the first [ERROR] line that says something. */
+    private static String firstError(String text) {
+        for (String line : text.split("\\R")) {
+            String l = line.strip();
+            if (!l.startsWith("[ERROR]")) continue;
+            l = l.substring("[ERROR]".length()).strip();
+            if (l.isEmpty()) continue;
+            return l.length() > 260 ? l.substring(0, 260) + "..." : l;
+        }
+        return tail(text, 2).replaceAll("\\s+", " ");
+    }
+
+    // ---------------- Maven Surefire ----------------
+
+    static final class Maven implements Runner {
+        private static final Pattern TEST_CLASS = Pattern.compile("(Test.*|.*Test|.*Tests|.*TestCase)\\.java");
+        private static final String ROOT = "src/test/java/";
+
+        @Override
+        public String name() {
+            return "Maven Surefire";
+        }
+
+        @Override
+        public boolean runs(Path checkout, String path) {
+            int at = path.indexOf(ROOT);
+            if (at < 0 || !TEST_CLASS.matcher(path.substring(path.lastIndexOf('/') + 1)).matches()) return false;
+            return nearest(checkout, path, d -> Files.isRegularFile(d.resolve("pom.xml"))) != null;
+        }
+
+        @Override
+        public boolean support(String path) {
+            return path.contains("src/test/");
+        }
+
+        private static String className(String path) {
+            String rel = path.substring(path.indexOf(ROOT) + ROOT.length());
+            return rel.substring(0, rel.length() - ".java".length()).replace('/', '.');
+        }
+
+        @Override
+        public Map<String, FileRun> run(Path checkout, List<String> files, int timeoutSeconds) {
+            Map<String, FileRun> out = new LinkedHashMap<>();
+            List<String> launcher = launcher(checkout);
+            if (launcher == null) {
+                for (String f : files) out.put(f, FileRun.failed("Maven is not available (no mvnw in the repository, no mvn on the PATH)"));
+                return out;
+            }
+            Map<String, List<String>> byModule = new LinkedHashMap<>();
+            for (String f : files) {
+                String module = nearest(checkout, f, d -> Files.isRegularFile(d.resolve("pom.xml")));
+                if (module == null) out.put(f, FileRun.failed("no pom.xml above it"));
+                else byModule.computeIfAbsent(module, k -> new ArrayList<>()).add(f);
+            }
+            for (Map.Entry<String, List<String>> m : byModule.entrySet()) {
+                Path reports = checkout.resolve(m.getKey()).resolve("target/surefire-reports");
+                clear(reports);
+                List<String> cmd = new ArrayList<>(launcher);
+                cmd.addAll(List.of("-B", "-q", "-ntp", "-Dtest=" + String.join(",", m.getValue().stream().map(Maven::className).toList()),
+                        "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false"));
+                if (!m.getKey().isEmpty()) cmd.addAll(List.of("-pl", m.getKey(), "-am"));
+                cmd.add("test");
+                Proc p = Proc.runWithEnv(checkout, Map.of(), null, timeoutSeconds, cmd.toArray(new String[0]));
+                List<JUnitXml.Case> cases = new ArrayList<>();
+                String unreadable = null;
+                if (Files.isDirectory(reports)) {
+                    try (Stream<Path> s = Files.list(reports)) {
+                        for (Path r : s.filter(x -> x.getFileName().toString().matches("TEST-.*\\.xml")).sorted().toList()) cases.addAll(JUnitXml.read(r));
+                    } catch (IOException e) {
+                        unreadable = e.getMessage();
+                    }
+                }
+                String text = p.out() + "\n" + p.err();
+                for (String f : m.getValue()) {
+                    String cls = className(f);
+                    List<JUnitXml.Case> mine = cases.stream().filter(c -> c.suite().equals(cls) || c.suite().startsWith(cls + "$")).toList();
+                    if (!mine.isEmpty()) out.put(f, new FileRun(mine, null));
+                    else if (unreadable != null) out.put(f, FileRun.failed("its report cannot be read (" + unreadable + ")"));
+                    else if (p.code() == 124) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
+                    else if (text.contains("COMPILATION ERROR") || text.contains("Compilation failure")) out.put(f, FileRun.failed("does not compile"));
+                    else if (p.code() == 127) out.put(f, FileRun.failed("Maven could not be started (" + tail(text, 1) + ")"));
+                    else out.put(f, FileRun.failed("did not run (Maven exit " + p.code() + ": " + firstError(text) + ")"));
+                }
+            }
+            return out;
+        }
+
+        private static void clear(Path reports) {
+            if (!Files.isDirectory(reports)) return;
+            try (Stream<Path> s = Files.list(reports)) {
+                for (Path r : s.toList()) Files.deleteIfExists(r);
+            } catch (IOException ignored) {
+                // a stale report is then read again; the next run overwrites it
+            }
+        }
+
+        /** mvnw of the checkout when it has one, else mvn; null when neither starts. */
+        private static List<String> launcher(Path checkout) {
+            if (Proc.WINDOWS && Files.isRegularFile(checkout.resolve("mvnw.cmd"))) return List.of("cmd", "/c", checkout.resolve("mvnw.cmd").toString());
+            if (!Proc.WINDOWS && Files.isRegularFile(checkout.resolve("mvnw"))) return List.of("sh", checkout.resolve("mvnw").toString());
+            List<String> mvn = Proc.WINDOWS ? List.of("cmd", "/c", "mvn") : List.of("mvn");
+            List<String> probe = new ArrayList<>(mvn);
+            probe.add("-v");
+            return Proc.runWithEnv(checkout, Map.of(), null, 60, probe.toArray(new String[0])).ok() ? mvn : null;
+        }
+    }
+
+    // ---------------- Vitest ----------------
+
+    static final class Vitest implements Runner {
+        private static final Pattern TEST_FILE = Pattern.compile(".*\\.(test|spec)\\.[cm]?[jt]sx?");
+        private static final Pattern SUPPORT_DIR = Pattern.compile("(^|.*/)(__tests__|__mocks__|__fixtures__|__snapshots__|fixtures|tests?)/.*");
+
+        @Override
+        public String name() {
+            return "Vitest";
+        }
+
+        @Override
+        public boolean runs(Path checkout, String path) {
+            return TEST_FILE.matcher(path).matches() && project(checkout, path) != null;
+        }
+
+        @Override
+        public boolean support(String path) {
+            return TEST_FILE.matcher(path).matches() || SUPPORT_DIR.matcher(path).matches();
+        }
+
+        /** The nearest folder whose package.json names vitest. */
+        private static String project(Path checkout, String path) {
+            return nearest(checkout, path, d -> {
+                try {
+                    Path pkg = d.resolve("package.json");
+                    return Files.isRegularFile(pkg) && Files.readString(pkg).contains("\"vitest\"");
+                } catch (IOException e) {
+                    return false;
+                }
+            });
+        }
+
+        @Override
+        public Map<String, FileRun> run(Path checkout, List<String> files, int timeoutSeconds) {
+            Map<String, FileRun> out = new LinkedHashMap<>();
+            Map<String, List<String>> byProject = new LinkedHashMap<>();
+            for (String f : files) {
+                String project = project(checkout, f);
+                if (project == null) out.put(f, FileRun.failed("no package.json with vitest above it"));
+                else byProject.computeIfAbsent(project, k -> new ArrayList<>()).add(f);
+            }
+            for (Map.Entry<String, List<String>> e : byProject.entrySet()) {
+                Path project = checkout.resolve(e.getKey());
+                Path entry = dependencies(checkout, e.getKey());
+                if (entry == null) {
+                    for (String f : e.getValue()) out.put(f, FileRun.failed("vitest is not installed in the repository (run npm install there first)"));
+                    continue;
+                }
+                Path report;
+                try {
+                    report = Files.createTempFile("sdlc-vitest", ".xml");
+                } catch (IOException ex) {
+                    for (String f : e.getValue()) out.put(f, FileRun.failed("no temporary file: " + ex.getMessage()));
+                    continue;
+                }
+                try {
+                    List<String> cmd = new ArrayList<>(List.of("node", entry.toString(), "run", "--reporter=junit", "--outputFile=" + report));
+                    List<String> rel = e.getValue().stream().map(f -> e.getKey().isEmpty() ? f : f.substring(e.getKey().length() + 1)).toList();
+                    cmd.addAll(rel);
+                    Proc p = Proc.runWithEnv(project, Map.of("CI", "1"), null, timeoutSeconds, cmd.toArray(new String[0]));
+                    List<JUnitXml.Case> cases = new ArrayList<>();
+                    String unreadable = null;
+                    try {
+                        if (Files.size(report) > 0) cases.addAll(JUnitXml.read(report));
+                    } catch (IOException ex) {
+                        unreadable = ex.getMessage();
+                    }
+                    for (int i = 0; i < rel.size(); i++) {
+                        String name = rel.get(i);
+                        List<JUnitXml.Case> mine = cases.stream().filter(c -> c.suite().replace('\\', '/').equals(name)).map(Vitest::assertionOrError).toList();
+                        String f = e.getValue().get(i);
+                        if (!mine.isEmpty()) out.put(f, new FileRun(mine, null));
+                        else if (unreadable != null) out.put(f, FileRun.failed("its report cannot be read (" + unreadable + ")"));
+                        else if (p.code() == 124) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
+                        else if (p.code() == 127) out.put(f, FileRun.failed("node could not be started (is Node.js on the PATH?)"));
+                        else out.put(f, FileRun.failed("did not run (vitest exit " + p.code() + ": " + tail(p.out() + "\n" + p.err(), 3).replaceAll("\\s+", " ") + ")"));
+                    }
+                } finally {
+                    try {
+                        Files.deleteIfExists(report);
+                    } catch (IOException ignored) {
+                        // a stray temp file
+                    }
+                }
+            }
+            return out;
+        }
+
+        /** Vitest's junit reporter writes every thrown error as a failure; only an assertion error counts as one here. */
+        private static JUnitXml.Case assertionOrError(JUnitXml.Case c) {
+            if (c.status() != JUnitXml.Status.FAILED || c.type().contains("AssertionError")) return c;
+            return new JUnitXml.Case(c.suite(), c.name(), JUnitXml.Status.ERRORED, c.type(), c.message());
+        }
+
+        /**
+         * A scratch checkout has no node_modules (they are ignored files). Each node_modules folder
+         * the repository has at or above the project is linked into the checkout; returns vitest's
+         * entry script, or null when the repository has none installed.
+         */
+        private static Path dependencies(Path checkout, String project) {
+            Path entry = null;
+            String dir = project;
+            while (true) {
+                Path real = Ctx.root.resolve(dir).resolve("node_modules");
+                Path link = checkout.resolve(dir).resolve("node_modules");
+                if (Files.isDirectory(real)) {
+                    try {
+                        if (!Files.exists(link, java.nio.file.LinkOption.NOFOLLOW_LINKS)) Files.createSymbolicLink(link, real);
+                    } catch (IOException | UnsupportedOperationException e) {
+                        return null;
+                    }
+                    Path candidate = real.resolve("vitest/vitest.mjs");
+                    if (entry == null && Files.isRegularFile(candidate)) entry = link.resolve("vitest/vitest.mjs");
+                }
+                if (dir.isEmpty()) break;
+                dir = dir.contains("/") ? dir.substring(0, dir.lastIndexOf('/')) : "";
+            }
+            return entry;
+        }
+    }
+}
