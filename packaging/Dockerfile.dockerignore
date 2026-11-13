@@ -1,0 +1,4 @@
+# Build context for packaging/Dockerfile: only the tool's sources and this folder.
+*
+!template/.agent/src/
+!packaging/
