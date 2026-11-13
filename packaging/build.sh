@@ -19,7 +19,7 @@ dist=${DIST:-$repo/dist}
 # map PNG) are what jdeps reports. jdk.crypto.ec is not a compile-time dependency but a security
 # provider: without it TLS has no elliptic-curve key exchange and most HTTPS servers refuse the
 # handshake. (In JDK 22 and newer it is part of java.base, and jlink then ignores it.)
-modules=${MODULES:-java.base,java.net.http,java.desktop,jdk.crypto.ec}
+modules=${MODULES:-java.base,java.net.http,java.xml,java.desktop,jdk.crypto.ec}
 
 if [ -n "${JAVA_HOME:-}" ]; then
   jdk_bin=$JAVA_HOME/bin

@@ -3,3 +3,6 @@ template/.agent/.build/
 
 # packaging/build.sh output
 dist/
+
+# worktrees of coding agents
+.claude/worktrees/

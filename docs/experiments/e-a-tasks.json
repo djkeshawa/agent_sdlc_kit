@@ -1,0 +1,497 @@
+{
+ "source": "https://github.com/malusamayo/CRBugBench",
+ "commit": "e8e585ee2a9bfa19002103d9a2bddaeb7aca49f8",
+ "licence": "none stated",
+ "note": "Task ids only. The benchmark states no licence, so none of its content is copied here.",
+ "counts": {
+  "java_fix": 93,
+  "java_comments": 102,
+  "js_fix": 81,
+  "js_comments": 77,
+  "total_fix": 500,
+  "total_comments": 495
+ },
+ "counts_note": "java_* counts Java repos verified as Maven or Gradle (Selenium excluded: Bazel); js_* counts repos with a root package.json and no pom/gradle; these are classifications over the 36 repos checked, not the benchmark's own labels",
+ "selected": [
+  {
+   "id": "openapi-generator_fix16827_induce15294",
+   "track": "fix",
+   "repo": "OpenAPITools/openapi-generator",
+   "build": "maven",
+   "base_commit": "b35ffd3c37f54a7dc56ac919ee0aa2a942143275",
+   "has_test_change": true
+  },
+  {
+   "id": "OpenRefine_fix1146_induce1079",
+   "track": "fix",
+   "repo": "OpenRefine/OpenRefine",
+   "build": "maven",
+   "base_commit": "35b01fb33bd58760253f3c6c0524cdc50c81adc0",
+   "has_test_change": true
+  },
+  {
+   "id": "spring-ai-alibaba_fix2195_induce1934",
+   "track": "fix",
+   "repo": "alibaba/spring-ai-alibaba",
+   "build": "maven",
+   "base_commit": "569192e87b510d9fa8b28823c854bb8736481906",
+   "has_test_change": true
+  },
+  {
+   "id": "jenkins_fix26260_induce7658",
+   "track": "fix",
+   "repo": "jenkinsci/jenkins",
+   "build": "maven",
+   "base_commit": "31f6dde490b7097fcc8760a7ebcc1f6b23fa507e",
+   "has_test_change": true
+  },
+  {
+   "id": "keycloak_fix23078_induce10660",
+   "track": "fix",
+   "repo": "keycloak/keycloak",
+   "build": "maven",
+   "base_commit": "7f999a4629c0ac63ea8f98d1579d6baa79926d1f",
+   "has_test_change": true
+  },
+  {
+   "id": "langchain4j_fix1812_induce1558",
+   "track": "fix",
+   "repo": "langchain4j/langchain4j",
+   "build": "maven",
+   "base_commit": "5ec127dcb72177923f6af3c714cfae312d63c3d0",
+   "has_test_change": true
+  },
+  {
+   "id": "languagetool_fix2908_induce609",
+   "track": "fix",
+   "repo": "languagetool-org/languagetool",
+   "build": "maven",
+   "base_commit": "31ad417bfb0684ed6e5756a411e20f387a9adec5",
+   "has_test_change": false
+  },
+  {
+   "id": "netty_fix11358_induce1280",
+   "track": "fix",
+   "repo": "netty/netty",
+   "build": "maven",
+   "base_commit": "4b1df148a6caf13d7a696f68452bb9243f83dcb9",
+   "has_test_change": true
+  },
+  {
+   "id": "OpenMetadata_fix18521_induce14825",
+   "track": "fix",
+   "repo": "open-metadata/OpenMetadata",
+   "build": "maven",
+   "base_commit": "90dc3e830c71ea23c0f07719c428c2b6f167dcb4",
+   "has_test_change": true
+  },
+  {
+   "id": "thingsboard_fix10449_induce9542",
+   "track": "fix",
+   "repo": "thingsboard/thingsboard",
+   "build": "maven",
+   "base_commit": "cf942478b3783bb4bb24a53d23f21c85d7842816",
+   "has_test_change": false
+  },
+  {
+   "id": "vespa_fix35535_induce13976",
+   "track": "fix",
+   "repo": "vespa-engine/vespa",
+   "build": "maven",
+   "base_commit": "50c10ba986d66fbc43f1b88e7f7a9920c0d6cecc",
+   "has_test_change": true
+  },
+  {
+   "id": "openapi-generator_fix3151_induce1664",
+   "track": "fix",
+   "repo": "OpenAPITools/openapi-generator",
+   "build": "maven",
+   "base_commit": "587bd56655f558c9e78a0bb7bc416597481597ac",
+   "has_test_change": true
+  },
+  {
+   "id": "OpenRefine_fix5228_induce5158",
+   "track": "fix",
+   "repo": "OpenRefine/OpenRefine",
+   "build": "maven",
+   "base_commit": "4e90cba651f2011fafd261c3708b4cdaa5571ef4",
+   "has_test_change": true
+  },
+  {
+   "id": "spring-ai-alibaba_fix2076_induce1520",
+   "track": "fix",
+   "repo": "alibaba/spring-ai-alibaba",
+   "build": "maven",
+   "base_commit": "b0842af24d0371838d18240f24e5464622245862",
+   "has_test_change": false
+  },
+  {
+   "id": "jenkins_fix26358_induce8418",
+   "track": "fix",
+   "repo": "jenkinsci/jenkins",
+   "build": "maven",
+   "base_commit": "1197586811a81f15a56256e33e5f95b20b6e342b",
+   "has_test_change": true
+  },
+  {
+   "id": "keycloak_fix23215_induce21170",
+   "track": "fix",
+   "repo": "keycloak/keycloak",
+   "build": "maven",
+   "base_commit": "59e1a5d992d377dca7504be6eb997d784a9e6c84",
+   "has_test_change": true
+  },
+  {
+   "id": "langchain4j_fix4161_induce3594",
+   "track": "fix",
+   "repo": "langchain4j/langchain4j",
+   "build": "maven",
+   "base_commit": "554cec866941480b0f267c55a3c4c28677da5522",
+   "has_test_change": true
+  },
+  {
+   "id": "netty_fix14480_induce1",
+   "track": "fix",
+   "repo": "netty/netty",
+   "build": "maven",
+   "base_commit": "7b4fe3d25c01576636985320ebf16393cd21c13c",
+   "has_test_change": true
+  },
+  {
+   "id": "OpenMetadata_fix19827_induce19544",
+   "track": "fix",
+   "repo": "open-metadata/OpenMetadata",
+   "build": "maven",
+   "base_commit": "c34b612df30b1aca4ba31a0efec3775b60e30582",
+   "has_test_change": true
+  },
+  {
+   "id": "thingsboard_fix11044_induce4761",
+   "track": "fix",
+   "repo": "thingsboard/thingsboard",
+   "build": "maven",
+   "base_commit": "75801045cfcdda85b90973d7e3079b22b747de52",
+   "has_test_change": false
+  },
+  {
+   "id": "openapi-generator_fix17775_induce17267",
+   "track": "fix",
+   "repo": "OpenAPITools/openapi-generator",
+   "build": "maven",
+   "base_commit": "63f09ee846d7ac3ba9351d42e35a567ddeb724e2",
+   "has_test_change": false
+  },
+  {
+   "id": "OpenRefine_fix3485_induce3019",
+   "track": "fix",
+   "repo": "OpenRefine/OpenRefine",
+   "build": "maven",
+   "base_commit": "2f7a357023e257fdeda851c92b03722411c46d7e",
+   "has_test_change": false
+  },
+  {
+   "id": "spring-ai-alibaba_fix2205_induce435",
+   "track": "fix",
+   "repo": "alibaba/spring-ai-alibaba",
+   "build": "maven",
+   "base_commit": "7efb3a372ab8eeee45277b67cde01590b8e26e10",
+   "has_test_change": false
+  },
+  {
+   "id": "jenkins_fix26522_induce9148",
+   "track": "fix",
+   "repo": "jenkinsci/jenkins",
+   "build": "maven",
+   "base_commit": "9459e1e0616070d0ad813e580efe8665f16cb405",
+   "has_test_change": true
+  },
+  {
+   "id": "keycloak_fix23234_induce21170",
+   "track": "fix",
+   "repo": "keycloak/keycloak",
+   "build": "maven",
+   "base_commit": "59e1a5d992d377dca7504be6eb997d784a9e6c84",
+   "has_test_change": true
+  },
+  {
+   "id": "langchain4j_fix4807_induce3120",
+   "track": "fix",
+   "repo": "langchain4j/langchain4j",
+   "build": "maven",
+   "base_commit": "cb7af710200738ffc25370155da872b132450e69",
+   "has_test_change": true
+  },
+  {
+   "id": "netty_fix16200_induce15080",
+   "track": "fix",
+   "repo": "netty/netty",
+   "build": "maven",
+   "base_commit": "45b3bc3635d7eb6db18ef4e2e8194a16a4e2e2ee",
+   "has_test_change": true
+  },
+  {
+   "id": "OpenMetadata_fix27050_induce18565",
+   "track": "fix",
+   "repo": "open-metadata/OpenMetadata",
+   "build": "maven",
+   "base_commit": "2437d0124e4c8aed571410334608abced1c3d8d1",
+   "has_test_change": true
+  },
+  {
+   "id": "thingsboard_fix12455_induce6063",
+   "track": "fix",
+   "repo": "thingsboard/thingsboard",
+   "build": "maven",
+   "base_commit": "99afad3f6fa9e27fbf81c531ca3917b597df1e24",
+   "has_test_change": false
+  },
+  {
+   "id": "openapi-generator_fix7742_induce3446",
+   "track": "fix",
+   "repo": "OpenAPITools/openapi-generator",
+   "build": "maven",
+   "base_commit": "049f69c55b5e0ac899407dc7f780cd078193562b",
+   "has_test_change": false
+  },
+  {
+   "id": "openapi-generator_comment20042",
+   "track": "comments",
+   "repo": "OpenAPITools/openapi-generator",
+   "build": "maven",
+   "base_commit": "57cfff195080e4f983d849d41037584132f326ee",
+   "has_test_change": true
+  },
+  {
+   "id": "OpenRefine_comment2596",
+   "track": "comments",
+   "repo": "OpenRefine/OpenRefine",
+   "build": "maven",
+   "base_commit": "88f7fb28524e9d87d7b6a46aa0cac79cfb094a89",
+   "has_test_change": true
+  },
+  {
+   "id": "spring-ai-alibaba_comment112",
+   "track": "comments",
+   "repo": "alibaba/spring-ai-alibaba",
+   "build": "maven",
+   "base_commit": "afe0afd1c231e98a2740a0acdea12ce0ffc8e0fe",
+   "has_test_change": true
+  },
+  {
+   "id": "flink_comment19263",
+   "track": "comments",
+   "repo": "apache/flink",
+   "build": "maven",
+   "base_commit": "5a8aef22d057d45d5424e13fe4a0445146db2da5",
+   "has_test_change": true
+  },
+  {
+   "id": "jenkins_comment7569",
+   "track": "comments",
+   "repo": "jenkinsci/jenkins",
+   "build": "maven",
+   "base_commit": "9012a5b35aca298e4cfa23c6ca95242690c232c3",
+   "has_test_change": true
+  },
+  {
+   "id": "keycloak_comment48166",
+   "track": "comments",
+   "repo": "keycloak/keycloak",
+   "build": "maven",
+   "base_commit": "17429c28ba7da3c95ab534c78bd297e6dff114f5",
+   "has_test_change": true
+  },
+  {
+   "id": "XChange_comment2917",
+   "track": "comments",
+   "repo": "knowm/XChange",
+   "build": "maven",
+   "base_commit": "3b4a7d16d4e7be3411370109ef9f9dd5745e4a4a",
+   "has_test_change": true
+  },
+  {
+   "id": "langchain4j_comment2017",
+   "track": "comments",
+   "repo": "langchain4j/langchain4j",
+   "build": "maven",
+   "base_commit": "917836710960f6fdba180c1f8f8d5908c795a2a5",
+   "has_test_change": true
+  },
+  {
+   "id": "languagetool_comment7712",
+   "track": "comments",
+   "repo": "languagetool-org/languagetool",
+   "build": "maven",
+   "base_commit": "d2901036b708f9ba5307776b481382af205ad476",
+   "has_test_change": true
+  },
+  {
+   "id": "netty_comment10919",
+   "track": "comments",
+   "repo": "netty/netty",
+   "build": "maven",
+   "base_commit": "3f043859191a0699c9475d0c7c72ebd6a16aa54a",
+   "has_test_change": true
+  },
+  {
+   "id": "OpenMetadata_comment11388",
+   "track": "comments",
+   "repo": "open-metadata/OpenMetadata",
+   "build": "maven",
+   "base_commit": "fd243dc5cb3562c49a26432966e95d1ddc0c8616",
+   "has_test_change": false
+  },
+  {
+   "id": "thingsboard_comment11265",
+   "track": "comments",
+   "repo": "thingsboard/thingsboard",
+   "build": "maven",
+   "base_commit": "e62665bdcd7429769e09a509112f3ab6732754a0",
+   "has_test_change": true
+  },
+  {
+   "id": "vespa_comment14801",
+   "track": "comments",
+   "repo": "vespa-engine/vespa",
+   "build": "maven",
+   "base_commit": "2e3515a187d0b3aae7ae1afd2708f011b9b8bf22",
+   "has_test_change": true
+  },
+  {
+   "id": "openapi-generator_comment21278",
+   "track": "comments",
+   "repo": "OpenAPITools/openapi-generator",
+   "build": "maven",
+   "base_commit": "2fb26c362ea6557c90353606ccdc3c446d6a8f35",
+   "has_test_change": true
+  },
+  {
+   "id": "OpenRefine_comment2901",
+   "track": "comments",
+   "repo": "OpenRefine/OpenRefine",
+   "build": "maven",
+   "base_commit": "66aeaa44094d6e01f10308aee7570550b0b4184b",
+   "has_test_change": true
+  },
+  {
+   "id": "spring-ai-alibaba_comment1710",
+   "track": "comments",
+   "repo": "alibaba/spring-ai-alibaba",
+   "build": "maven",
+   "base_commit": "5b7528071d514282f305b9e197337d667a83b16d",
+   "has_test_change": true
+  },
+  {
+   "id": "flink_comment21582",
+   "track": "comments",
+   "repo": "apache/flink",
+   "build": "maven",
+   "base_commit": "5c3658aa06b79e8039043145560a1ad2bcce68b0",
+   "has_test_change": true
+  },
+  {
+   "id": "jenkins_comment8321",
+   "track": "comments",
+   "repo": "jenkinsci/jenkins",
+   "build": "maven",
+   "base_commit": "8af4d4c2172d4d721bbb89a1db83d552b3f9d99a",
+   "has_test_change": true
+  },
+  {
+   "id": "keycloak_comment7649",
+   "track": "comments",
+   "repo": "keycloak/keycloak",
+   "build": "maven",
+   "base_commit": "833bf9864356abe6f2c9f672edf1438b8635f48c",
+   "has_test_change": true
+  },
+  {
+   "id": "XChange_comment3452",
+   "track": "comments",
+   "repo": "knowm/XChange",
+   "build": "maven",
+   "base_commit": "13a54ee2db71d74b2cd4ed4266fd36565acd318e",
+   "has_test_change": true
+  },
+  {
+   "id": "langchain4j_comment2620",
+   "track": "comments",
+   "repo": "langchain4j/langchain4j",
+   "build": "maven",
+   "base_commit": "a538754a4f089ea3272dc083150ee82f9f217d12",
+   "has_test_change": true
+  },
+  {
+   "id": "languagetool_comment4273",
+   "track": "comments",
+   "repo": "languagetool-org/languagetool",
+   "build": "maven",
+   "base_commit": "72da6360019d640dba91af3f266e9b0df026f2fb",
+   "has_test_change": false
+  },
+  {
+   "id": "netty_comment11077",
+   "track": "comments",
+   "repo": "netty/netty",
+   "build": "maven",
+   "base_commit": "e83132fcf2f3ee560826586043ed9a87ef2dcfbf",
+   "has_test_change": true
+  },
+  {
+   "id": "OpenMetadata_comment13030",
+   "track": "comments",
+   "repo": "open-metadata/OpenMetadata",
+   "build": "maven",
+   "base_commit": "a5667bb58558943c7cc07031d8d873ab8b38d022",
+   "has_test_change": false
+  },
+  {
+   "id": "thingsboard_comment12889",
+   "track": "comments",
+   "repo": "thingsboard/thingsboard",
+   "build": "maven",
+   "base_commit": "760d1cb2801c99c64a963bc168bf7fce562a73f8",
+   "has_test_change": true
+  },
+  {
+   "id": "vespa_comment26173",
+   "track": "comments",
+   "repo": "vespa-engine/vespa",
+   "build": "maven",
+   "base_commit": "50456d18a169ba8f3497568903d7721687643367",
+   "has_test_change": true
+  },
+  {
+   "id": "openapi-generator_comment6275",
+   "track": "comments",
+   "repo": "OpenAPITools/openapi-generator",
+   "build": "maven",
+   "base_commit": "6c5621d97e65a1b635eee5c0830017fa54a68265",
+   "has_test_change": true
+  },
+  {
+   "id": "OpenRefine_comment4289",
+   "track": "comments",
+   "repo": "OpenRefine/OpenRefine",
+   "build": "maven",
+   "base_commit": "25331404e680e50bbc4d7f6c19c102abfdbd3d59",
+   "has_test_change": true
+  },
+  {
+   "id": "spring-ai-alibaba_comment1934",
+   "track": "comments",
+   "repo": "alibaba/spring-ai-alibaba",
+   "build": "maven",
+   "base_commit": "3f49e5013df37960f8aab411a3ea3508c5e451f9",
+   "has_test_change": true
+  },
+  {
+   "id": "flink_comment16595",
+   "track": "comments",
+   "repo": "apache/flink",
+   "build": "maven",
+   "base_commit": "b2255483c4a99f933b34282bda4f638706e171ef",
+   "has_test_change": false
+  }
+ ]
+}

@@ -181,12 +181,14 @@ public final class ShellRules {
         return null;
     }
 
-    /** java .agent/Sdlc.java ... and .agent/bin/sdlc ...: some of its commands only a human or the IDE runs. */
+    /** java .agent/Sdlc.java ..., .agent/bin/sdlc ... and the packaged `sdlc ...`: some of its commands only a human or the IDE runs. */
     private Decision ownTool(ShellCommand c) {
         List<String> words = c.words();
         for (int i = 0; i < words.size(); i++) {
             String w = words.get(i).replace('\\', '/');
-            if (!(w.endsWith("Sdlc.java") || w.endsWith("bin/sdlc") || w.endsWith("sdlc.cmd") || w.equals("sdlc.Main"))) continue;
+            // the packaged tool is on the PATH as plain `sdlc`: recognised only as the command itself, not as an argument
+            boolean packaged = i == 0 && (w.equals("sdlc") || w.endsWith("/sdlc"));
+            if (!(packaged || w.endsWith("Sdlc.java") || w.endsWith("bin/sdlc") || w.endsWith("sdlc.cmd") || w.equals("sdlc.Main"))) continue;
             String sub = i + 1 < words.size() ? words.get(i + 1) : "";
             String sub2 = i + 2 < words.size() ? words.get(i + 2) : "";
             if (i > 1 && words.subList(1, i).stream().anyMatch(o -> o.startsWith("-"))) { // the launcher may be the first word
