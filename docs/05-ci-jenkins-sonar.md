@@ -38,7 +38,7 @@ pipeline {
         stage('Policy') {
             when { changeRequest() }
             steps {
-                sh 'git fetch --no-tags origin +refs/heads/develop:refs/remotes/origin/develop'
+                sh 'git fetch --no-tags origin "+refs/heads/$CHANGE_TARGET:refs/remotes/origin/$CHANGE_TARGET"'
                 sh 'java .agent/Sdlc.java check-pr --title "$CHANGE_TITLE"'
             }
         }
@@ -60,6 +60,37 @@ pipeline {
 
 Jenkins checks the PR out on a detached HEAD; the tool then takes the branch name from
 `CHANGE_BRANCH` (set by Multibranch for PRs; `GITHUB_HEAD_REF` on GitHub Actions).
+
+**What `check-pr` trusts in a pull request build.** A pull request can change every file in its
+own checkout, so in CI the tool does not take its rules from there:
+
+| Input | Where it comes from |
+| --- | --- |
+| The base branch | The CI event: `CHANGE_TARGET` (Jenkins), `GITHUB_BASE_REF` (GitHub Actions), or `SDLC_BASE_BRANCH` if you set it. Not `delivery.baseBranch` of the checkout |
+| The rules (`.agent/sdlc.yml`, `.agent/org.yml`) | The tip of that base branch, read from git. A change to the rules takes effect after it is merged |
+| Acceptance test locks | The base branch: a lock cannot be removed or re-hashed, and a test the base branch locked after your branch was made cannot be changed |
+| The story | `check-pr --story <KEY>` when you pass it; else the key in the branch name, with a warning, because the author chooses that name |
+| Local state (`.sdlc/`) | Not read. A pull request that commits files under `.sdlc/` fails |
+| The diff | Read as text whatever `.gitattributes` says, with file names exactly as git holds them. A checkout with no commit in common with the base branch (a shallow clone) fails; it does not pass on an empty diff |
+
+On a developer's machine none of these variables is set and the checkout's own rules apply, as
+before. If the base branch has no `.agent/sdlc.yml` yet (the pull request that installs the
+kit), the tool says so and uses the pull request's copy.
+
+Fetch enough history for the check: it needs the commit where the branch left the base branch.
+
+Still decided by the pull request itself, and therefore only a warning for a reviewer:
+
+- the contract allowance (`docs/agent/contracts/<STORY>.json`) that says which API operations
+  the story may add or remove;
+- a pull request that holds only lock files and their tests may remove a lock. QE owns those
+  files through CODEOWNERS.
+
+This is half of the boundary. Two more things are the pull request's own and cannot be fixed
+inside the tool: the pipeline definition (this `Jenkinsfile`) and the tool's code (`.agent/`).
+A pull request that edits either is judged by its own edit, so CODEOWNERS review of `.agent/`
+and the `Jenkinsfile` stays necessary until the check runs from a pinned image in a pipeline
+defined outside the repository ([proposal 02](proposals/02-mandate-direction.md), section 6.3).
 
 `waitForQualityGate` needs a SonarQube webhook to `https://<jenkins>/sonarqube-webhook/` (with
 the slash). For **SonarQube Cloud** with the scanner CLI, `-Dsonar.qualitygate.wait=true`

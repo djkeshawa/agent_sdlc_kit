@@ -35,7 +35,7 @@ public final class GitHooks {
         String branch = Git.branch();
         if (Ctx.cfg.isProtectedBranch(branch)) errors.add("You are on protected branch '" + branch + "'. Commit on a feature branch: git switch -c feature/<KEY>-short-name");
         else if (!branch.isEmpty() && !branch.matches(Ctx.cfg.str("git.branchPattern", ".*"))) errors.add("Branch '" + branch + "' does not match " + Ctx.cfg.str("git.branchPattern"));
-        Map<String, List<String>> added = Git.addedLines(Proc.run(Ctx.root, "git", "diff", "--cached", "--unified=0", "--no-color", "--no-ext-diff").out());
+        Map<String, List<String>> added = Git.addedLines(Git.patch("--cached"));
         for (String s : Checks.secrets(added)) errors.add("Possible secret: " + s + "  (false positive? add the comment guard:allow-secret on that line)");
         for (String s : Checks.disabledTests(added)) errors.add("Disabled or focused test: " + s + "  (fix the test; do not switch it off)");
         List<String> staged = staged("ACMR");

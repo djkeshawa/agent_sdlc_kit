@@ -18,8 +18,18 @@ public record Proc(int code, String out, String err) {
     }
 
     public static Proc runWithInput(Path dir, String stdin, int timeoutSeconds, String... cmd) {
+        return runWithEnv(dir, java.util.Map.of(), stdin, timeoutSeconds, cmd);
+    }
+
+    /** As runWithInput, with environment variables added to (an empty value removes one from) the child's environment. */
+    public static Proc runWithEnv(Path dir, java.util.Map<String, String> env, String stdin, int timeoutSeconds, String... cmd) {
         try {
-            Process p = new ProcessBuilder(cmd).directory(dir.toFile()).start();
+            ProcessBuilder pb = new ProcessBuilder(cmd).directory(dir.toFile());
+            env.forEach((k, v) -> {
+                if (v == null || v.isEmpty()) pb.environment().remove(k);
+                else pb.environment().put(k, v);
+            });
+            Process p = pb.start();
             // stdin on its own thread, so a large output cannot block the input
             Thread writer = new Thread(() -> {
                 try (OutputStream o = p.getOutputStream()) {

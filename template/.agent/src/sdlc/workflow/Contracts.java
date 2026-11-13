@@ -272,11 +272,13 @@ public final class Contracts {
         Map<String, String> fileToApi = new LinkedHashMap<>();
         String catalogFile = sdlc.core.Ctx.root.relativize(Catalog.file()).toString().replace('\\', '/');
         apiFiles(Catalog.parse(show(from, catalogFile)), fileToApi);
+        // the base branch's catalog as it is now: a branch made before the catalog existed is still held to it
+        if (!base.equals(from)) apiFiles(Catalog.parse(show(base, catalogFile)), fileToApi);
         apiFiles(Catalog.load(), fileToApi);
         if (fileToApi.isEmpty()) return new Policy(passes, fails, warns);
         List<String> touched = changed.stream().filter(fileToApi::containsKey).toList();
         // --no-renames: `git mv api/openapi.yaml x.yaml` is the contract's removal, not a rename
-        List<String> deleted = sdlc.core.Git.lines(sdlc.util.Proc.run(sdlc.core.Ctx.root, "git", "diff", "--name-only", "--no-renames", "--diff-filter=D", base + "...HEAD").out());
+        List<String> deleted = sdlc.core.Git.changed("--diff-filter=D", base + "...HEAD");
         List<String> all = new ArrayList<>(touched);
         for (String d : deleted) if (fileToApi.containsKey(d) && !all.contains(d)) all.add(d);
         if (all.isEmpty()) return new Policy(passes, fails, warns);

@@ -117,9 +117,12 @@ public final class Locks {
      */
     public static Map<String, Entry> lockedAt(Path root, String ref, List<String> damaged) {
         Map<String, Entry> out = new LinkedHashMap<>();
-        Proc ls = Proc.run(root, "git", "ls-tree", "--name-only", ref, DIR + "/");
-        if (ls.code() != 0) return out;
-        for (String f : ls.out().split("\\R")) {
+        Proc ls = Proc.run(root, "git", "ls-tree", "-z", "--name-only", ref, DIR + "/");
+        if (ls.code() != 0) {
+            damaged.add(DIR + " (lock folder at " + ref + "): cannot be read");
+            return out;
+        }
+        for (String f : ls.out().split("\0")) {
             if (!f.endsWith(".json")) continue;
             Proc show = Proc.run(root, "git", "show", ref + ":" + f);
             try {
