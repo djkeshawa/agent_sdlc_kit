@@ -170,8 +170,15 @@ public final class Integrity {
         else problem("test switched off", path, line);
     }
 
+    private static final java.util.regex.Pattern GENERATED = java.util.regex.Pattern.compile(
+            "(.*/)?(mvnw|mvnw\\.cmd|gradlew|gradlew\\.bat|package-lock\\.json|npm-shrinkwrap\\.json|yarn\\.lock|pnpm-lock\\.yaml)|(.*/)?(\\.mvn|gradle)/wrapper/.*");
+
     private void secrets() {
-        for (String hit : Checks.secrets(added)) problem("possible secret", hitPath(hit), hitLine(hit));
+        for (String hit : Checks.secrets(added)) {
+            // build wrappers and lock files are generated; their look-alikes (a credentials variable in mvnw.cmd) are a note, not a failure
+            if (GENERATED.matcher(hitPath(hit)).matches()) note("possible secret in a generated file", hitPath(hit), hitLine(hit));
+            else problem("possible secret", hitPath(hit), hitLine(hit));
+        }
     }
 
     private void deletedTestFiles() {
