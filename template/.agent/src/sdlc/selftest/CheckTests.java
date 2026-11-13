@@ -150,7 +150,18 @@ final class CheckTests {
         git(repo, "switch", "-q", "-c", "work");
         commit(repo, "the fix");
         write(repo, "prod.txt", "v1\nfixed\nmore\n");
-        String branch = report(Map.of("selftest-runner", "true", "runs", "1"));
+        String branch;
+        commit(repo, "more");
+        write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\nidle: pass\n");
+        commit(repo, "a test that proves nothing");
+        String history = report(Map.of("selftest-runner", "true", "runs", "1", "since", "1d"));
+        check("check: --since replays each recent commit", history.contains("commits on this branch since 1 days ago") && history.contains("  the fix")
+                && history.contains("tests: 1 fail before and pass after") && history.contains("does not test the change: tests/old.t  idle")
+                && history.contains("new tests pass on both sides, so do not test their commit") && code == 0);
+        check("check: --since wants a time span", Asserts.throwsUsage(() -> Check.run(Map.of("since", "true"))));
+        git(repo, "reset", "-q", "--hard", "HEAD~2");
+        write(repo, "prod.txt", "v1\nfixed\nmore\n");
+        branch = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: commits on the branch and uncommitted edits are one change", branch.contains("2 files changed against main") && branch.contains("1 fails before the change and passes after it"));
     }
 

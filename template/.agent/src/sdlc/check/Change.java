@@ -48,12 +48,26 @@ public final class Change {
         if (!Proc.run(Ctx.root, "git", "rev-parse", "--git-dir").ok()) throw new UsageException("sdlc check needs a git repository: " + Ctx.root + " is not one");
         String[] base = base(baseOption);
         String head = snapshot();
+        return new Change(base[0], base[1], head, diff(base[0], head));
+    }
+
+    /** One commit as a change: from its first parent (the empty tree for a first commit) to the commit itself. */
+    public static Change ofCommit(String commit) {
+        String sha = rev(commit);
+        if (sha.isEmpty()) throw new UsageException(commit + " is not a commit of this repository");
+        Proc parent = Proc.run(Ctx.root, "git", "rev-parse", "-q", "--verify", sha + "^1^{commit}");
+        String base = parent.ok() ? parent.out().strip() : EMPTY_TREE;
+        String head = Proc.run(Ctx.root, "git", "rev-parse", sha + "^{tree}").out().strip();
+        return new Change(base, "its parent", head, diff(base, head));
+    }
+
+    private static List<File> diff(String base, String head) {
         List<File> files = new ArrayList<>();
-        Proc diff = Proc.run(Ctx.root, "git", "-c", "core.quotePath=false", "diff", "--name-status", "--no-renames", "-z", base[0], head);
+        Proc diff = Proc.run(Ctx.root, "git", "diff", "--name-status", "--no-renames", "-z", base, head);
         if (!diff.ok()) throw new UsageException("git diff failed: " + diff.err().strip());
         String[] parts = diff.out().split("\0");
         for (int i = 0; i + 1 < parts.length; i += 2) files.add(new File(parts[i].substring(0, 1), parts[i + 1]));
-        return new Change(base[0], base[1], head, files);
+        return files;
     }
 
     /** {commit or empty tree, how it was found}. */

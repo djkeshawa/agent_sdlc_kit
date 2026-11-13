@@ -21,6 +21,7 @@ public final class Check {
     public static int run(Map<String, String> opt) {
         int runs = number(opt, "runs", 3);
         int timeout = number(opt, "timeout", 900);
+        if (opt.containsKey("since")) return since(opt, runs, timeout);
         Change change = Change.of(opt.get("base"));
         PrintStream out = System.out;
         String sha = change.base.length() > 7 ? change.base.substring(0, 7) : change.base;
@@ -29,7 +30,7 @@ public final class Check {
             return 0;
         }
         out.println("sdlc check: " + change.files.size() + " file" + (change.files.size() == 1 ? "" : "s") + " changed against " + change.baseName + " (" + sha + ")");
-        Witness.Result w = opt.containsKey("no-run") ? null : Witness.run(change, opt.containsKey("selftest-runner") ? List.of(new SelfTestRunner()) : Runners.all(), runs, timeout);
+        Witness.Result w = opt.containsKey("no-run") ? null : Witness.run(change, runners(opt), runs, timeout);
         List<Finding> findings = Integrity.scan(change);
         boolean failed = false;
 
@@ -69,6 +70,89 @@ public final class Check {
         out.println("Not checked");
         for (String line : notChecked(w)) out.println("  - " + line);
         return failed ? 1 : 0;
+    }
+
+    private static List<Runner> runners(Map<String, String> opt) {
+        return opt.containsKey("selftest-runner") ? List.of(new SelfTestRunner()) : Runners.all();
+    }
+
+    /**
+     * --since 30d: the same check, replayed over each commit of the recent history, one line or two
+     * per commit and a summary. A report on the past: it never fails.
+     */
+    private static int since(Map<String, String> opt, int runs, int timeout) {
+        String window = window(opt.get("since"));
+        int max = number(opt, "max", 20);
+        PrintStream out = System.out;
+        sdlc.util.Proc log = sdlc.util.Proc.run(sdlc.core.Ctx.root, "git", "log", "--first-parent", "--no-merges", "--since=" + window, "--format=%H%x09%cs%x09%s", "HEAD");
+        if (!log.ok()) throw new UsageException("git log failed: " + log.err().strip());
+        List<String> commits = log.out().isBlank() ? List.of() : List.of(log.out().strip().split("\\R"));
+        out.println("sdlc check --since " + opt.get("since") + ": " + commits.size() + " commit" + (commits.size() == 1 ? "" : "s") + " on this branch since " + window
+                + (commits.size() > max ? ", the newest " + max + " checked (--max N for more)" : ""));
+        long sensitive = 0, both = 0, unknown = 0, failing = 0, untested = 0, problems = 0;
+        int checked = 0;
+        for (String line : commits) {
+            if (checked++ >= max) break;
+            String[] f = line.split("\t", 3);
+            Change change = Change.ofCommit(f[0]);
+            Witness.Result w = opt.containsKey("no-run") ? null : Witness.run(change, runners(opt), runs, timeout);
+            List<Finding> findings = Integrity.scan(change);
+            out.println();
+            out.println(f[0].substring(0, 7) + "  " + f[1] + "  " + (f.length > 2 ? f[2] : ""));
+            if (w == null) {
+                out.println("    tests: not run (--no-run)");
+            } else if (w.verdicts().isEmpty()) {
+                out.println("    tests: none added or edited that this version can run");
+                untested++;
+            } else {
+                List<String> parts = new ArrayList<>();
+                part(parts, w.count(Kind.SENSITIVE), "fail before and pass after");
+                part(parts, w.count(Kind.PASSES_ON_BOTH), "new, pass on both sides");
+                part(parts, w.count(Kind.FAILS_AFTER), "fail after");
+                part(parts, w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE), "could not be judged");
+                part(parts, w.count(Kind.SKIPPED), "skipped");
+                out.println("    tests: " + (parts.isEmpty() ? "only tests that were already there, passing on both sides" : String.join("; ", parts)));
+                for (Verdict v : w.verdicts()) if (v.kind() == Kind.PASSES_ON_BOTH) out.println("        does not test the change: " + v.file() + "  " + v.name());
+                sensitive += w.count(Kind.SENSITIVE);
+                both += w.count(Kind.PASSES_ON_BOTH);
+                failing += w.count(Kind.FAILS_AFTER);
+                unknown += w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE);
+            }
+            for (Finding x : findings) {
+                if (x.level() != Finding.Level.PROBLEM) continue;
+                out.println("    PROBLEM  " + x.kind() + ": " + x.path() + (x.detail().isBlank() ? "" : "  " + x.detail().strip()));
+                problems++;
+            }
+        }
+        int n = Math.min(commits.size(), max);
+        if (n > 0) {
+            out.println();
+            out.println("Summary of " + n + " commit" + (n == 1 ? "" : "s"));
+            out.println("  " + sensitive + (sensitive == 1 ? " new or edited test fails before its commit and passes after it" : " new or edited tests fail before their commit and pass after it"));
+            out.println("  " + both + (both == 1 ? " new test passes on both sides, so does not test its commit" : " new tests pass on both sides, so do not test their commit"));
+            out.println("  " + unknown + " could not be judged; " + failing + " fail after their commit");
+            out.println("  " + untested + " commit" + (untested == 1 ? "" : "s") + " add or edit no test this version can run");
+            out.println("  " + problems + " integrity problem" + (problems == 1 ? "" : "s"));
+        }
+        return 0;
+    }
+
+    private static void part(List<String> parts, long n, String what) {
+        if (n > 0) parts.add(n + " " + what);
+    }
+
+    /** "30d" -> "30 days ago"; anything else goes to git as it is ("2026-11-01", "2 weeks ago"). */
+    private static String window(String since) {
+        if (since == null || since.isBlank() || since.equals("true") || since.startsWith("-")) throw new UsageException("--since takes a time span or a date: 30d, 2w, 12h, 2026-11-01");
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+)([hdwm])").matcher(since.strip());
+        if (!m.matches()) return since.strip();
+        String unit = switch (m.group(2)) {
+            case "h" -> "hours";
+            case "d" -> "days";
+            case "w" -> "weeks";
+            default -> "months";
+        };
+        return m.group(1) + " " + unit + " ago";
     }
 
     /** Prints one kind of verdict as a count and its tests; true when there was at least one. */
