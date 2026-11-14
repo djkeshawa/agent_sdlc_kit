@@ -98,8 +98,24 @@ final class CheckTests {
             refused = true;
         }
         check("check: a report with a DOCTYPE is refused outright", refused);
-        Files.writeString(xml, "<testsuite><testcase name=\"again\" classname=\"a\"><flakyFailure type=\"java.lang.AssertionError\">x</flakyFailure></testcase></testsuite>");
-        check("check: a case the build ran again is flaky, not passed", sdlc.check.JUnitXml.read(xml).get(0).status() == sdlc.check.JUnitXml.Status.FLAKY);
+        // Surefire's rerunFailingTestsCount: a case that failed and passed when run again (flakyFailure, flakyError), and one that failed every
+        // time (its failure or error, then a rerunFailure or rerunError for each rerun). The last result and the rerun are kept apart
+        Files.writeString(xml, """
+                <testsuite name="demo.AgainTest">
+                  <testcase name="flaky" classname="demo.AgainTest"><flakyFailure message="first" type="java.lang.AssertionError"><stackTrace>x</stackTrace></flakyFailure></testcase>
+                  <testcase name="flakyError" classname="demo.AgainTest"><flakyError message="first" type="java.lang.IllegalStateException"><stackTrace>x</stackTrace></flakyError></testcase>
+                  <testcase name="spent" classname="demo.AgainTest"><failure message="still" type="java.lang.AssertionError">x</failure><rerunFailure message="still" type="java.lang.AssertionError"><stackTrace>x</stackTrace></rerunFailure><rerunFailure message="still" type="java.lang.AssertionError"><stackTrace>x</stackTrace></rerunFailure></testcase>
+                  <testcase name="" classname="demo.AgainTest"><error message="set-up" type="java.lang.IllegalStateException">x</error><rerunError message="set-up" type="java.lang.IllegalStateException"><stackTrace>x</stackTrace></rerunError></testcase>
+                  <testcase name="plain" classname="demo.AgainTest"/>
+                </testsuite>
+                """);
+        var again = sdlc.check.JUnitXml.read(xml);
+        check("check: a case the build ran again that passed then is passed, with its rerun kept", again.get(0).status() == sdlc.check.JUnitXml.Status.PASSED && again.get(0).retried()
+                && again.get(1).status() == sdlc.check.JUnitXml.Status.PASSED && again.get(1).retried());
+        check("check: a case that failed every time the build ran it is failed or errored, with its rerun kept, not passed",
+                again.get(2).status() == sdlc.check.JUnitXml.Status.FAILED && again.get(2).retried() && again.get(2).message().equals("still")
+                && again.get(3).status() == sdlc.check.JUnitXml.Status.ERRORED && again.get(3).retried() && again.get(3).type().endsWith("IllegalStateException"));
+        check("check: a case the build did not run again is not marked so", again.get(4).status() == sdlc.check.JUnitXml.Status.PASSED && !again.get(4).retried());
         Files.delete(xml);
         check("check: a reported name is matched to the declared one", sdlc.check.TestNames.plain("ATest.java", "two(int)[1]").equals("two")
                 && sdlc.check.TestNames.plain("a.test.ts", "x > nested > adds").equals("adds"));
@@ -215,6 +231,13 @@ final class CheckTests {
         write(repo, "checks/init.t", INIT);
         write(repo, "checks/rows.t", ROWS);
         write(repo, "checks/varies.t", VARIES);
+        write(repo, "checks/retry.t", RETRY);
+        write(repo, "checks/spent.t", SPENT);
+        write(repo, "checks/kept.t", KEPT);
+        write(repo, "checks/fresh.t", FRESH);
+        write(repo, "checks/inv.t", INV);
+        write(repo, "checks/wob.t", WOB);
+        write(repo, "checks/code.t", CODE);
         write(repo, ".gitignore", "ignored/\n");
         git(repo, "init", "-q", "-b", "main");
         commit(repo, "base");
@@ -630,6 +653,7 @@ final class CheckTests {
         oldTestsOnTheChange(repo);
         unlisted(repo);
         lost(repo);
+        everyDifference(repo);
 
         // a test that went to another changed file: each file is judged by its own counts, and a title is not read to pair them
         write(repo, "checks/judged.t", JUDGED.replace("goes too: pass\n", ""));
@@ -1384,13 +1408,16 @@ final class CheckTests {
                         + "result), so it is not known whether the change broke the old test that passed before it (rows[3]) and took it out of the way or replaced it, or, where it is "
                         + "not reported there, whether the change of the code, not of the tests, took it away")
                 && !lostSaid(enumEdited) && code == 0);
-        // and a row deleted from the test file beside it: that one the change of the tests took, and it is said; the code's row is said apart
+        // and a row deleted from the test file beside it: on the code after the change the file as it was runs 2 and the file as the change has it 1, so
+        // the change of the tests runs fewer: the two that ran before and do not run now are said, and which change took which is not claimed
         write(repo, "checks/rows.t", "rows[1]: pass\nrows[3]: pass-with v1\n");
         String enumAndRow = report(Map.of("selftest-runner", "true", "runs", "1"));
-        check("lost: a row deleted beside a row the code no longer gives: one test lost by the change of the tests, and the code's row said apart",
-                enumAndRow.contains(L1 + "      checks/rows.t  [self test]\n        the file as it was passed 3 of its tests, and after the change it runs 1: at least 2 tests that ran "
-                        + "before the change do not run now (no longer reported: rows[2], rows[3]). As it was, on the code after the change, the file runs 2: the change of the code, "
-                        + "not of the tests, may have taken 1 of them, so at least 1 was taken by the change of the tests\n")
+        check("lost: a row deleted beside a row the code no longer gives: the tests that ran and do not run now are said, without saying which change took them",
+                enumAndRow.contains("at least 2 tests that ran before the change do not run now\n      checks/rows.t  [self test]\n        the file as it was passed 3 of its tests, and after "
+                        + "the change it runs 1: at least 2 tests that ran before the change do not run now (no longer reported: rows[2], rows[3]). As it was, on the code after the "
+                        + "change, the file runs 2, and as the change has it 1: the change of the code may have taken some of them, and on that code the change of the tests runs "
+                        + "fewer tests than the file as it was\n")
+                && !enumAndRow.contains("taken by the change of the tests")
                 && enumAndRow.contains("1 could not be judged\n      checks/rows.t  [self test]\n        the old tests could not all be judged") && code == 1);
         write(repo, "checks/rows.t", ROWS);
         // the file as it was does not compile on the code after the change (it needs v1), and a test is deleted: what took it cannot be told, and
@@ -1404,6 +1431,182 @@ final class CheckTests {
                 && code == 1);
         write(repo, "checks/era.t", ERA);
         write(repo, "prod.txt", "v1\nfixed\n");
+    }
+
+    /** A test file of the base whose second test failed and passed when the build ran it again (Surefire's flakyFailure). */
+    private static final String RETRY = "steady: pass\nflaky: pass-retried\n";
+
+    /** A test file of the base whose class set-up threw every time the build ran it (error, then rerunError), in place of its tests. */
+    private static final String SPENT = "initializationError: error-retried\n";
+
+    /** A test file of the base with one test. */
+    private static final String KEPT = "kept: pass\n";
+
+    /** A test file of the base with one test. */
+    private static final String FRESH = "a: pass\n";
+
+    /** A test file of the base whose hook passes the first time it runs in a checkout whose code holds v1, and fails later there. */
+    private static final String INV = "a: pass\nhook: fails-later v1\n";
+
+    /** The same, a file of its own. */
+    private static final String WOB = "a: pass\nb: fails-later v1\n";
+
+    /** A test file of the base with rows the code gives: B, C and D without the fix, E and F with it. */
+    private static final String CODE = "A: pass\nB: pass-without fixed\nC: pass-without fixed\nD: pass-without fixed\nE: pass-with fixed\nF: pass-with fixed\n";
+
+    /** Why a failure as it was need not be a test, as the reports say it. */
+    private static final String FAILED = " (a failure outside a test's body, in its set-up, tear-down or loading, may be reported in place of the file's tests or as a case of its own)";
+
+    /** The words of the line said where the reports differ in a way no rule judged (see Witness.reconcile). */
+    private static final String NO_RULE = "no rule of the check judged";
+
+    /**
+     * Every difference among a file's reports gets an answer: the shapes of the third audit (a
+     * retried test switched off, a repeat that loses or breaks an existing test, a repeat that
+     * undoes a new-test count, an exhausted retry, rows the code took), what answers where a
+     * rule says nothing, and that ordinary work stays quiet.
+     */
+    private static void everyDifference(Path repo) throws IOException {
+        // CR3-1: a test that failed and passed when the build ran it again, switched off. A case that passed only when run again may be a set-up that
+        // failed and passed then, not a test, so it is not counted as one that ran: could not be judged, with why, never silence
+        write(repo, "checks/retry.t", "steady: pass\nflaky: skip\n");
+        String retried = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("every difference: a test that passed only when the build ran it again, switched off, could not be judged, with why",
+                retried.contains("1 could not be judged\n      checks/retry.t  [self test]\n        the file as it was passed 1 of its tests, and after the change it runs 1, and passed "
+                        + "1 more only when the build ran it again (skipped now under a name that ran before: flaky): a case that passed only when run again may be a set-up that failed "
+                        + "and then passed (Surefire runs a class whose set-up failed again), not a test, so whether a test that ran does not run now is not known\n")
+                && !lostSaid(retried) && !retried.contains(NO_RULE) && code == 0);
+        Check.mute(java.util.Set.of("lost"));
+        String retriedMuted = report(Map.of("selftest-runner", "true", "runs", "1"));
+        Check.mute(java.util.Set.of());
+        check("every difference: without the rule for lost tests, the retried test switched off is said all the same, by the line for what no rule judged",
+                retriedMuted.contains("1 could not be judged\n      checks/retry.t  [self test]\n        the reports of this file as it was and after the change differ in ways " + NO_RULE
+                        + ": flaky (as it was: passed only when the build ran it again; after the change: skipped). Whether this test was lost, switched off, broken or replaced is not known\n")
+                && code == 0);
+        write(repo, "checks/retry.t", RETRY);
+
+        // CR3-4: a class set-up that threw every time the build ran it, in place of three tests, mended: not three new tests, and not a pass of the
+        // set-up. Counting a retried case as passed would make the old report a full list
+        write(repo, "checks/spent.t", "first: pass\nsecond: pass\nthird: pass\n");
+        String spent = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("every difference: tests that come out from behind a set-up that failed every time the build ran it are not new tests that pass on both sides",
+                spent.contains("4 could not be judged\n") && spent.contains("      checks/spent.t  [self test]\n        first: passes before and after, but it cannot be told whether it is a new "
+                        + "test: the file reports 3 tests it did not have and no longer reports 1 it had. It may be a new test that does not test the change, or a test the file had: the "
+                        + "test it no longer reports, under a new name, or a test the file had that its report as it was did not list: the file as it was reported failures" + FAILED
+                        + ", so that report may not list every test\n")
+                && !spent.contains("new test pass") && !spent.contains(NO_RULE) && code == 0);
+        write(repo, "checks/spent.t", SPENT);
+        // after the change, a test that failed every time the build ran it fails; one that passed only when run again is unstable
+        write(repo, "tests/again.t", "spent: fail-retried\nflaky: pass-retried\n");
+        String again = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("every difference: a new test that failed every time the build ran it fails after the change, and one that passed only when run again is unstable",
+                again.contains("1 fails after the change\n      tests/again.t  [self test]\n        spent: fails: expected something else\n")
+                && again.contains("1 gave different results from run to run\n      tests/again.t  [self test]\n        flaky: the build ran it again and got another result\n") && code == 1);
+        Files.delete(repo.resolve("tests/again.t"));
+
+        // CR3-2: an existing test passes in the first run after the change and is not reported in the repeat (a new sensitive test beside it is what
+        // makes the repeat). No rule reads that: the line for what no rule judged says it, and the test is not counted as passing on both sides
+        write(repo, "checks/kept.t", "kept: gone-later fixed\nsensitive: needs fixed\n");
+        String vanished = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("every difference: an existing test that a repeat run after the change does not report is unstable, not a test that passes on both sides",
+                vanished.contains("1 gave different results from run to run\n      checks/kept.t  [self test]\n        the file was reported differently from run to run, in ways "
+                        + NO_RULE + ": kept (after the change: passed, not reported)\n")
+                && vanished.contains("2 fail before the change and pass after it, in 2 of 2 runs\n") && vanished.contains("1 test that was already in the edited files passes before and after")
+                && code == 0);
+        // and where it fails in the repeat instead: a failure after the change in any run is a failure
+        write(repo, "checks/kept.t", "kept: fails-later fixed\nsensitive: needs fixed\n");
+        String brokeLater = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("every difference: an existing test that fails in a repeat run after the change fails after the change, with in how many runs",
+                brokeLater.contains("1 fails after the change\n      checks/kept.t  [self test]\n        kept: fails: expected something else (in 1 of the 2 runs after the change)\n")
+                && !brokeLater.contains(NO_RULE) && code == 1);
+        write(repo, "checks/kept.t", KEPT);
+
+        // CR3-3: a new test passes on both sides in the first run after the change and is skipped in the repeat: the count is made again in every
+        // combination of the runs, and it says a new test passes on both sides in one only: unstable, not accused
+        write(repo, "checks/fresh.t", "a: pass\nidle: pass-once\n");
+        String onceIdle = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("every difference: a new test that passes on both sides in one run and is skipped in another is unstable, not said to pass on both sides",
+                onceIdle.contains("1 gave different results from run to run\n      checks/fresh.t  [self test]\n        the file reports 1 test it did not have: at least 1 new test passes "
+                        + "before and after, but what the file reports, after the change or as it was, is not the same in every run\n")
+                && !onceIdle.contains("so it does not test the change") && !onceIdle.contains(NO_RULE) && code == 0);
+        write(repo, "checks/fresh.t", FRESH);
+
+        // and where the report as it was lists every test in the first run and holds a failure in the repeat (here the code as it was holds v1, the
+        // code after the change does not): whether that report lists every test is asked of every run too
+        write(repo, "prod.txt", "fixed\n");
+        write(repo, "checks/inv.t", INV + "idle: pass\n");
+        String unlistedLater = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("every difference: a new-test count whose report as it was holds a failure in a repeat run is unstable, not said",
+                unlistedLater.contains("1 gave different results from run to run\n      checks/inv.t  [self test]\n        the file reports 1 test it did not have: at least 1 new test passes "
+                        + "before and after, but what the file reports, after the change or as it was, is not the same in every run\n")
+                && !unlistedLater.contains("so it does not test the change") && code == 0);
+        write(repo, "checks/inv.t", INV);
+        // a test of the file as it was that passes in one run there and fails in another, where nothing else of the file reads the repeat: said by
+        // the line for what no rule judged (the skipped test under a new name is what makes the repeat)
+        write(repo, "checks/wob.t", WOB + "later: skip\n");
+        String wobbled = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("every difference: a test of the file as it was whose result differs from run to run there, read by no rule, is said unstable",
+                wobbled.contains("      checks/wob.t  [self test]\n        the file was reported differently from run to run, in ways " + NO_RULE + ": b (as it was: passed, failed)\n")
+                && wobbled.contains("(skipped under a name the file did not report before: later). So more are skipped while as many or more run") && code == 0);
+        write(repo, "checks/wob.t", WOB);
+        write(repo, "prod.txt", "v1\nfixed\n");
+
+        // CR3-5: the code takes B, C, D and gives E, F; the change of the tests drops F. As it was, on the code after the change, the file runs 3, and
+        // as the change has it 2: the change of the tests runs fewer on the same code. What is said is only what counting proves: at least 2 tests that
+        // ran before do not run now. Which change took them is not claimed
+        write(repo, "checks/code.t", CODE.replace("F: pass-with fixed\n", ""));
+        String code5 = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("every difference: rows the code took beside a row the tests dropped: tests that ran do not run now, said without saying which change took them",
+                code5.contains("at least 2 tests that ran before the change do not run now\n      checks/code.t  [self test]\n        the file as it was passed 4 of its tests, and after "
+                        + "the change it runs 2: at least 2 tests that ran before the change do not run now (no longer reported: B, C, D; reported for the first time: E). As it was, on "
+                        + "the code after the change, the file runs 3, and as the change has it 2: the change of the code may have taken some of them, and on that code the change of "
+                        + "the tests runs fewer tests than the file as it was\n")
+                && !code5.contains("taken by the change of the tests") && code == 1);
+        // the same rows taken by the code, with the test file edited elsewhere: as it was, on the code after the change, the file runs as many as now,
+        // so the code may have taken all of them: could not be judged, said once, by the fourth run's own line
+        write(repo, "checks/code.t", CODE + "  edited\n");
+        String honest = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("every difference: rows the code took, with the test file only edited, could not be judged, not tests lost by the change",
+                honest.contains("\n        the old tests could not all be judged on the code after the change: there the file as it was gave no clean "
+                        + "result, passed or failed, for 3 of them") && !lostSaid(honest) && !honest.contains(NO_RULE) && code == 0);
+        write(repo, "checks/code.t", CODE);
+
+        // each rule says what it answers for: where it speaks, the line for what no rule judged does not; where it is made to say nothing, that line
+        // says what it would have answered for
+        Map<String, String[]> speaks = new java.util.LinkedHashMap<>();
+        speaks.put("new tests", new String[] {"checks/judged.t", JUDGED + "idle: pass\n"});
+        speaks.put("skips", new String[] {"checks/judged.t", JUDGED + "later: skip\n"});
+        speaks.put("gone", new String[] {"checks/judged.t", JUDGED.replace("stays: pass", "group > stays: pass")});
+        speaks.put("broken,gone", new String[] {"checks/broken.t", MENDED.replace("holds: pass", "kept up: pass")});
+        speaks.put("per test", new String[] {"checks/failing.t", FAILING + "  edited\n"});
+        speaks.put("lost", new String[] {"checks/judged.t", JUDGED.replace("turned off: pass", "turned off: skip")});
+        for (Map.Entry<String, String[]> e : speaks.entrySet()) {
+            String path = e.getValue()[0], was = Files.readString(repo.resolve(path));
+            write(repo, path, e.getValue()[1]);
+            String spoken = report(Map.of("selftest-runner", "true", "runs", "2"));
+            Check.mute(java.util.Set.of(e.getKey().split(",")));
+            String silent = report(Map.of("selftest-runner", "true", "runs", "2"));
+            Check.mute(java.util.Set.of());
+            check("every difference: the rule '" + e.getKey() + "' says what it answers for, and without it the line for what no rule judged says it",
+                    !spoken.contains(NO_RULE) && silent.contains("      " + path + "  [self test]\n")
+                    && silent.contains("\n        the reports of this file as it was and after the change differ in ways " + NO_RULE));
+            write(repo, path, was);
+        }
+
+        // ordinary work stays quiet: changes that should print no problem and nothing that could not be judged print none, in three runs
+        Map<String, String> quiet = new java.util.LinkedHashMap<>();
+        quiet.put("checks/broken.t", MENDED);
+        quiet.put("checks/named.t", NAMED.replace("refund: pass\ngoes: pass\n", "goes: pass\nrefund: pass\n"));
+        quiet.put("checks/judged.t", JUDGED + "  edited\n");
+        quiet.put("checks/kept.t", KEPT + "sensitive: needs fixed\n");
+        for (Map.Entry<String, String> e : quiet.entrySet()) {
+            String was = Files.readString(repo.resolve(e.getKey()));
+            write(repo, e.getKey(), e.getValue());
+            String calm = report(Map.of("selftest-runner", "true", "runs", "3"));
+            check("every difference: ordinary work in " + e.getKey() + " prints nothing that could not be judged and nothing unstable",
+                    !calm.contains("could not be judged") && !calm.contains("from run to run") && code == 0);
+            write(repo, e.getKey(), was);
+        }
     }
 
     /** A test file of the base with two nested classes that have a method of one name, the first of which the fix breaks. */

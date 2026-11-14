@@ -107,6 +107,14 @@ public final class Check {
     }
 
     /**
+     * For the self test: the rules of the witness that say nothing until this is called again with
+     * no names (see Witness.muted), so that what answers in their place can be seen.
+     */
+    public static void mute(java.util.Set<String> rules) {
+        Witness.muted = java.util.Set.copyOf(rules);
+    }
+
+    /**
      * For the self test: runs the witness of a change once with the stand-in runner, and says
      * whether it made the fourth checkout ("made" or "not made") and whether the checkout after
      * the change then still holds exactly the files of the change's tree ("head intact" or "head

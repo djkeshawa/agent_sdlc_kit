@@ -20,8 +20,8 @@ import org.w3c.dom.NodeList;
 public final class JUnitXml {
     private JUnitXml() {}
 
-    /** FLAKY: the build ran the case again and got another result (Surefire's rerun elements). */
-    public enum Status { PASSED, FAILED, ERRORED, SKIPPED, FLAKY }
+    /** A case's last result. Whether the build ran it again is said apart (Case.retried). */
+    public enum Status { PASSED, FAILED, ERRORED, SKIPPED }
 
     /** Reports are written by the code under test: one that is larger than this is not read. */
     private static final long MAX_BYTES = 50L * 1024 * 1024;
@@ -29,8 +29,15 @@ public final class JUnitXml {
     /**
      * One test case of a report. FAILED means an assertion did not hold (a failure element);
      * ERRORED means something else was thrown (an error element). type is the exception's name.
+     * retried: the build ran the case again after it failed (Surefire's rerunFailingTestsCount).
+     * The status is then the last one: PASSED where a rerun passed (flakyFailure, flakyError),
+     * FAILED or ERRORED where every run failed (failure or error, then rerunFailure, rerunError).
      */
-    public record Case(String suite, String name, Status status, String type, String message) {}
+    public record Case(String suite, String name, Status status, String type, String message, boolean retried) {
+        public Case(String suite, String name, Status status, String type, String message) {
+            this(suite, name, status, type, message, false);
+        }
+    }
 
     public static List<Case> read(Path file) throws IOException {
         if (Files.size(file) > MAX_BYTES) throw new IOException("the report " + file.getFileName() + " is larger than " + (MAX_BYTES >> 20) + " MB");
@@ -49,24 +56,39 @@ public final class JUnitXml {
                 Element c = (Element) cases.item(i);
                 Status status = Status.PASSED;
                 String type = "", message = "";
+                boolean retried = false, last = false; // last: a failure, error or skipped element gave the status
                 for (Node n = c.getFirstChild(); n != null; n = n.getNextSibling()) {
                     if (!(n instanceof Element e)) continue;
-                    Status s = switch (e.getTagName()) {
-                        case "failure" -> Status.FAILED;
-                        case "error" -> Status.ERRORED;
-                        case "skipped" -> Status.SKIPPED;
-                        case "flakyFailure", "flakyError", "rerunFailure", "rerunError" -> Status.FLAKY;
-                        default -> null; // system-out, system-err, properties
-                    };
-                    if (s == null) continue;
-                    status = s;
-                    type = e.getAttribute("type");
-                    message = e.getAttribute("message");
-                    if (s == Status.FLAKY) break; // whatever else the case says, its result is not one result
+                    switch (e.getTagName()) {
+                        // Surefire, rerunFailingTestsCount: a case that failed and passed when run again has only flakyFailure or flakyError elements,
+                        // its result is a pass; one that failed every time has its failure or error, then a rerunFailure or rerunError for each rerun
+                        case "flakyFailure", "flakyError" -> retried = true;
+                        case "rerunFailure", "rerunError" -> {
+                            retried = true;
+                            if (!last) { // a rerun element without the failure before it: every run failed all the same
+                                status = e.getTagName().equals("rerunFailure") ? Status.FAILED : Status.ERRORED;
+                                type = e.getAttribute("type");
+                                message = e.getAttribute("message");
+                            }
+                        }
+                        case "failure", "error", "skipped" -> {
+                            status = switch (e.getTagName()) {
+                                case "failure" -> Status.FAILED;
+                                case "error" -> Status.ERRORED;
+                                default -> Status.SKIPPED;
+                            };
+                            type = e.getAttribute("type");
+                            message = e.getAttribute("message");
+                            last = true;
+                        }
+                        default -> {
+                            // system-out, system-err, properties
+                        }
+                    }
                 }
                 String suite = c.getAttribute("classname");
                 if (suite.isEmpty() && c.getParentNode() instanceof Element p) suite = p.getAttribute("name");
-                out.add(new Case(suite, c.getAttribute("name"), status, type, message));
+                out.add(new Case(suite, c.getAttribute("name"), status, type, message, retried));
             }
             return out;
         } catch (IOException e) {

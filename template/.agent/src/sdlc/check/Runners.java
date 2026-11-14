@@ -97,7 +97,7 @@ public final class Runners {
         if (c.status() != JUnitXml.Status.FAILED) return c;
         String type = c.type().toLowerCase(java.util.Locale.ROOT);
         if (type.contains("assert") || type.contains("comparisonfailure") || type.contains("multiplefailures")) return c;
-        return new JUnitXml.Case(c.suite(), c.name(), JUnitXml.Status.ERRORED, c.type(), c.message());
+        return new JUnitXml.Case(c.suite(), c.name(), JUnitXml.Status.ERRORED, c.type(), c.message(), c.retried());
     }
 
     /**

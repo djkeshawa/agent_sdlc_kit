@@ -29,6 +29,12 @@ import sdlc.check.JUnitXml.Status;
  *   skip-later          not reported in the first run in that checkout; skipped in later ones
  *   pass-with WORD      passes where prod.txt holds the word; where it lacks it, the case does not exist (a row an enum of the code gives)
  *   pass-later          not reported in the first run in that checkout; passes in later ones (a source that gives another number of rows each time)
+ *   pass-without WORD   passes where prod.txt lacks the word; where it holds it, the case does not exist (a row the code no longer gives once it has the word)
+ *   gone-later WORD     where it holds the word, passes in the first run in that checkout and is not reported in later ones; else passes
+ *   fails-later WORD    where it holds the word, passes in the first run in that checkout and fails by assertion in later ones; else passes
+ *   pass-retried        failed, and passed when the build ran it again (Surefire's flakyFailure)
+ *   fail-retried        failed by assertion every time the build ran it (failure, then rerunFailure)
+ *   error-retried       threw every time the build ran it (error, then rerunError), as a set-up that fails does
  * A name is reported as a script's string would give it: \' is a quote. A name with %i in it is
  * reported twice, with 1 and with 2 in its place (it.each, a parameterized method). A line
  * without ": " is not a case: it stands for the test's body. A name is reported as it is written,
@@ -127,9 +133,13 @@ final class SelfTestRunner implements Runner {
                     if (how[0].equals("skip-later") && call == 1) continue; // a case a provider gives only from the second run on
                     if (how[0].equals("pass-later") && call == 1) continue;
                     if (how[0].equals("pass-with") && !has) continue; // a row the code gives only where it holds the word
+                    if (how[0].equals("pass-without") && has) continue; // a row the code no longer gives where it holds the word
+                    if (how[0].equals("gone-later") && has && call > 1) continue;
                     Status s = switch (how[0]) {
-                        case "pass", "pass-with", "pass-later" -> Status.PASSED;
-                        case "fail" -> Status.FAILED;
+                        case "pass", "pass-with", "pass-later", "pass-without", "gone-later", "pass-retried" -> Status.PASSED;
+                        case "fail", "fail-retried" -> Status.FAILED;
+                        case "error-retried" -> Status.ERRORED;
+                        case "fails-later" -> has && call > 1 ? Status.FAILED : Status.PASSED;
                         case "skip", "skip-without", "skip-later" -> Status.SKIPPED;
                         case "skip-once" -> has && call == 1 ? Status.SKIPPED : Status.PASSED; // with the word: skipped only the first time
                         case "skip-odd" -> has && call % 2 == 1 ? Status.SKIPPED : Status.PASSED; // with the word: skipped every other time, from the first
@@ -150,8 +160,10 @@ final class SelfTestRunner implements Runner {
                         suite = shown.substring(0, shown.indexOf("::"));
                         shown = shown.substring(shown.indexOf("::") + 2);
                     }
+                    boolean retried = how[0].endsWith("-retried");
                     for (String one : shown.contains("%i") ? List.of(shown.replace("%i", "1"), shown.replace("%i", "2")) : List.of(shown)) {
-                        cases.add(new JUnitXml.Case(suite, one, s, s == Status.ERRORED ? "java.lang.IllegalStateException" : s == Status.FAILED ? "AssertionError" : "", s == Status.FAILED ? "expected something else" : ""));
+                        cases.add(new JUnitXml.Case(suite, one, s, s == Status.ERRORED ? "java.lang.IllegalStateException" : s == Status.FAILED ? "AssertionError" : "",
+                                s == Status.FAILED ? "expected something else" : "", retried));
                     }
                 }
                 out.put(f, new FileRun(cases, null));

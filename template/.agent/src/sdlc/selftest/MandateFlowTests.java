@@ -159,6 +159,14 @@ final class MandateFlowTests {
         write(repo, "tests/fix.t", "fixed: fail\n");
         String failing = verdict();
         check("mandate: a failing scenario is violated", failing.contains("violated  scenarios found, ran and passed: 0 of 1") && code == 1);
+        // the build ran the scenario again: where it failed every time it failed, and where it passed only when run again it is not one result
+        write(repo, "tests/fix.t", "fixed: fail-retried\n");
+        String spent = verdict();
+        check("mandate: a scenario that failed every time the build ran it is violated", spent.contains("violated  scenarios found, ran and passed: 0 of 1") && code == 1);
+        write(repo, "tests/fix.t", "fixed: pass-retried\n");
+        String again = verdict();
+        check("mandate: a scenario that passed only when the build ran it again is unknown, not passed",
+                again.contains("unknown   scenarios found, ran and passed: 0 of 1") && again.contains("gave different results when the build ran it again"));
         // two tests whose names end alike are two tests, wherever a bracket stands in their names
         write(repo, "tests/fix.t", "one(a) > fixed: needs fixed\none(b) > fixed: needs fixed\n");
         String twoHomes = verdict();
