@@ -192,7 +192,7 @@ final class MandateVerdict {
     /** One test (name "" = the whole file) in one run: satisfied when found and passed, violated when it fails, else unknown. */
     private static State outcome(FileRun run, String path, String name) {
         if (run == null) return State.UNKNOWN;
-        if (run.problem() != null) return run.problem().contains(Witness.DOES_NOT_COMPILE) ? State.VIOLATED : State.UNKNOWN;
+        if (run.problem() != null) return run.broken() ? State.VIOLATED : State.UNKNOWN; // broken code is a failure; a missing tool or a timeout is not
         List<JUnitXml.Case> cases = cases(run, path, name);
         if (cases.isEmpty()) return State.UNKNOWN;
         if (cases.stream().anyMatch(c -> c.status() == Status.FAILED || c.status() == Status.ERRORED)) return State.VIOLATED;
