@@ -119,7 +119,7 @@ public final class Integrity {
      * that no name follows (in JavaScript #name is code).
      */
     static boolean seen(String line, Predicate<String> test) {
-        return test.test(code(line)) || !commentLine(line) && test.test(line);
+        return readings(line).stream().anyMatch(test);
     }
 
     static boolean commentLine(String line) {
@@ -129,10 +129,27 @@ public final class Integrity {
     }
 
     /** The ways a line is read: its code, and the line as it is written unless that is a comment or the same. */
+    /**
+     * The ways one line is read: its code (comments dropped, string insides emptied); and, unless
+     * the whole line is a comment, the line as written, the line with its block comments taken out
+     * without regard to quotes, and that line cut before each "//" on it. The last two are for a
+     * line whose quotes the masking cannot tell (a regular expression with a quote in it): there a
+     * comment written between the words of a switch (it, a comment, .skip), or after the first of
+     * them at the end of a line, would hide it from both the code and the line as written.
+     */
     private static List<String> readings(String line) {
-        String code = code(line);
-        return commentLine(line) || code.equals(line) ? List.of(code) : List.of(code, line);
+        Set<String> out = new LinkedHashSet<>();
+        out.add(code(line));
+        if (commentLine(line)) return List.copyOf(out);
+        out.add(line);
+        String open = BLOCK_COMMENT.matcher(line).replaceAll(" ");
+        out.add(open);
+        int cuts = 0;
+        for (int at = open.indexOf("//"); at >= 0 && cuts < 6; at = open.indexOf("//", at + 1), cuts++) out.add(open.substring(0, at));
+        return List.copyOf(out);
     }
+
+    private static final Pattern BLOCK_COMMENT = Pattern.compile("/\\*.*?\\*/");
 
     private static boolean lintedCode(String code) {
         return FOCUSED.matcher(code).find() || SCRIPT_SWITCH.matcher(code).find() || OTHER_SWITCH.matcher(code).find();

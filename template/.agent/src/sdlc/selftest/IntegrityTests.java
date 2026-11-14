@@ -356,6 +356,11 @@ final class IntegrityTests {
                 && Integrity.lintedSwitch("  * @Disabled until PAY-12") && Integrity.lintedSwitch("assertTrue(ok); // it.skip later"));
         check("integrity: a switch over two lines, with a quote in a regular expression on one and a comment between its words on the other, is found",
                 Integrity.lintedSwitches(List.of("const r = /'/; it", "/**/.skip('a', () => {})")).equals(List.of("const r = /'/; it /**/.skip('a', () => {})")));
+        check("integrity: a comment between the words of a switch does not hide it on a line whose quotes cannot be told",
+                Integrity.lintedSwitch("const r = /'/; it /* ' */ .skip('a', () => {})")
+                && Integrity.lintedSwitches(List.of("const r = /'\\//; it //'", ".skip('a', () => {})")).size() == 1
+                && Integrity.lintedSwitches(List.of("const r = /'/; it /* a */ // b", "  .skip('a', () => {})")).size() == 1
+                && !Integrity.lintedSwitch("const url = 'http://example.com/it'; expect(skip).toBe(1)"));
         check("integrity: an assumption with a matcher or a computed condition is not a switch",
                 Integrity.lintedSwitches(List.of("    Assume.assumeThat(false, is(false));", "    assumeTrue(ready(false));", "    @DisplayName(\"x\")")).isEmpty());
         // L1-1: an unconditional assumption put beside a conditional one is a line the change adds
