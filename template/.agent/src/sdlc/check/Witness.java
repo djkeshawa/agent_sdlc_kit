@@ -20,7 +20,7 @@ import sdlc.check.Runner.FileRun;
  *   old     the file as it was, on the code before the change (the base commit as it is); only
  *           for a file the change edits, as an added file has no earlier version
  *
- * and, only when a test is gone or may be switched off, a fourth way:
+ * and, only for an edited file whose list of tests changed, a fourth way:
  *
  *   old tests  the file as it was, on the code after the change (see fourth)
  *
@@ -315,10 +315,10 @@ final class Witness {
                 }
             }
         }
-        // the fourth run, where a test is gone or may be switched off: every old test of such a file that passed as it was
+        // the fourth run, for each edited file whose list of tests changed: every old test of such a file that passed as it was
         Map<String, Set<String>> wanted = new LinkedHashMap<>();
         for (Map.Entry<String, Names> e : named.entrySet()) {
-            if (e.getValue().gone().isEmpty() && !skips.containsKey(e.getKey())) continue;
+            if (!e.getValue().changed()) continue;
             Set<String> keys = new LinkedHashSet<>();
             for (JUnitXml.Case c : earlier.get(e.getKey()).cases()) if (c.status() == Status.PASSED) keys.add(key(c));
             if (!keys.isEmpty()) wanted.put(e.getKey(), keys);
@@ -390,9 +390,9 @@ final class Witness {
     private static final String WAVERED = "passed before the change, and as the test was, failed on the code after the change in one run and not in another";
 
     /**
-     * The fourth run: the edited test files that have a test gone, or whose skips may hide a test
-     * switched off (wanted: per file, the identities of the old tests that passed in the third
-     * run), as they were before the change, on the code after it. An old test that passed in the
+     * The fourth run: the edited test files whose list of tests changed (wanted: per file, the
+     * identities of the old tests that passed in the third run), as they were before the change,
+     * on the code after it. An old test that passed in the
      * third run (its file as it was, on the code as it was) and fails or throws here failed on what
      * the change wrote; what became of it decides what is said (see broken). Like a sensitive test
      * it must do so in every run, on both sides: else it wavered. With each repeat run the file is
@@ -409,6 +409,26 @@ final class Witness {
      * file that does not compile or load here (the change renamed what it used), or gives no
      * result, tells nothing: its tests stay as they were judged without it, and the report says
      * why (note).
+     *
+     * Which files: each edited file whose list of tests changed, in any way (Names.changed): a
+     * name it did not report, a name it no longer reports, or a name with more or fewer of its
+     * cases skipped. Not only where a test is gone or may be switched off: a file can lose a
+     * broken test while it grows, [a, b] to [b, d, c] named by place with a broken and c new
+     * and sensitive, and then nothing is gone, nothing is skipped and no count is short; here the
+     * old a fails under a name that still runs, which could not be judged, and is said.
+     *
+     * Not every edited file. Where a file reports the very same list as before (the same names,
+     * as many cases under each, as many of them skipped), no name of an old test that passed is
+     * gone or skipped now, so no old test can be said to be taken out of the way (B = 0, see
+     * broken): all this run could add is "an old test whose name still runs fails as it was on
+     * the change, so it may have been edited or replaced", could not be judged. That is exactly
+     * what it would say of every test whose expectation is changed under its own name, the
+     * ordinary way to change what a test expects: the line would stand on every such change,
+     * tell the two apart in none, and cost one more build of the module each time. So a test
+     * replaced by another under its name, in a file whose list of tests stayed the same (a broken
+     * row taken out and its name given to a new one; rows that change places; a test rewritten
+     * to expect something else), is not seen by the runs. The reports are the same as for a test
+     * edited in place; the guide says so among the limits.
      */
     private static Fourth fourth(Change change, Runner runner, Map<String, Earlier> earlier, Map<String, Set<String>> wanted, Sides sides, int runs, int timeout) {
         if (wanted.isEmpty()) return Fourth.NONE;
@@ -501,6 +521,11 @@ final class Witness {
     private record Names(List<JUnitXml.Case> gone, List<JUnitXml.Case> fresh, List<Flip> off, long on, List<Flip> asBefore, long r0, long s0, long r1, long s1, Map<String, String> shown) {
         List<JUnitXml.Case> freshSkipped() {
             return fresh.stream().filter(c -> c.status() == Status.SKIPPED).toList();
+        }
+
+        /** True when the file's list of tests changed: a name gone or fresh, or a name with more or fewer of its cases skipped (see fourth). */
+        boolean changed() {
+            return !gone.isEmpty() || !fresh.isEmpty() || !off.isEmpty() || on > 0;
         }
     }
 

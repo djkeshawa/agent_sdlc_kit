@@ -872,7 +872,18 @@ final class CheckTests {
         String mended = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: old tests kept under their names are not run as they were, and their old versions are not reported",
                 code == 0 && !mended.contains("out of the way") && mended.contains("7 tests that were already in the edited files pass before and after (not counted)"));
-        check("check: the fourth run is not made when no test is gone, switched off or run fewer times", Check.fourthCheckout(sdlc.check.Change.of(null)).equals("not made, head intact"));
+        write(repo, "tests/old.t", "kept: pass\n"); // the sensitive test of the fix, the other edited file, is a test that file did not have
+        check("check: the fourth run is not made when each edited file reports the same list of tests as before", Check.fourthCheckout(sdlc.check.Change.of(null)).equals("not made, head intact"));
+        write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\n");
+
+        // a row the change breaks taken out while the file grows: named by place, [a, b] to [b, d, c], with a broken, b and d passing on both sides and c
+        // sensitive. Nothing is gone or skipped and no count is short, but the list of names changed: the old a fails under a name that still runs
+        write(repo, "checks/broken.t", MENDED.replace("rows(int)[2]: pass", "rows(int)[2]: pass\nrows(int)[3]: needs fixed"));
+        String grown = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a broken row replaced while the file grows is not passed in silence: its old version fails under a name that still runs, could not be judged",
+                grown.contains("\n        holds, fragile, rows(int)[1], wobbly passed before the change and fail on the code after it as the file was. A test of each name still runs after the "
+                        + "change, so it cannot be told whether each was edited for the changed behaviour, or taken out and its name given to another case")
+                && grown.contains("\n        rows(int)[3]\n") && code == 0);
 
         // a test the change breaks, renamed to one that passes: the old one as it was fails on the change
         write(repo, "checks/broken.t", MENDED.replace("holds: pass", "kept up: pass"));
@@ -905,7 +916,7 @@ final class CheckTests {
         // two runners, each with a test gone: each runner's fourth checkout holds its own old files and no other runner's
         write(repo, "checks/side/both.t", SIDE.replace("goes: pass\n", ""));
         check("check: each runner runs its old tests in a fourth checkout of its own, with no other runner's old files in it",
-                Check.fourthCheckoutsApart(sdlc.check.Change.of(null), "checks/side/").equals("self test of checks/side/: checks/side/both.t; self test: checks/broken.t"));
+                Check.fourthCheckoutsApart(sdlc.check.Change.of(null), "checks/side/").equals("self test of checks/side/: checks/side/both.t; self test: checks/broken.t, tests/old.t"));
         write(repo, "checks/side/both.t", SIDE);
 
         // deleted: the same, said once, not also as removed
