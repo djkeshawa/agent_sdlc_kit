@@ -175,7 +175,8 @@ final class MandateFlowTests {
         check("mandate: a test that ran before the change and is skipped now violates the witness",
                 weakened.contains("violated  the change's own tests: 1 fails before it and passes after it") && weakened.contains("tests/other.t: the file runs 0 of its tests where it ran 2 before the change, and skips 1 where it skipped 0 (skipped now under a name that ran before: on): "
                         + "at least 1 test that ran does not run now") && code == 1);
-        check("mandate: and so does a test that is gone", weakened.contains("tests/other.t  goes: the file had it before the change, and it is gone"));
+        check("mandate: and so does a test that is gone, said of its file", weakened.contains("tests/other.t: the file no longer reports 1 test under the name it had (goes), and reports none "
+                + "under a name it did not have: at least 1 test was removed"));
         // one test gone and one new: a rename and a test deleted and another written look alike in the reports
         write(repo, "tests/other.t", "on: pass\nreturns: pass\n");
         String renamed = verdict();
