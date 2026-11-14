@@ -516,14 +516,13 @@ final class Witness {
             judged.clear();
         }
         // the one rule for tests that ran before and do not run now. spoke: files of which it says something (a row, or that all of it is said
-        // above, or by the fourth run's own line), whose skips and gone tests are then not said again; rowed: those of which it says a row of its own;
-        // deferred: those whose row the fourth run's own line says (see untold)
-        Set<String> spoke = new LinkedHashSet<>(), rowed = new LinkedHashSet<>(), deferred = new LinkedHashSet<>();
+        // above, or by the fourth run's own line), whose skips and gone tests are then not said again; rowed: those of which it says a row of its own
+        Set<String> spoke = new LinkedHashSet<>(), rowed = new LinkedHashSet<>();
         List<Verdict> lostRows = new ArrayList<>();
         for (Map.Entry<String, Names> e : named.entrySet()) {
             String f = e.getKey();
             Set<String> into = muted("lost") ? new LinkedHashSet<>() : spoke;
-            List<Verdict> l = lost(f, e.getValue(), seen, fourth, said.getOrDefault(f, 0L), wavered.getOrDefault(f, 0L), into, deferred, by);
+            List<Verdict> l = lost(f, e.getValue(), seen, fourth, said.getOrDefault(f, 0L), wavered.getOrDefault(f, 0L), into, by);
             if (muted("lost")) continue;
             if (!l.isEmpty()) rowed.add(f);
             lostRows.addAll(l);
@@ -552,7 +551,7 @@ final class Witness {
         }
         // the fourth run was asked for these files, and did not judge every old test: said of each such file, whatever else is said of it
         for (Map.Entry<String, Names> e : named.entrySet()) {
-            if (fourth.unclear().containsKey(e.getKey()) && !muted("untold")) out.add(fourth.untold(e.getKey(), shownIn.get(e.getKey()), deferred.contains(e.getKey()) ? Cover.LIST : Cover.NONE, by));
+            if (fourth.unclear().containsKey(e.getKey()) && !muted("untold")) out.add(fourth.untold(e.getKey(), shownIn.get(e.getKey()), by));
         }
         out.addAll(last);
         // every difference among the reports of each file that no verdict above answers for
@@ -672,10 +671,11 @@ final class Witness {
          * carry it. A file whose list grew while a test the change broke was taken out, [a, b] to
          * [b, d, c] named by place, has nothing gone, skipped or short; when its old version does
          * not compile or load on the code after the change, this is all that says that the old
-         * tests could not be judged. It answers for those old tests, and for the whole list where
-         * the rule of lost left its line to it (also: see lost).
+         * tests could not be judged. It answers for those old tests only: where the rule of lost
+         * leaves its line to this one (see lost), a test switched off or gone beside them is not
+         * named here, and is said by reconcile.
          */
-        Verdict untold(String file, Map<String, String> shown, Cover also, String by) {
+        Verdict untold(String file, Map<String, String> shown, String by) {
             List<String> keys = unclear.get(file);
             FileRun run = first.get(file);
             String problem = run == null ? "gave no result" : run.problem();
@@ -689,7 +689,7 @@ final class Witness {
             String code = problem != null ? "" : ", or, where it is not reported there, whether the change of the code, not of the tests, took " + (n == 1 ? "it" : "them")
                     + " away, as it does a row of a parameterized test whose source it shortened";
             return new Verdict(file, "", Kind.UNKNOWN, head + ", so it is not known whether the change broke " + which + " and took it out of the way or replaced it" + code, by, n,
-                    Cover.change(keys).and(also));
+                    Cover.change(keys));
         }
     }
 
@@ -1205,7 +1205,8 @@ final class Witness {
      *   r4 <= r1 in some pair: on the code after the change the file as it was runs no more tests
      *   than it does now, so the change of the code may have taken all of them: could not be
      *   judged, with the counts. Where the fourth run's own line says what it did not report
-     *   (see untold), that line says it, and this rule adds no line of its own.
+     *   (see untold), that line says it, and this rule adds no line of its own; what that line
+     *   does not name (a test switched off beside the rows the code took) is said by reconcile.
      *   No usable fourth run (the old file does not compile or load on the code after the change,
      *   timed out, or a failure stands in place of its tests: a case that failed or threw that is
      *   not one of its old tests): definite, with a sentence that says the old file could not be
@@ -1234,7 +1235,7 @@ final class Witness {
      * file's reports (see reconcile). The guide lists what moves the count: two tests merged into
      * one is one test that ran and does not run now, and is said so.
      */
-    private static List<Verdict> lost(String f, Names n, Seen seen, Fourth fourth, long t, long u, Set<String> spoke, Set<String> deferred, String by) {
+    private static List<Verdict> lost(String f, Names n, Seen seen, Fourth fourth, long t, long u, Set<String> spoke, String by) {
         List<FileRun> olds = seen.of(Side.OLD, f), afters = seen.of(Side.AFTER, f);
         List<FileRun> okOld = olds.stream().filter(Witness::gave).toList(), okAfter = afters.stream().filter(Witness::gave).toList();
         if (okOld.isEmpty() || okAfter.isEmpty()) return List.of();
@@ -1280,10 +1281,7 @@ final class Witness {
             String head = counts + ": at least " + total + (total == 1 ? " test that ran before the change does" : " tests that ran before the change do") + " not run now" + shows;
             if (why4 == null && r4 <= maxR1) {
                 // on the code after the change the file as it was runs no more tests than it does now: the change of the code may have taken all of them
-                if (fourth.unclear().containsKey(f)) {
-                    deferred.add(f);
-                    return List.of();
-                }
+                if (fourth.unclear().containsKey(f)) return List.of();
                 return List.of(new Verdict(f, "", Kind.UNKNOWN, head + ". But as it was, on the code after the change, the file runs " + r4 + ", no more than it runs now, so the change "
                         + "of the code, not of the tests, may have taken " + (total == 1 ? "it" : "them") + t4, by, (int) (total - t), Cover.FILE));
             }

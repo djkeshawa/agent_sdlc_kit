@@ -1569,6 +1569,13 @@ final class CheckTests {
         check("every difference: rows the code took, with the test file only edited, could not be judged, not tests lost by the change",
                 honest.contains("\n        the old tests could not all be judged on the code after the change: there the file as it was gave no clean "
                         + "result, passed or failed, for 3 of them") && !lostSaid(honest) && !honest.contains(NO_RULE) && code == 0);
+        // the same rows taken by the code, and the change of the tests switches off A and adds G: as many run on the code after the change as the file
+        // as it was runs there, so the fourth run's line speaks of B, C and D. It does not name A: A is said by the line for what no rule judged
+        write(repo, "checks/code.t", CODE.replace("A: pass", "A: skip") + "G: pass\n");
+        String offBeside = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("every difference: a test switched off beside rows the code took is named, though the fourth run's line speaks for the file's count",
+                offBeside.contains("\n        the old tests could not all be judged on the code after the change") && offBeside.contains("\n        the reports of this file as it was "
+                        + "and after the change differ in ways " + NO_RULE + ": A (as it was: passed; after the change: skipped).") && !lostSaid(offBeside) && code == 0);
         write(repo, "checks/code.t", CODE);
 
         // each rule says what it answers for: where it speaks, the line for what no rule judged does not; where it is made to say nothing, that line
