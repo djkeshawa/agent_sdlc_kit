@@ -169,7 +169,7 @@ final class IntegrityTests {
         write(repo, "web/sum.test.ts", SUM_TEST + "\nit('multiplies', () => {\n  const x = 2 * 2;\n});\n");
         List<Finding> empty = scan(repo);
         check("integrity: a new Java test with no assertion is a note that says appears", only(empty, Level.NOTE, "appears to assert nothing", "src/test/java/demo/CalcTest.java", "divides (new)"));
-        check("integrity: and a new script test", only(empty, Level.NOTE, "appears to assert nothing", "web/sum.test.ts", "multiplies (new)") && problems(empty) == 0);
+        check("integrity: a new script test is not read for its assertions: its run judges it", empty.stream().noneMatch(f -> f.path().equals("web/sum.test.ts")) && problems(empty) == 0);
         reset(repo);
 
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("    @Test\n    void subtracts", "    @Disabled\n    @Test\n    void subtracts"));
@@ -186,9 +186,22 @@ final class IntegrityTests {
         Files.delete(repo.resolve("web/sum.test.ts"));
         Files.delete(repo.resolve("src/test/resources/data.json"));
         List<Finding> deleted = scan(repo);
-        check("integrity: a deleted test file is a problem", only(deleted, Level.PROBLEM, "test file deleted", "web/sum.test.ts", "2 of its 2 test cases"));
+        check("integrity: a deleted test file is a problem", only(deleted, Level.PROBLEM, "test file deleted", "web/sum.test.ts", "the file is gone"));
         check("integrity: a deleted fixture beside the tests is only a note", only(deleted, Level.NOTE, "test support file deleted", "src/test/resources/data.json", "no test cases"));
         reset(repo);
+
+        // a script file under a test folder, named like no test: whether it held tests is linted from its lines
+        write(repo, "web/__tests__/cases.ts", "describe('sum', () => {\n  it('adds', () => { expect(1 + 1).toBe(2) })\n})\n");
+        write(repo, "web/__tests__/helpers.ts", "export const two = () => 2; // not it('x')\n");
+        git(repo, "add", "-A");
+        git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "script files in a test folder");
+        Files.delete(repo.resolve("web/__tests__/cases.ts"));
+        Files.delete(repo.resolve("web/__tests__/helpers.ts"));
+        List<Finding> goneScripts = scan(repo);
+        check("integrity: a deleted script file that calls describe or it is a test file deleted; one that does not is a support file",
+                only(goneScripts, Level.PROBLEM, "test file deleted", "web/__tests__/cases.ts", "the file is gone")
+                && only(goneScripts, Level.NOTE, "test support file deleted", "web/__tests__/helpers.ts", "no test cases"));
+        git(repo, "reset", "-q", "--hard", "HEAD~1");
 
         // a move is a deletion plus an addition: a note when the file, or every test case it had, is found again
         Files.move(repo.resolve("web/sum.test.ts"), repo.resolve("web/math.test.ts"));
@@ -261,14 +274,10 @@ final class IntegrityTests {
         git(repo, "add", "-A");
         git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a script test");
         write(repo, "src/app.test.ts", "it('new name', () => {\n  expect(1 + 1).toBe(2)\n})\n");
-        List<Finding> scriptRename = scan(repo);
-        check("integrity: a script test renamed with its body unchanged is a note", problems(scriptRename) == 0 && only(scriptRename, Level.NOTE, "test renamed", "src/app.test.ts", "old name is now new name"));
-        // a name a report reads differently from how the file writes it: the renamed test is still found by its body
+        check("integrity: a script test renamed is not read from the source: nothing is said (its run judges it)", scan(repo).isEmpty());
         write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\n");
         git(repo, "add", "-A");
         git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a name with a separator");
-        write(repo, "src/app.test.ts", "it('outer > new name', () => {\n  expect(1 + 1).toBe(2)\n})\n");
-        check("integrity: a renamed script test whose name holds ' > ' is a rename, not a removal", problems(scan(repo)) == 0 && count(scan(repo), "test renamed") == 1);
         // a switch that no single line shows
         write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\nit\n  .skip('later', () => {\n  expect(1).toBe(1)\n})\n");
         check("integrity: a script switch written over two lines is not seen by the line lint (the run of the file judges it)", count(scan(repo), "test switched off") == 0);
@@ -300,18 +309,13 @@ final class IntegrityTests {
         check("integrity: a skip on a line the change did not write is not reported again", count(scan(repo), "test switched off") == 0
                 && scan(repo).stream().noneMatch(f -> f.kind().equals("could not be read with confidence") || f.kind().equals("switch in a comment or a string")));
         git(repo, "reset", "-q", "--hard", "HEAD~2");
-        // two groups with a test of the same title: taking one group away takes a test away
+        // a test taken out of a script file: the reading does not say it; the run of the file does
         write(repo, "src/app.test.ts", "describe('A', () => {\n  it('works', () => { check(1) })\n})\ndescribe('B', () => {\n  it('works', () => { check(2) })\n})\n");
         git(repo, "add", "-A");
         git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "two groups");
         write(repo, "src/app.test.ts", "describe('A', () => {\n  it('works', () => { check(1) })\n})\n");
-        check("integrity: a test removed from one of two groups that share its title is a test removed", only(scan(repo), Level.PROBLEM, "test removed", "src/app.test.ts", "B > works"));
-        write(repo, "src/app.test.ts", "describe('A', () => {\n  it('works', () => { check(1) })\n})\ndescribe('B', () => {\n  it.each([[1, 2]])('adds %i', async (a, b) => {\n    expect(a + b).toBe(3)\n  })\n})\n");
-        git(repo, "add", "-A");
-        git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a table of cases");
-        write(repo, "src/app.test.ts", "describe('A', () => {\n  it('works', () => { check(1) })\n})\ndescribe('B', () => {\n  it.each([[1, 2]])('sums %i', async (a, b) => {\n    expect(a + b).toBe(3)\n  })\n})\n");
-        check("integrity: a test with a table of cases that is only renamed is a rename", problems(scan(repo)) == 0 && only(scan(repo), Level.NOTE, "test renamed", "src/app.test.ts", "adds %i is now sums %i"));
-        git(repo, "reset", "-q", "--hard", "HEAD~2");
+        check("integrity: a script test removed is not read from the source: nothing is said (its run judges it)", scan(repo).isEmpty());
+        git(repo, "reset", "-q", "--hard", "HEAD~1");
         // other test files are linted by the lines the change adds, as scripts are
         write(repo, "tests/test_calc.py", "import pytest\n\n@pytest.mark.skip(reason=\"later\")\ndef test_adds():\n    assert 1 + 1 == 2\n");
         check("integrity: a skip in a Python test file is found by the line lint", only(scan(repo), Level.PROBLEM, "test switched off", "tests/test_calc.py", "@pytest.mark.skip(reason="));
@@ -426,8 +430,6 @@ final class IntegrityTests {
         check("integrity: a test that gains @Disabled is still a declared test, and one that loses it is not a new one",
                 sdlc.check.TestNames.counts("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n}\n").equals(sdlc.check.TestNames.counts("ATest.java", "class ATest {\n  @Test void a() {}\n}\n"))
                 && sdlc.check.TestNames.counts("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n}\n").containsKey("a"));
-        check("integrity: a table of cases with an object type is read", sdlc.check.TestNames.counts("a.test.ts", "it.each<{input: number; expected: number}>(rows)('adds', checks);\n").containsKey("adds")
-                && sdlc.check.TestNames.namesBuiltAtRunTime("a.test.ts", "it.each<{input: number; expected: number}>(rows)('adds', checks);\n"));
         Config own = Ctx.cfg;
         Ctx.cfg = Config.parse("stack: node\ntests:\n  disabledPatterns: [\"testWithDb\\\\.skip\", \"\\\\b(it|test)\\\\.skip\\\\(\"]\n");
         try {

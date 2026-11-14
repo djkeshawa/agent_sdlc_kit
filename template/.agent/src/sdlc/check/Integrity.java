@@ -24,10 +24,14 @@ import sdlc.workflow.Checks;
  * Read from the diff alone; nothing is run. A PROBLEM is a fact the text makes certain. Anything
  * a simple reading can only guess at is a NOTE, and says "appears".
  *
+ * Which tests a file declares is read for Java alone, as an early warning where nothing is run.
+ * In a test file of another language only the lines a change adds are linted for switches; which
+ * of its tests are skipped, gone or new is read from its run (Witness).
+ *
  * A test file that moves shows as a deletion and an addition. It is reported as a NOTE ("test file
- * moved") when the same text, or every test case it declared, turns up in a file the change adds
- * or edits; otherwise its deletion is a PROBLEM. A test case that leaves one file for another is
- * treated the same way ("test moved").
+ * moved") when the same text, or every Java test case it declared, turns up in a file the change
+ * adds or edits; otherwise its deletion is a PROBLEM. A Java test case that leaves one file for
+ * another is treated the same way ("test moved").
  */
 public final class Integrity {
     private static final int MAX_DETAIL = 140;
@@ -117,7 +121,7 @@ public final class Integrity {
     private static List<Found> found(String path, String text) {
         List<Found> out = new ArrayList<>();
         if (text == null || !readWhole(path)) return out;
-        for (Declared.Item item : Declared.java(path, text)) {
+        for (Declared.Item item : Declared.java(text)) {
             for (String how : item.switches()) out.add(new Found(new Switch(how, item.where()), item.name(), item.test()));
         }
         return out;
@@ -129,13 +133,9 @@ public final class Integrity {
         return out;
     }
 
-    private static List<Declared.Item> declarations(String path, String text) {
-        return Code.isScript(path) ? Declared.script(path, text) : Declared.java(path, text);
-    }
-
     /** True when a Java file cannot be relied on for what stands where (see Declared.unsure). */
     public static boolean unsure(String path, String text) {
-        return text != null && isJava(path) && Declared.unsure(path, text);
+        return text != null && isJava(path) && Declared.unsure(text);
     }
 
     /**
@@ -192,7 +192,7 @@ public final class Integrity {
     public static List<String> switchesInText(String path, String text) {
         List<String> out = new ArrayList<>();
         if (text == null || !readWhole(path)) return out;
-        String code = Code.mask(path, text);
+        String code = Code.mask(text);
         Matcher m = OTHER_SWITCH.matcher(text);
         while (m.find()) if (!code.substring(m.start(), m.end()).equals(m.group())) out.add(m.group().replaceAll("\\s+", ""));
         return out;
@@ -475,29 +475,42 @@ public final class Integrity {
     /** One declared test: where it stands, what it is called, and its text without the title. */
     private record Case(String where, String title, String body) {}
 
-    /** The tests a file declares. For scripts and Java, read from the declarations; a title computed while the file runs is named by its expression. */
+    /**
+     * The tests a Java file declares, read from its declarations, each with its text after the
+     * name. Test files of other languages are not read for their tests (the self test's stand-in
+     * format excepted): their run says which tests they hold.
+     */
     private static List<Case> cases(String path, String text) {
         List<Case> out = new ArrayList<>();
         if (text == null) return out;
-        if (!(Code.isScript(path) || isJava(path))) {
-            for (String name : TestNames.declared(path, text)) out.add(new Case(name, name, null));
+        if (!isJava(path)) {
+            for (String name : TestNames.of(path, text)) out.add(new Case(name, name, null));
             return out;
         }
-        for (Declared.Item item : declarations(path, text)) {
+        for (Declared.Item item : Declared.java(text)) {
             if (!item.test()) continue;
             String body = null;
             if (!item.unsure() && item.end() <= text.length() && item.body() <= item.end()) {
-                if (isJava(path)) {
-                    int annotation = text.lastIndexOf("@Test", item.start());
-                    String head = annotation >= 0 && item.start() - annotation < 600 ? text.substring(annotation, item.start()) : ""; // JUnit 4: @Test(expected = ...)
-                    body = head + text.substring(item.body(), Math.min(text.length(), item.end() + 1));
-                } else {
-                    body = text.substring(item.body(), item.end());
-                }
+                int annotation = text.lastIndexOf("@Test", item.start());
+                String head = annotation >= 0 && item.start() - annotation < 600 ? text.substring(annotation, item.start()) : ""; // JUnit 4: @Test(expected = ...)
+                body = head + text.substring(item.body(), Math.min(text.length(), item.end() + 1));
             }
             out.add(new Case(item.where(), item.name(), body));
         }
         return out;
+    }
+
+    private static final Pattern TEST_CALL = Pattern.compile("\\b[xf]?(?:it|test|describe|context|suite)(?:\\s*\\.\\s*\\w+)*\\s*\\(|^\\s*(?:async\\s+)?def\\s+test|\\bfunc\\s+Test");
+
+    /**
+     * True when a test file of another language than Java looks like it declares tests: a line of
+     * its code calls it, test, describe or their kin, or defines a test function (Python, Go). A
+     * lint of lines: which tests the file held is not read.
+     */
+    private static boolean declaresTests(String path, String text) {
+        if (text == null || isJava(path)) return false;
+        for (String line : text.split("\\R")) if (TEST_CALL.matcher(code(line)).find()) return true;
+        return false;
     }
 
     /** The cases of one list that the other does not have, one for one, by where they stand. */
@@ -519,7 +532,7 @@ public final class Integrity {
                 continue;
             }
             List<Case> cases = cases(path, was);
-            if (cases.isEmpty() && !testNamed(path)) {
+            if (cases.isEmpty() && !testNamed(path) && !declaresTests(path, was)) {
                 note("test support file deleted", path, "it declares no test cases that a simple reading can find");
                 continue;
             }
@@ -749,12 +762,11 @@ public final class Integrity {
 
     private void emptyTests() {
         for (String path : change.paths("AM")) {
-            if (!isTestFile(path) || !(isJava(path) || isScript(path))) continue;
+            if (!isTestFile(path) || !isJava(path)) continue;
             List<Case> was = cases(path, before(path));
             for (Case c : cases(path, after(path))) {
                 String body = c.body();
                 if (body == null || asserts(path, body)) continue;
-                if (isScript(path) && !body.contains("=>") && !body.contains("function")) continue; // it.todo('x'): no body to read
                 // each old case answers for one new case: two tests of one name are two tests
                 Case old = was.stream().filter(w -> w.where().equals(c.where())).findFirst().orElse(null);
                 if (old != null) was.remove(old);

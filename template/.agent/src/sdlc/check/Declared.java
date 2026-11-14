@@ -9,199 +9,36 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The tests a source file declares, read from its code (comments and the insides of strings are
- * not code): each test and each group of tests with its title, the groups or classes it stands
- * in, and the switches on it that skip it, mark it as to do, or focus on it.
+ * The tests a Java source file declares, read from its code (comments and the insides of strings
+ * are not code): each class and each test method with the classes it stands in, and the switches
+ * on it that skip it.
  *
- * A test is known by where it stands and what it is called ("refunds > partial > rounds down",
- * "RefundsTest > Partial > roundsDown"), not by its title alone: two groups may each hold a test
- * of the same title.
+ * A test is known by where it stands and what it is called ("RefundsTest > Partial > roundsDown"),
+ * not by its name alone: two nested classes may each hold a test of the same name.
  *
  * Two rules keep a reading of tokens honest. A switch that is seen is never dropped: when the
- * declaration around it cannot be read, it is kept with what stands after it as its name. And
- * what could not be read to its end is marked unsure, so that callers do not build on it.
+ * declaration it stands on is no class or test method, it is kept under that declaration's own
+ * name. And what could not be read to its end is marked unsure, so that callers do not build on
+ * it. Test files of other languages are not read: their run says which tests they hold.
  */
 final class Declared {
     private Declared() {}
 
     /**
-     * One declaration. title is the value of a plain string title (escapes resolved), null when
-     * the title is computed while the file runs; computed then holds the expression as written.
-     * written is a plain title as the file spells it. home names the groups or classes around
-     * it, outermost first, joined by " > ". generated says the declaration makes several tests
-     * (it.each) or has a computed title. test is false for a group, and for a Java declaration
-     * that is no test but carries a switch. body starts after the title. unsure: its end could
-     * not be found, so its extent is a guess.
+     * One declaration: a class (group) or a method. home names the classes around it, outermost
+     * first, joined by " > ". test is false for a class, and for a declaration that is no test but
+     * carries a switch. body starts after its header. unsure: its end could not be found, so its
+     * extent is a guess.
      */
-    record Item(boolean group, boolean test, String title, String written, String computed, String home, Set<String> switches, boolean generated,
-            int start, int body, int end, boolean unsure) {
-        /** What it is called. A computed title reads "?(expression)". */
-        String name() {
-            return title != null ? title : "?" + (computed == null || computed.isEmpty() ? "" : "(" + computed + ")");
-        }
-
+    record Item(boolean group, boolean test, String name, String home, Set<String> switches, int start, int body, int end, boolean unsure) {
         /** Where it stands and what it is called. */
         String where() {
-            return home.isEmpty() ? name() : home + " > " + name();
+            return home.isEmpty() ? name : home + " > " + name;
         }
 
         Item at(String home) {
-            return new Item(group, test, title, written, computed, home, switches, generated, start, body, end, unsure);
+            return new Item(group, test, name, home, switches, start, body, end, unsure);
         }
-    }
-
-    private static final Pattern SCRIPT_HEAD = Pattern.compile("(?<![\\w$.])(describe|context|suite|it|test|xdescribe|xcontext|xit|xtest|fdescribe|fit)\\b");
-    private static final Set<String> SWITCHES = Set.of("skip", "todo", "only", "fixme");
-
-    /** The tests and groups of a script test file (describe, it, test and their members), in the order of the file. */
-    static List<Item> script(String path, String text) {
-        List<Item> out = new ArrayList<>();
-        if (text == null) return out;
-        String code = Code.mask(path, text);
-        int n = code.length();
-        Matcher m = SCRIPT_HEAD.matcher(code);
-        while (m.find()) {
-            String head = m.group(1);
-            Set<String> members = new LinkedHashSet<>();
-            int at = m.end();
-            // the members: it.concurrent.skip, with white space and line breaks around each dot
-            while (true) {
-                int dot = skipSpace(code, at);
-                if (dot >= n || code.charAt(dot) != '.') break;
-                int name = skipSpace(code, dot + 1);
-                int end = name;
-                while (end < n && (Character.isLetterOrDigit(code.charAt(end)) || code.charAt(end) == '_' || code.charAt(end) == '$')) end++;
-                if (end == name) break;
-                members.add(code.substring(name, end));
-                at = end;
-            }
-            Set<String> switches = new LinkedHashSet<>();
-            for (String s : members) if (SWITCHES.contains(s)) switches.add(s);
-            if (head.startsWith("x")) switches.add("skip");
-            if (head.equals("fit") || head.equals("fdescribe")) switches.add("only");
-            // a group: describe and its kin, also as a member (test.describe, test.describe.serial)
-            boolean group = head.endsWith("describe") || head.endsWith("context") || head.equals("suite") || members.contains("describe");
-            boolean table = members.contains("each") || members.contains("for");
-
-            // the calls: (title, body); for a table of cases (table)(title, body) or `table`(title, body); type arguments may stand before each
-            String title = null, written = null, computed = null;
-            boolean called = false, unsure = false;
-            int end = at, body = at;
-            for (int groups = 0; groups < 3; groups++) {
-                int open = typeArguments(code, skipSpace(code, end));
-                if (open < n && code.charAt(open) == '`' && table) {
-                    int close = code.indexOf('`', open + 1);
-                    if (close < 0) break;
-                    end = close + 1;
-                    continue;
-                }
-                if (open >= n || code.charAt(open) != '(') break;
-                called = true;
-                int close = Code.closing(code, open);
-                int first = skipSpace(code, open + 1);
-                char q = first < n ? code.charAt(first) : ' ';
-                boolean tableCall = table && groups == 0 && q != '"' && q != '\'' && q != '`';
-                if (tableCall && close >= 0) {
-                    end = close + 1; // the table; the call with the title follows
-                    continue;
-                }
-                // this is the call with the title
-                if (q == '"' || q == '\'' || q == '`') {
-                    int closing = code.indexOf(q, first + 1);
-                    int after = closing < 0 ? n : skipSpace(code, closing + 1);
-                    // plain when it is one string and nothing more: no ${...} in it, no sum of strings
-                    if (closing > first && !code.substring(first, closing).contains("${") && after < n && (code.charAt(after) == ',' || code.charAt(after) == ')')) {
-                        written = text.substring(first + 1, closing);
-                        title = TestNames.unescaped(written);
-                        body = closing + 1;
-                    }
-                }
-                if (title == null) {
-                    computed = expression(text, code, first);
-                    body = afterExpression(code, first); // after the title, whatever it is: a renamed variable is not another body
-                }
-                if (close < 0) unsure = true; // its end is somewhere the reader lost count of the brackets
-                end = close < 0 ? -1 : close + 1;
-                break;
-            }
-            if (!called) {
-                int next = skipSpace(code, at);
-                char c = next < n ? code.charAt(next) : ' ';
-                // the word used as a name (const it = ..., it => ...), not called: nothing is declared
-                if (switches.isEmpty() && c != '<' && c != '`') continue;
-                // something follows that this reading cannot follow to a call: kept, named by what stands there, and unsure
-                computed = expression(text, code, next);
-                unsure = true;
-                end = -1;
-                body = at;
-            }
-            out.add(new Item(group, !group, title, written, computed, "", switches, table || title == null, m.start(), body, end, unsure));
-        }
-        // an end that was not found: a test is taken to end where the next declaration starts, a group at the end of the file
-        List<Item> placed = new ArrayList<>();
-        for (int i = 0; i < out.size(); i++) {
-            Item item = out.get(i);
-            if (item.end() >= 0) {
-                placed.add(item);
-                continue;
-            }
-            int end = item.group() || i + 1 == out.size() ? n : out.get(i + 1).start();
-            placed.add(new Item(item.group(), item.test(), item.title(), item.written(), item.computed(), "", item.switches(), item.generated(), item.start(), item.body(), end, true));
-        }
-        return homes(placed);
-    }
-
-    /** The place after type arguments (<...>, balanced) that start here; the place itself when none do. */
-    private static int typeArguments(String code, int at) {
-        if (at >= code.length() || code.charAt(at) != '<') return at;
-        int depth = 0, braces = 0;
-        for (int i = at; i < Math.min(code.length(), at + 4000); i++) {
-            char c = code.charAt(i);
-            if (c == '{') braces++;
-            else if (c == '}') braces--;
-            else if (c == '<') depth++;
-            else if (c == '>' && i > 0 && code.charAt(i - 1) != '=' && --depth == 0) return skipSpace(code, i + 1);
-            else if (c == ';' && braces <= 0) break; // the end of a statement; inside braces it separates the members of an object type
-        }
-        return at;
-    }
-
-    /** The place after the expression that starts here: its comma or closing bracket, outside any brackets of its own. */
-    private static int afterExpression(String code, int from) {
-        int depth = 0, i = from;
-        for (; i < code.length(); i++) {
-            char c = code.charAt(i);
-            if (c == '(' || c == '[' || c == '{') depth++;
-            else if (c == ')' || c == ']' || c == '}') {
-                if (depth == 0) break;
-                depth--;
-            } else if (c == ',' && depth == 0) break;
-        }
-        return i;
-    }
-
-    /**
-     * An expression as the file writes it, up to the comma or bracket that ends it. White space
-     * outside its strings is taken out; inside them it stays, for 'case ' + n and 'case' + n are
-     * two titles.
-     */
-    static String expression(String text, String code, int from) {
-        int end = Math.min(afterExpression(code, from), Math.min(text.length(), from + 2000));
-        StringBuilder out = new StringBuilder();
-        char quote = 0;
-        for (int i = from; i < end; i++) {
-            char c = code.charAt(i);
-            if (quote != 0) {
-                out.append(text.charAt(i));
-                if (c == quote) quote = 0;
-            } else if (c == '"' || c == '\'' || c == '`') {
-                quote = c;
-                out.append(c);
-            } else if (!Character.isWhitespace(c)) {
-                out.append(text.charAt(i));
-            }
-        }
-        return out.toString();
     }
 
     private static final Pattern JAVA_TYPE = Pattern.compile("\\b(?:class|interface|record|enum)\\s+(\\w+)");
@@ -261,16 +98,16 @@ final class Declared {
      * method that returns a value, a field), it is kept under that declaration's own name. An
      * assumption that always fails belongs to the method it stands in, else to the class.
      */
-    static List<Item> java(String path, String text) {
+    static List<Item> java(String text) {
         List<Item> out = new ArrayList<>();
         if (text == null) return out;
-        String code = Code.mask(path, text);
+        String code = Code.mask(text);
         Matcher m = JAVA_TYPE.matcher(code);
         while (m.find()) {
             int open = code.indexOf('{', m.end());
             int close = open < 0 ? -1 : Code.closing(code, open);
             if (open < 0) continue;
-            out.add(new Item(true, false, m.group(1), m.group(1), null, "", new LinkedHashSet<>(), false, m.start(), open, close < 0 ? code.length() : close, close < 0));
+            out.add(new Item(true, false, m.group(1), "", new LinkedHashSet<>(), m.start(), open, close < 0 ? code.length() : close, close < 0));
         }
         m = JAVA_METHOD.matcher(code);
         while (m.find()) {
@@ -278,7 +115,7 @@ final class Declared {
             int open = paren < 0 ? m.end() : paren + 1;
             while (open < code.length() && code.charAt(open) != '{' && code.charAt(open) != ';') open++;
             int close = open < code.length() && code.charAt(open) == '{' ? Code.closing(code, open) : open;
-            out.add(new Item(false, false, m.group(1), m.group(1), null, "", new LinkedHashSet<>(), false, m.start(), Math.min(open, code.length()), close < 0 ? open : close, paren < 0 || close < 0));
+            out.add(new Item(false, false, m.group(1), "", new LinkedHashSet<>(), m.start(), Math.min(open, code.length()), close < 0 ? open : close, paren < 0 || close < 0));
         }
         out.sort(Comparator.comparingInt(Item::start));
         // by where each starts: a record that holds a set changes its hash when the set does, so the records themselves are no keys
@@ -301,7 +138,7 @@ final class Declared {
         for (Item item : out) {
             boolean test = tests.contains(item.start());
             if (item.group() || test || !item.switches().isEmpty()) {
-                kept.add(new Item(item.group(), test, item.title(), item.written(), null, "", item.switches(), false, item.start(), item.body(), item.end(), item.unsure()));
+                kept.add(new Item(item.group(), test, item.name(), "", item.switches(), item.start(), item.body(), item.end(), item.unsure()));
             }
         }
         kept.addAll(more);
@@ -334,14 +171,14 @@ final class Declared {
     }
 
     /** True when the file cannot be relied on for what stands where: its brackets do not pair up, or a declaration could not be read to its end. */
-    static boolean unsure(String path, String text) {
+    static boolean unsure(String text) {
         if (text == null) return false;
-        if (!Code.balanced(Code.mask(path, text))) return true;
-        return (Code.isScript(path) ? script(path, text) : java(path, text)).stream().anyMatch(Item::unsure);
+        if (!Code.balanced(Code.mask(text))) return true;
+        return java(text).stream().anyMatch(Item::unsure);
     }
 
     private static Item loose(List<Item> more, String name, int at) {
-        Item item = new Item(false, false, name, name, null, "", new LinkedHashSet<>(), false, at, at, at, false);
+        Item item = new Item(false, false, name, "", new LinkedHashSet<>(), at, at, at, false);
         more.add(item);
         return item;
     }
@@ -361,10 +198,5 @@ final class Declared {
             if (item.group()) open.add(placed);
         }
         return out;
-    }
-
-    private static int skipSpace(String code, int at) {
-        while (at < code.length() && Character.isWhitespace(code.charAt(at))) at++;
-        return at;
     }
 }
