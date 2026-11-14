@@ -209,6 +209,8 @@ final class MultiRepoTests {
         check("contracts: removed and added operations", d.stream().anyMatch(x -> x.kind().equals("removed") && x.operation().equals("GET /refunds/{id}"))
                 && d.stream().anyMatch(x -> x.kind().equals("added") && x.operation().equals("DELETE /refunds/{id}")));
         check("contracts: an unchanged spec has no changes", Contracts.diff(v1, Contracts.parse(OPENAPI)).isEmpty());
+        check("contracts: another name for a path parameter is not another operation",
+                Contracts.diff(v1, Contracts.parse(OPENAPI.replace("/orders/{orderId}/refunds", "/orders/{id}/refunds"))).isEmpty());
         check("contracts: operation names normalise", Contracts.normalize("post  /orders/{orderId}/refunds/").equals(Contracts.normalize("POST /orders/{id}/refunds")));
         check("contracts: called paths match templates", Contracts.pathMatches("/orders/{id}", "/orders/{orderId}") && Contracts.pathMatches("/orders/{id}", "/orders/42?x=1")
                 && !Contracts.pathMatches("/orders/{id}", "/orders/42/lines"));

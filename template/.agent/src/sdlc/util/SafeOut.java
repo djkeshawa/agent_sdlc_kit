@@ -9,8 +9,11 @@ import java.io.PrintStream;
  * break and a tab stay), invisible characters, and marks that turn the direction of text.
  */
 public final class SafeOut extends PrintStream {
+    private final PrintStream to;
+
     private SafeOut(PrintStream to) {
-        super(to, true, to.charset());
+        super(to, true); // only line ends and numbers go this way; text is handed to the stream below, which knows its own encoding
+        this.to = to;
     }
 
     public static PrintStream stream(PrintStream to) {
@@ -43,7 +46,8 @@ public final class SafeOut extends PrintStream {
     // println, printf, format and append all arrive at one of these
     @Override
     public void print(String s) {
-        super.print(clean(s));
+        flush();
+        to.print(clean(s));
     }
 
     @Override

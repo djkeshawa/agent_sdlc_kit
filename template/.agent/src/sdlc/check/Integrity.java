@@ -87,10 +87,52 @@ public final class Integrity {
             Pattern.compile("@([\\w$]+\\.)*(Disabled|DisabledIf\\w*|Ignore)\\b"),
             Pattern.compile("assume(True|That)\\s*\\(\\s*false\\s*\\)"),
             Pattern.compile("assumeFalse\\s*\\(\\s*true\\s*\\)"),
-            Pattern.compile("\\b(it|test|describe|context|suite)\\.(skip|todo)\\s*\\("),
+            Pattern.compile("\\b(it|test|describe|context|suite)(\\.\\w+)*\\.(skip|todo)\\b"), // also it.concurrent.skip, test.skip.each
             Pattern.compile("\\bx(it|test|describe|context)\\s*\\("),
             Pattern.compile("@pytest\\.mark\\.skip|@unittest\\.skip|\\bt\\.Skip(Now)?\\s*\\("));
-    private static final Pattern FOCUSED = Pattern.compile("\\b(it|test|describe|context|suite)\\.only\\s*\\(|\\bf(it|describe)\\s*\\(");
+    /**
+     * The same switches written with white space inside them, so that no single line shows them:
+     * a line break or a space around the dot (it\n.skip(...)), a space after the @ of an
+     * annotation. Looked for in a whole file, not line by line.
+     */
+    private static final List<Pattern> SPREAD = List.of(
+            Pattern.compile("\\b(?:it|test|describe|context|suite)(?:\\s*\\.\\s*\\w+)*?\\s*\\.\\s*(?:skip|todo|only)\\b"),
+            Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*)*(?:Disabled|DisabledIf\\w*|Ignore)\\b"));
+
+    /** A file's lines with comments dropped and strings emptied, one per line. */
+    private static String codeOf(String text) {
+        StringBuilder code = new StringBuilder();
+        for (String line : text.split("\\R", -1)) code.append(code(line)).append('\n');
+        return code.toString();
+    }
+
+    /**
+     * How many switches a file holds that a line-by-line reading does not see (the ones with
+     * white space inside). A change that raises this number has switched a test off or focused one.
+     */
+    public static int spreadSwitches(String text) {
+        if (text == null) return 0;
+        String code = codeOf(text);
+        int n = 0;
+        for (Pattern p : SPREAD) {
+            Matcher m = p.matcher(code);
+            while (m.find()) if (m.group().chars().anyMatch(Character::isWhitespace)) n++;
+        }
+        return n;
+    }
+
+    /** Every switch of a file: tests skipped, marked to do, or focused, however they are written. */
+    public static int switches(String text) {
+        if (text == null) return 0;
+        int n = spreadSwitches(text);
+        for (String line : codeOf(text).split("\n", -1)) {
+            n += count(FOCUSED, line);
+            for (Pattern p : SWITCHED_OFF) n += count(p, line);
+        }
+        return n;
+    }
+
+    private static final Pattern FOCUSED = Pattern.compile("\\b(it|test|describe|context|suite)(\\.\\w+)*\\.only\\b|\\bf(it|describe)\\s*\\(");
     private static final Pattern JAVA_ASSERT = Pattern.compile(
             "\\b(?:assert|verify)\\w*\\s*\\(|(?i:expect)\\w*\\s*\\(|\\.should\\w*\\s*\\(|\\bfail\\s*\\(|\\bassert\\s|\\bexpected\\s*=");
     private static final Pattern SCRIPT_ASSERT = Pattern.compile("\\bexpect(?:TypeOf)?\\s*[(.]|\\bassert\\w*\\s*[(.]|\\.should\\b|\\bshould\\s*\\(");
@@ -202,6 +244,12 @@ public final class Integrity {
                 String code = code(line);
                 if (FOCUSED.matcher(code).find() || SWITCHED_OFF.stream().anyMatch(p -> p.matcher(code).find())) switchedOff(e.getKey(), line.trim());
             }
+        }
+        // a switch written over more than one line, or with something between its parts, shows on no single line
+        for (String path : change.paths("AM")) {
+            if (!isTestFile(path)) continue;
+            int more = spreadSwitches(after(path)) - spreadSwitches(before(path));
+            if (more > 0) problem("test switched off", path, more + (more == 1 ? " test is" : " tests are") + " skipped or focused by a call written over more than one line (it, a line break, .skip)");
         }
     }
 
@@ -336,7 +384,7 @@ public final class Integrity {
                 note("test file moved", path, "the same file is now at " + twin);
                 continue;
             }
-            Set<String> names = TestNames.of(path, was);
+            Set<String> names = TestNames.declared(path, was);
             if (names.isEmpty() && !testNamed(path)) {
                 note("test support file deleted", path, "it declares no test cases that a simple reading can find");
                 continue;
@@ -357,8 +405,8 @@ public final class Integrity {
     private void removedTestCases() {
         for (String path : change.paths("M")) {
             if (!isTestFile(path)) continue;
-            Set<String> gone = new LinkedHashSet<>(TestNames.of(path, before(path)));
-            gone.removeAll(TestNames.of(path, after(path)));
+            Set<String> gone = new LinkedHashSet<>(TestNames.declared(path, before(path)));
+            gone.removeAll(TestNames.declared(path, after(path)));
             if (!gone.isEmpty()) lostCases.add(path);
             List<String> lost = new ArrayList<>();
             for (String name : gone) {
@@ -368,8 +416,8 @@ public final class Integrity {
             }
             if (lost.isEmpty()) continue;
             // a rename keeps the test's body under a new name; a new test with another body does not make up for one that is gone
-            Set<String> fresh = new LinkedHashSet<>(TestNames.of(path, after(path)));
-            fresh.removeAll(TestNames.of(path, before(path)));
+            Set<String> fresh = new LinkedHashSet<>(TestNames.declared(path, after(path)));
+            fresh.removeAll(TestNames.declared(path, before(path)));
             List<String> renamed = new ArrayList<>(), removed = new ArrayList<>();
             for (String name : lost) {
                 String was = squeezed(body(path, before(path), name));
@@ -399,8 +447,8 @@ public final class Integrity {
             gained = new TreeMap<>();
             for (String path : change.paths("AM")) {
                 if (!isTestFile(path)) continue;
-                Set<String> names = new LinkedHashSet<>(TestNames.of(path, after(path)));
-                names.removeAll(TestNames.of(path, before(path)));
+                Set<String> names = new LinkedHashSet<>(TestNames.declared(path, after(path)));
+                names.removeAll(TestNames.declared(path, before(path)));
                 gained.put(path, names);
             }
         }
@@ -567,8 +615,8 @@ public final class Integrity {
             if (!isTestFile(path) || !(isJava(path) || isScript(path))) continue;
             String now = after(path);
             String was = before(path);
-            Set<String> old = TestNames.of(path, was);
-            for (String name : TestNames.of(path, now)) {
+            Set<String> old = TestNames.declared(path, was);
+            for (String name : TestNames.declared(path, now)) {
                 String body = body(path, now, name);
                 if (body == null || asserts(path, body)) continue;
                 if (isScript(path) && !body.contains("=>") && !body.contains("function")) continue; // it.todo('x'): no body to read

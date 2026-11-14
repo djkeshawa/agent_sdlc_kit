@@ -113,7 +113,9 @@ alone) or *candidate-influenced* (the result of running the change's own build).
 Build files and runner configuration, for obligation 2: `pom.xml`, `.mvn/**`, `mvnw`,
 `mvnw.cmd`, `build.gradle*`, `settings.gradle*`, `gradle.properties`, `gradle/**`, `gradlew*`,
 `package.json`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`,
-`vitest.config.*`, `vitest.workspace.*`, `jest.config.*`, `tsconfig*.json`, at any depth.
+`pnpm-workspace.yaml`, `bun.lock`, `bun.lockb`, `.npmrc`, `.yarnrc*`, `vite.config.*`,
+`vitest.config.*`, `vitest.workspace.*`, `jest.config.*`, `babel.config.*`, `.babelrc*`,
+`tsconfig*.json`, at any depth.
 
 Exit code: 1 when scope is `OUTSIDE` or any obligation is `violated`; 0 otherwise. `unknown`
 and `AMENDED` do not fail the command; they are printed, and a policy outside this tool decides

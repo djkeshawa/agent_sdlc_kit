@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -121,7 +122,7 @@ public final class Runners {
             return path.contains("src/test/");
         }
 
-        /** What Maven prints when code does not compile. These lines are kept of an output of any size. */
+        /** What Maven prints when code does not compile. */
         private static final Pattern DOES_NOT_COMPILE = Pattern.compile("COMPILATION ERROR|Compilation failure");
 
         @Override
@@ -173,7 +174,12 @@ public final class Runners {
                         "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false"));
                 if (!within.isEmpty()) cmd.addAll(List.of("-pl", within, "-am"));
                 cmd.add("test");
-                Proc p = Proc.runBuild(checkout.resolve(root), Map.of(), timeoutSeconds, DOES_NOT_COMPILE, cmd.toArray(new String[0]));
+                // read from every line as it arrives: the kept text of a long output has no middle
+                java.util.concurrent.atomic.AtomicBoolean doesNotCompile = new java.util.concurrent.atomic.AtomicBoolean();
+                java.util.function.Consumer<String> seen = line -> {
+                    if (DOES_NOT_COMPILE.matcher(line).find()) doesNotCompile.set(true);
+                };
+                Proc p = Proc.runBuild(checkout.resolve(root), Map.of(), timeoutSeconds, seen, seen, cmd.toArray(new String[0]));
                 List<JUnitXml.Case> cases = new ArrayList<>();
                 String unreadable = null;
                 if (p.code() == 124) {
@@ -198,7 +204,7 @@ public final class Runners {
                     if (!mine.isEmpty()) out.put(f, new FileRun(mine, null));
                     else if (unreadable != null) out.put(f, FileRun.failed("its report cannot be read (" + unreadable + ")"));
                     else if (p.code() == 124) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
-                    else if (DOES_NOT_COMPILE.matcher(text).find()) out.put(f, FileRun.broken(Witness.DOES_NOT_COMPILE));
+                    else if (doesNotCompile.get()) out.put(f, FileRun.broken(Witness.DOES_NOT_COMPILE));
                     else if (p.code() == 127) out.put(f, FileRun.failed("Maven could not be started (" + tail(text, 1) + ")"));
                     else out.put(f, FileRun.failed("did not run (Maven exit " + p.code() + ": " + firstError(text) + ")"));
                 }
@@ -268,13 +274,28 @@ public final class Runners {
         private static final Pattern TEST_FILE = Pattern.compile(".*\\.(test|spec)\\.[cm]?[jt]sx?");
         private static final Pattern DID_NOT_LOAD = Pattern.compile("SyntaxError|Failed to load|Failed to resolve import|Cannot find module|Transform failed|Failed to parse source");
         /** True when vitest's output reports a load failure within a few lines of this file's name. */
-        private static boolean didNotLoad(String output, String file) {
-            String[] lines = output.split("\\R");
-            for (int i = 0; i < lines.length; i++) {
-                if (!lines[i].contains(file)) continue;
-                for (int k = i; k < Math.min(lines.length, i + 6); k++) if (DID_NOT_LOAD.matcher(lines[k]).find()) return true;
+        /**
+         * Reads one output stream of vitest line by line and notes the test files it says it could
+         * not load: a line that says so (DID_NOT_LOAD) on, or up to five lines after, a line that
+         * names the file. Another file's syntax error says nothing about this one.
+         */
+        private static final class LoadFailures implements java.util.function.Consumer<String> {
+            private final List<String> files;
+            private final Set<String> failed;
+            private final java.util.ArrayDeque<String> last = new java.util.ArrayDeque<>();
+
+            LoadFailures(List<String> files, Set<String> failed) {
+                this.files = files;
+                this.failed = failed;
             }
-            return false;
+
+            @Override
+            public void accept(String line) {
+                last.addLast(line);
+                if (last.size() > 6) last.removeFirst();
+                if (!DID_NOT_LOAD.matcher(line).find()) return;
+                for (String near : last) for (String f : files) if (near.contains(f)) failed.add(f);
+            }
         }
 
         private static final Pattern SUPPORT_DIR = Pattern.compile("(^|.*/)(__tests__|__mocks__|__fixtures__|__snapshots__|fixtures|tests?)/.*");
@@ -297,8 +318,6 @@ public final class Runners {
         /** Files that decide which packages are installed. Both sides run with the one installed set. */
         private static final Pattern PACKAGES = Pattern.compile("(^|.*/)(package\\.json|package-lock\\.json|npm-shrinkwrap\\.json|yarn\\.lock|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|bun\\.lockb?|\\.npmrc|\\.yarnrc(\\.yml)?|\\.pnpmfile\\.cjs)$");
 
-        /** The lines "did not load" is read from: the ones that say so, and the ones that name a test file. */
-        private static final Pattern LOAD_FAILURE_LINES = Pattern.compile(DID_NOT_LOAD.pattern() + "|\\.(test|spec)\\.[cm]?[jt]sx?");
         /** The parts of a package.json that decide what is installed. */
         private static final List<String> INSTALLS = List.of("dependencies", "devDependencies", "peerDependencies", "optionalDependencies", "bundledDependencies",
                 "bundleDependencies", "overrides", "resolutions", "workspaces", "pnpm", "packageManager");
@@ -344,13 +363,20 @@ public final class Runners {
             return out;
         }
 
-        /** True when the project's package.json names the package that the other package.json declares. */
+        /** True when the project's package.json lists, as a dependency, the package that the other package.json declares. */
         private static boolean namedBy(Path checkout, String project, Change change, String path) {
             try {
                 String text = change.after(path) != null ? change.after(path) : change.before(path);
                 String name = text == null ? "" : sdlc.util.Json.str(sdlc.util.Json.parse(text), "name");
                 if (name == null || name.isBlank()) return false;
-                return Files.readString(checkout.resolve(project).resolve("package.json")).contains("\"" + name + "\"");
+                Map<String, Object> mine = sdlc.util.Json.map(sdlc.util.Json.parse(Files.readString(checkout.resolve(project).resolve("package.json"))));
+                for (String list : List.of("dependencies", "devDependencies", "peerDependencies", "optionalDependencies")) {
+                    if (mine.get(list) instanceof Map<?, ?> packages && packages.containsKey(name)) return true;
+                }
+                for (String list : List.of("bundledDependencies", "bundleDependencies")) {
+                    if (mine.get(list) instanceof List<?> packages && packages.contains(name)) return true;
+                }
+                return false;
             } catch (IOException | RuntimeException e) {
                 return true; // not known: count it
             }
@@ -400,7 +426,8 @@ public final class Runners {
                         continue;
                     }
                     cmd.addAll(rel);
-                    Proc p = Proc.runBuild(project, Map.of("CI", "1"), timeoutSeconds, LOAD_FAILURE_LINES, cmd.toArray(new String[0]));
+                    Set<String> didNotLoad = java.util.concurrent.ConcurrentHashMap.newKeySet();
+                    Proc p = Proc.runBuild(project, Map.of("CI", "1"), timeoutSeconds, new LoadFailures(rel, didNotLoad), new LoadFailures(rel, didNotLoad), cmd.toArray(new String[0]));
                     List<JUnitXml.Case> cases = new ArrayList<>();
                     String unreadable = null;
                     if (p.code() == 124) {
@@ -423,7 +450,7 @@ public final class Runners {
                         // vitest gave this file no result. That is broken code only when vitest says it could not load the file;
                         // a worker that did not start, or a file its configuration leaves out, says nothing about the code.
                         // (and says so about this file: another file's syntax error says nothing about this one)
-                        else if (didNotLoad(p.out() + "\n" + p.err(), name)) out.put(f, FileRun.broken("did not load (vitest exit " + p.code() + ": " + tail(p.out() + "\n" + p.err(), 3).replaceAll("\\s+", " ") + ")"));
+                        else if (didNotLoad.contains(name)) out.put(f, FileRun.broken("did not load (vitest exit " + p.code() + ": " + tail(p.out() + "\n" + p.err(), 3).replaceAll("\\s+", " ") + ")"));
                         else out.put(f, FileRun.failed("gave no result (vitest exit " + p.code() + ": " + tail(p.out() + "\n" + p.err(), 3).replaceAll("\\s+", " ") + ")"));
                     }
                 } finally {

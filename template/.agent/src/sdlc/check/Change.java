@@ -153,6 +153,7 @@ public final class Change {
             String inherited = System.getenv("GIT_ALTERNATE_OBJECT_DIRECTORIES");
             Map<String, String> env = Map.of("GIT_INDEX_FILE", tmp.toString(), "GIT_OBJECT_DIRECTORY", mine,
                     "GIT_ALTERNATE_OBJECT_DIRECTORIES", repoObjects + (inherited == null || inherited.isBlank() ? "" : java.io.File.pathSeparator + inherited));
+            lookAtEveryFile(env);
             Proc add = Proc.runWithEnv(Ctx.root, env, null, 300, "git", "add", "-A", "--", ".");
             if (!add.ok()) throw new UsageException("cannot record the working tree (git add): " + add.err().strip());
             Proc tree = Proc.runWithEnv(Ctx.root, env, null, 120, "git", "write-tree");
@@ -169,6 +170,34 @@ public final class Change {
             } catch (IOException ignored) {
                 // a stray temp file
             }
+        }
+    }
+
+    /**
+     * Clears, in the copy of the index, the two flags that tell git not to look at a file
+     * (assume-unchanged, skip-worktree): with them set, an edit of that file would be missing from
+     * the snapshot. A file a sparse checkout leaves out (skip-worktree, and not on disk) keeps its
+     * flag: it is not deleted, it was never checked out.
+     */
+    private static void lookAtEveryFile(Map<String, String> env) {
+        Proc flagged = Proc.runWithEnv(Ctx.root, env, null, 120, "git", "ls-files", "-v", "-z");
+        if (!flagged.ok()) throw new UsageException("cannot record the working tree (git ls-files): " + flagged.err().strip());
+        StringBuilder clear = new StringBuilder();
+        for (String entry : flagged.out().split("\0")) {
+            if (entry.length() < 3) continue;
+            char tag = entry.charAt(0);
+            String path = entry.substring(2);
+            boolean skip = tag == 'S' || tag == 's';
+            boolean assumed = Character.isLowerCase(tag);
+            if (!skip && !assumed) continue;
+            if (skip && !Files.exists(Ctx.root.resolve(path), java.nio.file.LinkOption.NOFOLLOW_LINKS)) continue;
+            clear.append(path).append('\0');
+        }
+        if (clear.length() == 0) return;
+        // one flag per call: given both, git clears only the first
+        for (String flag : List.of("--no-assume-unchanged", "--no-skip-worktree")) {
+            Proc update = Proc.runWithEnv(Ctx.root, env, clear.toString(), 120, "git", "update-index", flag, "-z", "--stdin");
+            if (!update.ok()) throw new UsageException("cannot record the working tree (git update-index): " + update.err().strip());
         }
     }
 

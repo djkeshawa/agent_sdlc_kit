@@ -50,7 +50,8 @@ final class MandateVerdict {
 
     /** Files that decide how the tests are built and run. When one changed, no test result of this run can be relied on. */
     private static final Pattern BUILD = Pattern.compile("(.*/)?(pom\\.xml|mvnw|mvnw\\.cmd|build\\.gradle[^/]*|settings\\.gradle[^/]*|gradle\\.properties|gradlew[^/]*"
-            + "|package\\.json|package-lock\\.json|npm-shrinkwrap\\.json|yarn\\.lock|pnpm-lock\\.yaml|vitest\\.config\\.[^/]+|vitest\\.workspace\\.[^/]+|jest\\.config\\.[^/]+|tsconfig[^/]*\\.json)"
+            + "|package\\.json|package-lock\\.json|npm-shrinkwrap\\.json|yarn\\.lock|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|bun\\.lockb?|\\.npmrc|\\.yarnrc[^/]*"
+            + "|vite\\.config\\.[^/]+|vitest\\.config\\.[^/]+|vitest\\.workspace\\.[^/]+|jest\\.config\\.[^/]+|babel\\.config\\.[^/]+|\\.babelrc[^/]*|tsconfig[^/]*\\.json)"
             + "|(.*/)?(\\.mvn|gradle)/.*");
 
     static int run(Map<String, String> opt, List<Runner> runners, int runs, int timeout) {

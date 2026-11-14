@@ -181,7 +181,14 @@ public final class Checks {
         List<String> everyChange = Git.changed(base + "...HEAD");
         check(!testsMissing(files), "Main code changes come with test changes", passes, fails);
         Map<String, List<String>> added = Git.addedLines(Git.patch(base + "...HEAD"));
-        List<String> disabled = disabledTests(added);
+        List<String> disabled = new ArrayList<>(disabledTests(added));
+        // a switch that no added line shows (it, a line break, .skip; it.concurrent.skip): counted in the whole file, before and after
+        String branchPoint = Contracts.mergeBase(base);
+        for (String f : files) {
+            if (!Glob.any(Ctx.cfg.list("paths.test"), f) || disabled.stream().anyMatch(d -> d.startsWith(f + ": "))) continue;
+            int more = sdlc.check.Integrity.switches(Trusted.read("HEAD", f)) - sdlc.check.Integrity.switches(Trusted.read(branchPoint, f));
+            if (more > 0) disabled.add(f + ": " + more + " more skipped or focused than before");
+        }
         check(disabled.isEmpty(), "No test was disabled or focused" + (disabled.isEmpty() ? "" : ": " + disabled), passes, fails);
         List<String> secrets = secrets(added);
         check(secrets.isEmpty(), "No secrets added" + (secrets.isEmpty() ? "" : ": " + secrets), passes, fails);

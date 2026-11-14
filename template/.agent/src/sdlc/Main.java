@@ -122,17 +122,17 @@ public final class Main {
                 code = 3;
             }
         } catch (Http.ApiException e) {
-            System.err.println("Remote call failed: " + e.getMessage());
+            System.err.println(sdlc.util.SafeOut.clean("Remote call failed: " + e.getMessage()));
             code = 4;
         } catch (Throwable e) { // also StackOverflowError and OutOfMemoryError: a tool call built to crash the guard is refused
             if (guard) {
                 // fail closed: a broken guard must not wave tool calls through
                 code = Hooks.emit(Decision.deny("the guard failed (" + e + "). Ask a human to run: java .agent/Sdlc.java selftest"), hookFormat(args));
             } else if (hook) {
-                System.err.println("[sdlc] hook error (ignored): " + e);
+                System.err.println(sdlc.util.SafeOut.clean("[sdlc] hook error (ignored): " + e));
                 code = args[0].equals("git-hook") ? 1 : 0;
             } else {
-                System.err.println("error: " + e);
+                System.err.println(sdlc.util.SafeOut.clean("error: " + e));
                 code = 3;
             }
         }

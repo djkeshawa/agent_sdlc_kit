@@ -157,6 +157,15 @@ final class MandateTests {
         rule("mandate: a character with no width is refused in a path", EXAMPLE.replace("src/main/java/com/acme/search/**", "src/main/java/com/acme/sea\\u200brch/**"), "has a control character");
         check("names: a script test declared under a name a report would read the same way is counted with it",
                 sdlc.check.TestNames.counts("a.test.ts", "it('kept', () => {});\nit('outer > kept', () => {});\n").getOrDefault("kept", 0) == 2);
+        check("names: an escaped quote in a script test's name is read as the report gives it",
+                sdlc.check.TestNames.counts("a.test.ts", "it('doesn\\'t fail', () => {});\n").containsKey("doesn't fail")
+                && sdlc.check.TestNames.declared("a.test.ts", "it('doesn\\'t fail', () => {});\n").contains("doesn\\'t fail"));
+        check("names: a file that builds test names while it runs is known as one",
+                sdlc.check.TestNames.namesBuiltAtRunTime("a.test.ts", "it.each([1, 2])('adds %i', (n) => {});\n")
+                && sdlc.check.TestNames.namesBuiltAtRunTime("a.test.ts", "it(`adds ${n}`, () => {});\n")
+                && sdlc.check.TestNames.namesBuiltAtRunTime("a.test.ts", "it(name, () => {});\n")
+                && sdlc.check.TestNames.namesBuiltAtRunTime("a.test.ts", "it('adds ' + n, () => {});\n")
+                && !sdlc.check.TestNames.namesBuiltAtRunTime("a.test.ts", "it('adds', () => {});\nit(`plain`, async () => {});\ntest.skip('later', () => {});\n"));
         check("mandate: such characters in other text (a file name, a name from git) are shown as a question mark",
                 sdlc.mandate.MandateCard.safe("a\u202eb\u200bc\u001bd\ud83d\ude00").equals("a?b?c?d\ud83d\ude00"));
         rule("mandate: a path with a sign that is not a wildcard of the format is refused", EXAMPLE.replace("src/main/java/com/acme/search/**", "src/main/{java,kotlin}/**"), "only * and ** are");

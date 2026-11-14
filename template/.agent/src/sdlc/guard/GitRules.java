@@ -135,6 +135,13 @@ final class GitRules {
         boolean read = first.equals("get") || first.equals("list") || rest.stream().anyMatch(a -> a.equals("--get") || a.equals("--list") || a.equals("-l") || a.equals("--get-all") || a.equals("--get-regexp"));
         boolean unset = first.equals("unset") || rest.stream().anyMatch(a -> a.startsWith("--unset"));
         if (rest.stream().anyMatch(a -> a.equals("--global") || a.equals("--system"))) return read ? Decision.allow() : Decision.deny("changes git settings outside this repository.");
+        // a whole section at once takes its protected keys with it (core.hooksPath lives in [core]); an editor can write anything
+        if (first.equals("remove-section") || first.equals("rename-section") || rest.stream().anyMatch(a -> a.equals("--remove-section") || a.equals("--rename-section"))) {
+            return Decision.deny("removes or renames a whole section of git settings, protected keys included. Change single keys instead.");
+        }
+        if (first.equals("edit") || rest.stream().anyMatch(a -> a.equals("-e") || a.equals("--edit"))) {
+            return Decision.deny("opens git settings in an editor, where the guard cannot see what is written. Set single keys instead.");
+        }
         for (int i = 0; i < rest.size(); i++) {
             String a = rest.get(i);
             String k = a.toLowerCase(Locale.ROOT);

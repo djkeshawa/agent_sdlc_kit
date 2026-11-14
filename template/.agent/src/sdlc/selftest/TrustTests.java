@@ -217,6 +217,15 @@ final class TrustTests {
         Checks.Result binary = Checks.prPolicy(null, false);
         check("trust: lines of a file the pull request marks as binary are still scanned", binary.fails().stream().anyMatch(f -> f.contains("No test was disabled or focused")));
 
+        // the same, written so that no added line shows it
+        git(repo, "switch", "-q", "-c", "feature/PROJ-15-spread", "origin/main");
+        write(repo, "src/test/java/web.test.ts", "it\n  .skip('later', () => {})\n");
+        write(repo, "src/main/java/A.java", "class A { int c; }\n");
+        commit(repo, "feat(PROJ-15): switch a test off over two lines");
+        Ctx.init(repo);
+        check("trust: a test switched off by a call written over two lines is still found",
+                Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No test was disabled or focused") && f.contains("web.test.ts")));
+
         // a branch with no commit in common with the base: every diff would be empty or fail
         git(repo, "switch", "-q", "--orphan", "feature/PROJ-13-orphan");
         write(repo, "src/main/java/A.java", "class A { int o; }\n");

@@ -404,6 +404,11 @@ final class JavaGuardTests {
         expect("git push --force-with-lea", shell("git push --force-with-lea origin feature/PROJ-1-x"), Decision.Kind.DENY);
         expect("git push --tag", shell("git push --tag origin feature/PROJ-1-x"), Decision.Kind.DENY);
         expect("write .git/config", shell("echo '[core] hooksPath=/dev/null' >> .git/config"), Decision.Kind.DENY);
+        expect("git config: remove a whole section", shell("git config --remove-section core"), Decision.Kind.DENY);
+        expect("git config: rename a whole section", shell("git config rename-section core gone"), Decision.Kind.DENY);
+        expect("git config: the editor", shell("git config -e"), Decision.Kind.DENY);
+        expect("git config: the editor, as a subcommand", shell("git config edit"), Decision.Kind.DENY);
+        expect("git config: reading stays allowed", shell("git config --get core.autocrlf"), Decision.Kind.ALLOW);
         expect("gh api -XPUT", shell("gh api -XPUT repos/o/r/x"), Decision.Kind.DENY);
         expect("gh api --field=", shell("gh api repos/o/r/issues --field=title=x"), Decision.Kind.DENY);
         expect("gh api -fkey=", shell("gh api repos/o/r/issues -ftitle=x"), Decision.Kind.DENY);

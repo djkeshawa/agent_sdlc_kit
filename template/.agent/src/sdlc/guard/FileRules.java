@@ -338,7 +338,9 @@ public final class FileRules {
         try {
             Path abs = g.root.resolve(rel).normalize();
             for (Path git : gitFolders()) {
-                if (abs.startsWith(git) && !abs.equals(git)) return ".git/" + git.relativize(abs).toString().replace('\\', '/');
+                // the folder itself, and any folder that holds it: a copy or a move of a whole tree writes what is inside
+                if (abs.equals(git) || git.startsWith(abs)) return ".git";
+                if (abs.startsWith(git)) return ".git/" + git.relativize(abs).toString().replace('\\', '/');
             }
         } catch (RuntimeException e) {
             // not a path: it names nothing in the git folder

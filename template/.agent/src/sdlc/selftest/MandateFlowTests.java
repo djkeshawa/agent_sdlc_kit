@@ -146,6 +146,10 @@ final class MandateFlowTests {
                 build.contains("violated  build files and test configuration are unchanged") && build.contains("tests/package.json")
                 && build.contains("unknown   scenarios found, ran and passed") && build.contains("the build changed, so no test result of this run can be relied on") && code == 1);
         Files.delete(repo.resolve("tests/package.json"));
+        write(repo, "web/vite.config.ts", "export default {}\n");
+        check("mandate: the configuration vitest reads by default is a build file too", verdict().contains("violated  build files and test configuration are unchanged"));
+        Files.delete(repo.resolve("web/vite.config.ts"));
+        Files.delete(repo.resolve("web"));
 
         // a scenario that fails, and one that is not there
         write(repo, "tests/fix.t", "fixed: fail\n");
@@ -290,6 +294,9 @@ final class MandateFlowTests {
             check("guard: and to the worktree's own git configuration", Asserts.shell("echo '[core] hooksPath=/tmp/none' > " + store.getParent().getParent().resolve("config.worktree")).denied());
             check("guard: and to the files that say where the git folder is", Asserts.shell("echo 'gitdir: /tmp/other' > .git").denied()
                     && Asserts.shell("echo /tmp/other > " + store.getParent().getParent().resolve("commondir")).denied());
+            Path shared = hook.getParent().getParent();
+            check("guard: a copy of a tree onto the git folder itself is refused", Asserts.shell("cp -R prepared/. " + shared).denied() && Asserts.shell("mv " + shared + " " + shared + "-old").denied());
+            check("guard: and onto a folder that holds it", Asserts.shell("cp -R prepared/. " + shared.getParent()).denied());
             check("guard: other files outside the checkout are judged as before", !Asserts.shell("echo x > " + linked.getParent().resolve("sdlc-elsewhere-note.txt")).denied());
         } finally {
             Ctx.init(repo);

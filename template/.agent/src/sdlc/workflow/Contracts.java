@@ -188,13 +188,56 @@ public final class Contracts {
 
     // ---------------- diff ----------------
 
+    /** Operation keys by what they mean (normalize). Two keys of one spec that mean the same stay apart under their own names. */
+    private static Map<String, String> canonical(Set<String> keys) {
+        Map<String, String> out = new LinkedHashMap<>();
+        Set<String> twice = new LinkedHashSet<>();
+        for (String key : keys) if (out.put(normalize(key), key) != null) twice.add(normalize(key));
+        for (String t : twice) out.remove(t);
+        for (String key : keys) if (twice.contains(normalize(key))) out.put(key, key);
+        return out;
+    }
+
+    private static final java.util.regex.Pattern PLACEHOLDER = java.util.regex.Pattern.compile("\\{([^}/]*)\\}");
+
+    /** The old operation with its path parameters named as the new path template names them, position by position. */
+    private static Op renamed(Op a, String wasKey, String nowKey) {
+        List<String> was = new ArrayList<>(), now = new ArrayList<>();
+        java.util.regex.Matcher m = PLACEHOLDER.matcher(wasKey);
+        while (m.find()) was.add(m.group(1));
+        m = PLACEHOLDER.matcher(nowKey);
+        while (m.find()) now.add(m.group(1));
+        if (was.size() != now.size() || was.equals(now)) return a;
+        Map<String, String> names = new LinkedHashMap<>();
+        for (int i = 0; i < was.size(); i++) names.put("path:" + was.get(i), "path:" + now.get(i));
+        java.util.function.UnaryOperator<String> rename = entry -> {
+            for (Map.Entry<String, String> e : names.entrySet()) {
+                if (entry.equals(e.getKey())) return e.getValue();
+                if (entry.startsWith(e.getKey() + ".")) return e.getValue() + entry.substring(e.getKey().length());
+            }
+            return entry;
+        };
+        Set<String> required = new LinkedHashSet<>();
+        for (String r : a.requiredRequest()) required.add(rename.apply(r));
+        Map<String, String> types = new LinkedHashMap<>();
+        a.requestTypes().forEach((k, v) -> types.put(rename.apply(k), v));
+        Map<String, Set<String>> enums = new LinkedHashMap<>();
+        a.requestEnums().forEach((k, v) -> enums.put(rename.apply(k), v));
+        return new Op(a.responses(), required, types, enums, a.responseTypes(), a.responseEnums());
+    }
+
     /** What changed from the old spec to the new one. */
     public static List<Change> diff(Spec before, Spec after) {
         List<Change> out = new ArrayList<>();
-        Set<String> all = new LinkedHashSet<>(before.operations().keySet());
-        all.addAll(after.operations().keySet());
-        for (String key : all) {
-            Op a = before.operations().get(key), b = after.operations().get(key);
+        // "GET /orders/{id}" and "GET /orders/{orderId}" are one operation: the name of a path parameter is not part of it
+        Map<String, String> wasNamed = canonical(before.operations().keySet()), nowNamed = canonical(after.operations().keySet());
+        Set<String> all = new LinkedHashSet<>(wasNamed.keySet());
+        all.addAll(nowNamed.keySet());
+        for (String op : all) {
+            String key = nowNamed.containsKey(op) ? nowNamed.get(op) : wasNamed.get(op);
+            Op a = wasNamed.containsKey(op) ? before.operations().get(wasNamed.get(op)) : null;
+            Op b = nowNamed.containsKey(op) ? after.operations().get(nowNamed.get(op)) : null;
+            if (a != null && b != null) a = renamed(a, wasNamed.get(op), nowNamed.get(op));
             if (a == null) {
                 out.add(new Change(key, "added", "new"));
                 continue;

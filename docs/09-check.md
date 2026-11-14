@@ -141,17 +141,27 @@ Claude Code, in `.claude/settings.json`:
   the change: otherwise its failure before the change may come from another changed test file.
   For Maven the compiled tests of the module are removed before each such run, so a test file
   that was taken away is not still there as a class.
-- A test file whose name or folder has unusual characters (a comma, a space, a leading dash) is
-  not run: such names could be read as options by Maven or Vitest.
+- A test file that cannot be named safely on a command line is not run. For Maven: a class
+  name or module folder with a character outside letters, digits, `_`, `$`, `.`, `/` and `-`
+  (a comma or a space would be read as a list or an option). For Vitest: a file name that
+  starts with a dash.
 - For Vitest both sides run with the packages installed now. When the change touches what the
   test's project has installed, a test that passes on both sides is reported as "could not be
   judged", not as a test that proves nothing. That is: a lock file or a package manager's
   settings in the project's folder or above it, or a `package.json` there (or of a package the
   project depends on) whose lists of packages changed. A new script in `package.json`, or a
   package file elsewhere in the repository, does not count.
-- The output of a build is kept only at its start and its end (2 MB each); what lies between is
-  dropped, except the lines that say the code did not compile or load. An answer of git larger
-  than 64 MB stops the check with an error.
+- The output of a build is kept only at its start and its end (2 MB each) for the messages of
+  the report. Whether the code compiled or loaded is read from every line as it arrives, so it
+  does not depend on what is kept. An answer of git larger than 64 MB stops the check with an
+  error.
+- The change is the working tree as it is on disk. Flags that tell git not to look at a file
+  (`assume-unchanged`, `skip-worktree`) are not honoured, except for files a sparse checkout
+  leaves out.
+- A script test file that builds test names while it runs (`it.each`, a template with `${...}`,
+  a variable as the name): a test of such a file that passes on both sides and is not declared
+  by a plain name is "could not be judged", because it cannot be read from the file whether it
+  is new.
 - In a pull request build the base branch must be fetched, with enough history to reach the
   commit the branch started from. Otherwise the check stops with an error.
 - Names of test cases are matched by simple reading of the file. A test shown under another

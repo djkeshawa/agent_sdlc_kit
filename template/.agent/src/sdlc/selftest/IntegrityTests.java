@@ -263,7 +263,20 @@ final class IntegrityTests {
         write(repo, "src/app.test.ts", "it('new name', () => {\n  expect(1 + 1).toBe(2)\n})\n");
         List<Finding> scriptRename = scan(repo);
         check("integrity: a script test renamed with its body unchanged is a note", problems(scriptRename) == 0 && only(scriptRename, Level.NOTE, "test renamed", "src/app.test.ts", "old name is now new name"));
-        git(repo, "reset", "-q", "--hard", "HEAD~1");
+        // a name a report reads differently from how the file writes it: the renamed test is still found by its body
+        write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\n");
+        git(repo, "add", "-A");
+        git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a name with a separator");
+        write(repo, "src/app.test.ts", "it('outer > new name', () => {\n  expect(1 + 1).toBe(2)\n})\n");
+        check("integrity: a renamed script test whose name holds ' > ' is a rename, not a removal", problems(scan(repo)) == 0 && count(scan(repo), "test renamed") == 1);
+        // a switch that no single line shows
+        write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\nit\n  .skip('later', () => {\n  expect(1).toBe(1)\n})\n");
+        check("integrity: it and .skip on two lines is a test switched off", count(scan(repo), "test switched off") == 1);
+        write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\nit.concurrent.skip('later', () => {\n  expect(1).toBe(1)\n})\n");
+        check("integrity: it.concurrent.skip is a test switched off", count(scan(repo), "test switched off") == 1);
+        write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\n// it\n//   .skip('in a comment')\nconst s = 'it .skip(';\n");
+        check("integrity: the same words in a comment or a string switch nothing off", problems(scan(repo)) == 0);
+        git(repo, "reset", "-q", "--hard", "HEAD~2");
         reset(repo);
         write(repo, "package.json", "{\"scripts\": {\"test\": \"vitest run" + " ".repeat(20000) + "|| true\"}}\n");
         long started = System.nanoTime();

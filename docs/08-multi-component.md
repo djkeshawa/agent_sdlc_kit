@@ -177,7 +177,7 @@ hand). Locking again keeps the earlier files and updates the hashes. With
 | No agent edits a locked test (edit tools and shell writes) | agent hooks |
 | A commit that changes or deletes a locked test is refused | pre-commit |
 | `verify` refuses while a locked test differs from its lock | verify |
-| FAIL when a locked test differs, or when a lock the base branch has is removed or changed (read from the base, not from the PR); a pull request with only lock files and their tests gets a WARN instead, for QE review | PR gate, `check-pr` in CI |
+| FAIL when a locked test differs, or when a lock the base branch has is removed or changed (read from the base, not from the PR). A pull request with only lock files and their tests may lock a test again with new content: a WARN, for QE review. Removing a lock always fails, unless the pipeline names the story in `SDLC_LOCKS_REMOVABLE` | PR gate, `check-pr` in CI |
 | QE reviews lock changes | CODEOWNERS on `docs/test-locks/` |
 
 The check is on the file's content, not on who changed it, so it holds in every coding tool.
