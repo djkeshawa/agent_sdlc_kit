@@ -50,7 +50,7 @@ public final class Check {
         } else {
             failed |= section(out, w, Kind.FAILS_AFTER, n -> n + (n == 1 ? " fails" : " fail") + " after the change", true);
             failed |= section(out, w, Kind.OLD_FAILS_AFTER, n -> n + (n == 1 ? " test passed before the change and fails" : " tests passed before the change and fail")
-                    + " on the code after it as the test was, and the change took " + (n == 1 ? "it" : "them") + " out of the way: removed, renamed, switched off or run fewer times", true);
+                    + " on the code after it as the test was, and the change took " + (n == 1 ? "it" : "them") + " out of the way: removed, renamed or switched off", true);
             section(out, w, Kind.SENSITIVE, n -> n + (n == 1 ? " fails" : " fail") + " before the change and " + (n == 1 ? "passes" : "pass") + " after it"
                     + (w.runs() > 1 ? ", in " + w.runs() + " of " + w.runs() + " runs" : ""), false);
             failed |= section(out, w, Kind.PASSES_ON_BOTH, n -> n + (n == 1 ? " new test passes" : " new tests pass") + " before and after, so "
@@ -183,7 +183,7 @@ public final class Check {
                     else if (v.kind() == Kind.REMOVED) out.println("        removed: " + which);
                     else if (v.kind() == Kind.OLD_FAILS_AFTER) out.println("        passed before, fails as it was after, taken out: " + which);
                 }
-                for (Kind k : List.of(Kind.PASSES_ON_BOTH, Kind.SKIPPED_NOW, Kind.REMOVED)) if (w.atLeast(k)) least.add(k);
+                for (Kind k : List.of(Kind.PASSES_ON_BOTH, Kind.SKIPPED_NOW, Kind.REMOVED, Kind.OLD_FAILS_AFTER)) if (w.atLeast(k)) least.add(k);
                 sensitive += w.count(Kind.SENSITIVE);
                 both += w.count(Kind.PASSES_ON_BOTH);
                 failing += w.count(Kind.FAILS_AFTER);
@@ -208,7 +208,7 @@ public final class Check {
             out.println("  " + unknown + " could not be judged; " + failing + " fail after their commit");
             out.println("  " + (least.contains(Kind.SKIPPED_NOW) ? "at least " : "") + switchedOff + (switchedOff == 1 ? " test ran" : " tests ran") + " before its commit and "
                     + (switchedOff == 1 ? "is" : "are") + " skipped after it; " + (least.contains(Kind.REMOVED) ? "at least " : "") + removed + (removed == 1 ? " test was" : " tests were") + " removed");
-            out.println("  " + takenAway + (takenAway == 1 ? " test passed before its commit, fails on it as it was, and was" : " tests passed before their commit, fail on it as they were, and were")
+            out.println("  " + (least.contains(Kind.OLD_FAILS_AFTER) ? "at least " : "") + takenAway + (takenAway == 1 ? " test passed before its commit, fails on it as it was, and was" : " tests passed before their commit, fail on it as they were, and were")
                     + " taken out of the way");
             out.println("  " + untested + " commit" + (untested == 1 ? "" : "s") + " add or edit no test this version can run");
             out.println("  " + problems + " integrity problem" + (problems == 1 ? "" : "s"));

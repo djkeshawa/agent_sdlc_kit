@@ -206,6 +206,7 @@ final class CheckTests {
         write(repo, "checks/nested.t", NESTED);
         write(repo, "checks/broken.t", BROKEN);
         write(repo, "checks/asleep.t", ASLEEP);
+        write(repo, "checks/swap.t", SWAP);
         write(repo, ".gitignore", "ignored/\n");
         git(repo, "init", "-q", "-b", "main");
         commit(repo, "base");
@@ -814,10 +815,13 @@ final class CheckTests {
         String renamed = report(Map.of("selftest-runner", "true", "runs", "2"));
         check("check: a gone test that passed before and fails as it was on the change was taken out of the way: the check fails, in every run",
                 renamed.contains("1 test passed before the change and fails on the code after it as the test was, and the change took it out of the way: "
-                        + "removed, renamed, switched off or run fewer times\n      checks/broken.t  [self test]\n        holds: passed before the change; as the test was, "
+                        + "removed, renamed or switched off\n      checks/broken.t  [self test]\n        holds: passed before the change; as the test was, "
                         + "on the code after the change holds fails: expected something else. The edited file does not report it now\n") && code == 1);
-        check("check: the old tests of that file that are still there under their names are not reported, though their old versions fail too",
-                !renamed.contains("fragile") && !renamed.contains("rows(int)") && !renamed.contains("wobbly") && !renamed.contains("The reports cannot tell"));
+        check("check: the old tests of that file whose names still run, and whose old versions fail too, may have been edited: could not be judged, not accused",
+                renamed.contains("\n        fragile, rows(int)[1] passed before the change and fail on the code after it as the file was. A test of each name still runs after the change, "
+                        + "so it cannot be told whether each was edited for the changed behaviour, or taken out and its name given to another case, as a row taken out does to "
+                        + "the rows after it where cases are named by their place\n") && !renamed.contains("wobbly passed") && !renamed.contains("steady")
+                && !renamed.contains("The reports cannot tell"));
         check("check: the fourth run is made then, in a checkout of its own, and the checkout after the change is left as the change has it",
                 Check.fourthCheckout(sdlc.check.Change.of(null)).equals("made, head intact"));
         java.io.InputStream in = System.in;
@@ -855,11 +859,42 @@ final class CheckTests {
                         + "expected something else, and the change skips it now\n")
                 && !rowOff.contains("ran before the change and is skipped now") && code == 1);
 
-        // and the last row taken out of the arguments: the file runs fewer cases
+        // and a row taken out of the arguments: the file runs fewer cases. Named by place, taking out the last row (as here) and taking out the first,
+        // which the change breaks, so that the last takes its place, give the same reports: the check fails either way, as the file reports fewer cases
         write(repo, "checks/broken.t", MENDED.replace("rows(int)[2]: pass\n", ""));
         String rowGone = report(Map.of("selftest-runner", "true", "runs", "1"));
-        check("check: a row taken out of a parameterized test is a test removed",
-                rowGone.contains("1 test was removed: the edited file reports fewer tests than it had before the change\n      checks/broken.t  [self test]\n        rows(int)[2]\n") && code == 1);
+        check("check: the last row taken out of a parameterized test whose first row the change breaks: a test removed, and the first row could not be judged",
+                rowGone.contains("1 test was removed: the edited file reports fewer tests than it had before the change\n      checks/broken.t  [self test]\n        rows(int)[2]\n")
+                && rowGone.contains(", rows(int)[1], wobbly passed before the change and fail on the code after it as the file was. A test of each name still runs after the change")
+                && rowGone.contains("The file runs fewer tests than before (5 where it ran 6)\n") && code == 1);
+
+        // a test the change breaks, renamed and rewritten for the changed behaviour: the rewrite fails before and passes after. The reports are the
+        // same as for a test taken out and a sensitive one written: could not be judged, with both stories
+        write(repo, "checks/broken.t", MENDED.replace("holds: pass", "holds anew: needs fixed"));
+        String rewritten = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a broken test renamed and rewritten, where a sensitive test could be the rewrite, could not be judged, with both stories",
+                rewritten.contains("\n        holds passed before the change and fails on the code after it as the file was, and the file does not report it now or skips it. "
+                        + "It has 1 test that passes after the change and does not pass on both sides (holds anew), so it cannot be told whether the old test was rewritten "
+                        + "for the changed behaviour under other names, or taken out of the way and other tests written\n")
+                && rewritten.contains("\n        holds anew\n") && !rewritten.contains("out of the way: removed") && code == 0);
+        // two broken tests renamed, and only one sensitive test that can be a rewrite: at least one was taken out of the way
+        write(repo, "checks/broken.t", MENDED.replace("holds: pass", "holds anew: needs fixed").replace("fragile: pass", "sturdy: pass"));
+        String one = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: more broken tests gone than cases that can be their rewrites: at least the rest were taken out of the way",
+                one.contains("at least 1 test passed before the change and fails on the code after it as the test was, and the change took it out of the way: removed, "
+                        + "renamed or switched off\n      checks/broken.t  [self test]\n        holds, fragile passed before the change and fail on the code after it as the file "
+                        + "was, and the file does not report them now or skips them. It has 1 test that passes after the change and does not pass on both sides (holds anew), "
+                        + "and at most 1 of the 2 old tests can be among them, rewritten for the changed behaviour: at least 1 was taken out of the way\n") && code == 1);
+        write(repo, "checks/broken.t", BROKEN);
+
+        // two cases exchange which of them is skipped: could not be judged by the reports, but the one switched off fails as it was on the change
+        write(repo, "checks/swap.t", "guard: skip\nidle: pass\n");
+        String swap = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a switch-off that only could be judged by the reports is turned into a failure by the fourth run when the old test fails on the change",
+                swap.contains("It cannot be told whether a test that ran was switched off, or cases changed names")
+                && swap.contains("      checks/swap.t  [self test]\n        guard: passed before the change; as the test was, on the code after the change guard fails: "
+                        + "expected something else, and the change skips it now\n") && code == 1);
+        write(repo, "checks/swap.t", SWAP);
         write(repo, "checks/broken.t", BROKEN);
 
         // the file as it was does not compile on the change (it needs v1, which the change takes out): nothing is known
@@ -873,6 +908,9 @@ final class CheckTests {
         write(repo, "checks/era.t", ERA);
         write(repo, "prod.txt", "v1\nfixed\n");
     }
+
+    /** A test file of the base whose test passes on the base's code and fails on the code of the fix, beside a skipped one. */
+    private static final String SWAP = "guard: fails-with fixed\nidle: skip\n";
 
     /** A test file of the base whose only test is skipped: none of its tests ran before the change. */
     private static final String ASLEEP = "dozing: skip\n";

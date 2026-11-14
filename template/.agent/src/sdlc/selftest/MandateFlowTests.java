@@ -191,6 +191,12 @@ final class MandateFlowTests {
         String hurt = verdict();
         check("mandate: an old test that the change breaks and takes out of the way violates the witness", hurt.contains("violated  the change's own tests")
                 && hurt.contains("tests/hurt.t  guards: passed before the change; as the test was, on the code after the change guards fails: expected something else") && code == 1);
+        // the same old test renamed and rewritten for the changed behaviour (the rewrite fails before and passes after): a full review decides
+        write(repo, "tests/hurt.t", "guards anew: needs fixed\n");
+        String rewritten = verdict();
+        check("mandate: an old test the change breaks, renamed and rewritten as a sensitive test, leaves the witness unknown, not violated",
+                rewritten.contains("unknown   the change's own tests: 2 fail before it and pass after it") && rewritten.contains("could not be judged")
+                && !rewritten.contains("violated  the change's own tests") && code == 0);
         write(repo, "tests/hurt.t", "guards: fails-with fixed\n");
 
         // what must stay true breaks
