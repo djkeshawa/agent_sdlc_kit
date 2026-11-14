@@ -114,6 +114,11 @@ public final class MandateCli {
         json.put("failsIf", fails);
         String approved = Json.pretty(json) + "\n";
         Mandate.parse(id, approved); // what is about to be written is a valid mandate
+        if (approved.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > Mandate.MAX_BYTES) {
+            // written out with the sentence it would be a file the tool refuses to read
+            out.println(rel + " would be larger than " + Mandate.MAX_BYTES / 1024 + " KB once written with your sentence. Nothing was approved; make the mandate shorter.");
+            return 1;
+        }
         Files.writeString(file, approved, java.nio.charset.StandardCharsets.UTF_8);
         String blob = Mandate.blobOf(root, approved); // of the text just written, not of a second read
         SelfApproval.record(root, id, new SelfApproval.Record(blob, who(root), java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString(), covers));

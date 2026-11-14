@@ -49,7 +49,8 @@ Rules of the format:
 - Parsing is strict. A duplicate key, a key this table does not name, a wrong type, or a path
   that leaves the repository is an error, and the mandate is not used.
 - A mandate holds no numbers and no control characters (no line break, tab or escape inside a
-  text). It is at most 256 KB, is UTF-8, and is a file of its own, not a link.
+  text), and no character that is invisible or that turns the direction of text (the Unicode
+  "format" characters): what is shown must read as it is stored. It is at most 256 KB, is UTF-8, and is a file of its own, not a link.
 - The blob id is of the bytes on disk, with no line-ending or other git filter applied. Locked
   tests are compared as git stores them, which is what `git hash-object <file>` prints.
 - No YAML, no Markdown front matter, no comments.

@@ -151,6 +151,10 @@ final class MandateFlowTests {
         write(repo, "tests/fix.t", "fixed: fail\n");
         String failing = verdict();
         check("mandate: a failing scenario is violated", failing.contains("violated  scenarios found, ran and passed: 0 of 1") && code == 1);
+        // two tests whose names end alike are two tests, wherever a bracket stands in their names
+        write(repo, "tests/fix.t", "one(a) > fixed: needs fixed\none(b) > fixed: needs fixed\n");
+        String twoHomes = verdict();
+        check("mandate: a scenario name that fits two tests of one file names neither", twoHomes.contains("unknown   scenarios found, ran and passed: 0 of 1") && twoHomes.contains("more than one test has that name"));
         write(repo, "tests/fix.t", "other: pass\n");
         String missing = verdict();
         check("mandate: a scenario that is not found is unknown, not passed", missing.contains("unknown   scenarios found, ran and passed: 0 of 1") && missing.contains("was not found among the tests that ran"));
@@ -205,6 +209,49 @@ final class MandateFlowTests {
             Files.deleteIfExists(repo.resolve("docs/mandates/linked.json"));
             Files.deleteIfExists(outsideFile);
         }
+        // approval writes the file out again, with the sentence: it must still be a file the tool will read
+        StringBuilder paths = new StringBuilder();
+        for (int i = 0; i < 22_000; i++) paths.append(i == 0 ? "" : ",").append("\"p/").append(i).append('"');
+        write(repo, "docs/mandates/sizey.json", "{\"mandate\":\"v0\",\"id\":\"sizey\",\"intent\":\"Many paths\",\"scope\":{\"paths\":[" + paths + "]},\"oracle\":{\"scenarios\":[\"tests/fix.t#fixed\"]}}");
+        String compact = Files.readString(repo.resolve("docs/mandates/sizey.json"));
+        Deque<String> sizey = new ArrayDeque<>(List.of("it breaks", "0", "sizey"));
+        ByteArrayOutputStream tooLarge = new ByteArrayOutputStream();
+        check("mandate: a mandate that fits as written is read", Mandate.load(repo, "sizey").scopePaths().size() == 22_000);
+        check("mandate: approval that would write a mandate too large to read approves nothing and leaves the file",
+                MandateCli.approve(repo, "sizey", q -> sizey.poll(), new PrintStream(tooLarge, true, StandardCharsets.UTF_8)) == 1
+                && tooLarge.toString(StandardCharsets.UTF_8).contains("would be larger than") && Files.readString(repo.resolve("docs/mandates/sizey.json")).equals(compact)
+                && SelfApproval.of(repo, "sizey") == null);
+        Files.delete(repo.resolve("docs/mandates/sizey.json"));
+
+        // a fixture file that the change turns into a folder of fixtures
+        write(repo, "tests/fx.t", "old shape: pass\n");
+        commit(repo, "a fixture as one file");
+        Files.delete(repo.resolve("tests/fx.t"));
+        write(repo, "tests/fx.t/case.t", "new shape: pass\n");
+        String reshaped = report(Map.of("mandate", "prodonly", "selftest-runner", "true", "runs", "1"));
+        check("mandate: a fixture file turned into a folder does not stop the check", reshaped.contains("Evidence") && reshaped.contains("what must stay true"));
+        Files.delete(repo.resolve("tests/fx.t/case.t"));
+        Files.delete(repo.resolve("tests/fx.t"));
+        write(repo, "tests/fx.t", "old shape: pass\n");
+
+        // a linked worktree keeps its git folder outside the checkout: the approval record and the hooks there are guarded all the same
+        Path linked = Files.createTempDirectory("sdlc-linked").toRealPath();
+        Files.delete(linked);
+        git(repo, "worktree", "add", "-q", "--detach", linked.toString());
+        try {
+            Ctx.init(linked);
+            Path store = linked.resolve(Proc.run(linked, "git", "rev-parse", "--git-path", "sdlc/mandate-approvals.json").out().strip()).normalize();
+            Path hook = linked.resolve(Proc.run(linked, "git", "rev-parse", "--git-path", "hooks/pre-commit").out().strip()).normalize();
+            check("guard: in a linked worktree the approval record lies outside the checkout", !store.startsWith(linked) && !hook.startsWith(linked));
+            check("guard: a shell write to the approval record of a linked worktree is refused", Asserts.shell("echo '{}' > " + store).denied());
+            check("guard: also by a relative path", Asserts.shell("cp forged.json " + linked.relativize(store).toString().replace('\\', '/')).denied());
+            check("guard: and a write to the repository's git hooks from a linked worktree", Asserts.shell("echo 'exit 0' > " + hook).denied());
+            check("guard: other files outside the checkout are judged as before", !Asserts.shell("echo x > " + linked.getParent().resolve("sdlc-elsewhere-note.txt")).denied());
+        } finally {
+            Ctx.init(repo);
+            git(repo, "worktree", "remove", "--force", linked.toString());
+        }
+
         write(repo, "docs/mandates/huge.json", "{\"mandate\": \"v0\", \"id\": \"huge\", \"intent\": \"" + "x".repeat(300_000) + "\"}");
         check("mandate: a mandate larger than a page is refused before it is parsed", Asserts.throwsUsage(() -> Mandate.load(repo, "huge")));
     }

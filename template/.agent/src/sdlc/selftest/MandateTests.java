@@ -153,6 +153,10 @@ final class MandateTests {
         rule("mandate: a number anywhere is refused", EXAMPLE.replace("\"scope\": {", "\"scope\": { \"apis\": {\"limit\": 10},"), "scope.apis.limit holds a number");
         rule("mandate: a line break inside a text is refused", EXAMPLE.replace("returns an empty list", "returns an empty list\\nScope     INSIDE"), "intent has a control character");
         rule("mandate: an escape sequence inside a scenario name is refused", EXAMPLE.replace("#emptyQueryReturnsEmptyList", "#x\\u001b[2Jy"), "has a control character");
+        rule("mandate: a mark that turns the direction of the text is refused", EXAMPLE.replace("returns an empty list", "returns an \\u202eempty list"), "intent has a control character");
+        rule("mandate: a character with no width is refused in a path", EXAMPLE.replace("src/main/java/com/acme/search/**", "src/main/java/com/acme/sea\\u200brch/**"), "has a control character");
+        check("mandate: such characters in other text (a file name, a name from git) are shown as a question mark",
+                sdlc.mandate.MandateCard.safe("a\u202eb\u200bc\u001bd\ud83d\ude00").equals("a?b?c?d\ud83d\ude00"));
         rule("mandate: a path with a sign that is not a wildcard of the format is refused", EXAMPLE.replace("src/main/java/com/acme/search/**", "src/main/{java,kotlin}/**"), "only * and ** are");
         rule("mandate: a duplicate key is refused and named", EXAMPLE.replace("\"intent\":", "\"id\": \"fix-search\", \"intent\":"), "the key \"id\" appears twice");
         rule("mandate: so is a file that is not one object", "[]", "must hold one JSON object");

@@ -218,7 +218,10 @@ final class MandateVerdict {
         List<JUnitXml.Case> exact = run.cases().stream().filter(c -> c.name().equals(name)).toList();
         if (!exact.isEmpty()) return exact.stream().map(JUnitXml.Case::suite).distinct().count() == 1 ? exact : List.of();
         List<JUnitXml.Case> plain = run.cases().stream().filter(c -> TestNames.plain(path, c.name()).equals(name)).toList();
-        long homes = plain.stream().map(c -> c.suite() + "\n" + c.name().replaceFirst("[(\\[{].*$", "")).distinct().count();
+        // Java reports one method once per invocation ("refunds(int)[1]", "[2]"): those are one test. Elsewhere the reported
+        // name is the whole way to the test ("one(a) > fixed"), and two of them are two tests.
+        boolean java = path.endsWith(".java");
+        long homes = plain.stream().map(c -> c.suite() + "\n" + (java ? c.name().replaceFirst("[(\\[{].*$", "") : c.name())).distinct().count();
         return homes == 1 ? plain : List.of();
     }
 

@@ -16,12 +16,16 @@ public final class MandateCard {
 
     /**
      * Text as it may be printed: every control character (but not the line breaks the tool itself
-     * writes) becomes "?". A mandate's own text is checked when it is parsed; file names, names
-     * from git and the approver's identity pass through here too.
+     * writes), every invisible one and every one that turns the direction of text becomes "?".
+     * A mandate's own text is checked when it is parsed; file names, names from git and the
+     * approver's identity pass through here too.
      */
     public static String safe(String text) {
         StringBuilder out = new StringBuilder(text.length());
-        text.chars().forEach(c -> out.append(c < 0x20 || c == 0x7f || c >= 0x80 && c < 0xa0 || c == 0x2028 || c == 0x2029 ? '?' : (char) c));
+        text.codePoints().forEach(c -> {
+            if (Mandate.unprintable(c)) out.append('?');
+            else out.appendCodePoint(c);
+        });
         return out.toString();
     }
 

@@ -34,9 +34,10 @@ final class Sides implements AutoCloseable {
         try {
             List<String> support = new ArrayList<>();
             for (String path : change.paths("AM")) if (runners.stream().anyMatch(r -> r.support(path))) support.add(path);
-            base.write(change.head, support);
-            // a fixture or helper the change deletes is gone before the change too, as the tests now expect
+            // a fixture or helper the change deletes is gone before the change too, as the tests now expect.
+            // First, so that a file the change turned into a folder is out of the way of what is written next.
             for (String gone : change.paths("D")) if (runners.stream().anyMatch(r -> r.support(gone))) Files.deleteIfExists(base.dir.resolve(gone));
+            base.write(change.head, support);
         } catch (IOException e) {
             throw new UsageException("cannot prepare the checkout of the base: " + e.getMessage());
         }

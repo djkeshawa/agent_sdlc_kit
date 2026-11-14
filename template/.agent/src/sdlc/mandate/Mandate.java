@@ -365,7 +365,7 @@ public record Mandate(String version, String id, String intent, List<Truth> must
         if (v instanceof Number) {
             out.add((where.isEmpty() ? "the file" : where) + " holds a number; a mandate has none (write it as text)");
         } else if (v instanceof String s) {
-            if (control(s)) out.add((where.isEmpty() ? "the file" : where) + " has a control character (a line break, a tab or an escape); write it as plain text on one line");
+            if (control(s)) out.add((where.isEmpty() ? "the file" : where) + " has a control character (a line break, a tab, an escape, or one that is invisible or turns the direction of the text); write it as plain text on one line");
         } else if (v instanceof Map<?, ?> map) {
             for (Map.Entry<?, ?> e : map.entrySet()) {
                 String key = String.valueOf(e.getKey());
@@ -378,7 +378,29 @@ public record Mandate(String version, String id, String intent, List<Truth> must
     }
 
     private static boolean control(String s) {
-        return s.chars().anyMatch(c -> c < 0x20 || c == 0x7f || c >= 0x80 && c < 0xa0 || c == 0x2028 || c == 0x2029);
+        return s.codePoints().anyMatch(Mandate::unprintable) || s.chars().anyMatch(c -> Character.isSurrogate((char) c) && !paired(s));
+    }
+
+    /**
+     * A character that must not reach a terminal or a card: a control character, a line or
+     * paragraph separator, and every "format" character. The last group holds the marks that
+     * turn the direction of text (so a path or a sentence reads in another order than it is
+     * stored) and the ones with no width (so two different paths look the same).
+     */
+    public static boolean unprintable(int codePoint) {
+        int type = Character.getType(codePoint);
+        return type == Character.CONTROL || type == Character.FORMAT || type == Character.LINE_SEPARATOR || type == Character.PARAGRAPH_SEPARATOR
+                || type == Character.SURROGATE || type == Character.UNASSIGNED || type == Character.PRIVATE_USE;
+    }
+
+    /** True when every surrogate of the text is half of a pair. */
+    private static boolean paired(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (Character.isHighSurrogate(c) && i + 1 < s.length() && Character.isLowSurrogate(s.charAt(i + 1))) i++;
+            else if (Character.isSurrogate(c)) return false;
+        }
+        return true;
     }
 
     /** The rules every path of the file follows: relative to the repository root, and never leaving it. */
@@ -389,7 +411,7 @@ public record Mandate(String version, String id, String intent, List<Truth> must
         else if (p.startsWith("/")) out.add(shown + " starts with \"/\"; write it relative to the repository root");
         else if (p.matches("[A-Za-z]:.*")) out.add(shown + " starts with a drive letter; write it relative to the repository root");
         else if (("/" + p + "/").contains("/../") || p.equals("..")) out.add(shown + " leaves the repository");
-        else if (p.chars().anyMatch(c -> c < 0x20)) out.add(shown + " has a control character");
+        else if (control(p)) out.add(shown + " has a control character");
         if (!glob && !p.isEmpty() && p.endsWith("/")) out.add(shown + " ends with \"/\"; name a file");
         // the specification has two wildcards and nothing else
         if (glob && p.chars().anyMatch(c -> "{}[]?".indexOf(c) >= 0)) out.add(shown + " uses a sign that is not part of a mandate's paths; only * and ** are");
