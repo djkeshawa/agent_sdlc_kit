@@ -189,6 +189,7 @@ final class Witness {
         Map<String, Names> named = new LinkedHashMap<>(); // edited files whose run after the change and run as they were both gave results, lined up by name
         Map<String, List<Verdict>> skips = new LinkedHashMap<>(); // of those, the files whose skips may say a test is switched off: the first answer, said after the repeat runs
         Map<String, List<JUnitXml.Case>> rewrites = new LinkedHashMap<>(); // of those, the cases that pass after the change and do not pass on both sides (see broken)
+        Map<String, Map<String, String>> shownIn = new LinkedHashMap<>(); // per file: how its cases are shown (see shown)
         for (String f : files) {
             String shared = runner.sharedBySides(change, head.dir, f);
             FileRun a = after.get(f), b = before.get(f);
@@ -201,6 +202,8 @@ final class Witness {
             }
             // an added file has no earlier version: every test of it is new. An edited one is lined up with the file as it was, when that gave a result.
             Names n = edited.contains(f) && e.problem() == null ? names(e.cases(), a.cases()) : null;
+            Map<String, String> sh = n != null ? n.shown() : shown(e.cases(), a.cases());
+            shownIn.put(f, sh);
             Set<String> fresh = new LinkedHashSet<>();
             if (n != null) for (JUnitXml.Case c : n.fresh()) fresh.add(key(c));
             Map<String, JUnitXml.Case> was = new LinkedHashMap<>();
@@ -215,35 +218,35 @@ final class Witness {
             for (JUnitXml.Case c : a.cases()) {
                 JUnitXml.Case p = was.get(key(c));
                 // First what the run after the change says alone: two cases of one name on the side before the change do not matter to these.
-                if (c.status() == Status.FLAKY) out.add(new Verdict(f, c.name(), Kind.UNSTABLE, "the build ran it again and got another result", by));
+                if (c.status() == Status.FLAKY) out.add(new Verdict(f, shown(sh, key(c)), Kind.UNSTABLE, "the build ran it again and got another result", by));
                 else if (c.status() == Status.SKIPPED) continue; // see skips, below
-                else if (c.status() != Status.PASSED) out.add(new Verdict(f, c.name(), Kind.FAILS_AFTER, describe(c), by));
+                else if (c.status() != Status.PASSED) out.add(new Verdict(f, shown(sh, key(c)), Kind.FAILS_AFTER, describe(c), by));
                 // what is left compares the two sides by name, which must then name one test on each side. The same file runs on
                 // both sides, so its cases are named alike on both.
                 else if (twice.contains(key(c))) {
-                    if (seen.add(key(c))) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "more than one test reports this name, so they cannot be told apart", by));
+                    if (seen.add(key(c))) out.add(new Verdict(f, shown(sh, key(c)), Kind.UNKNOWN, "more than one test reports this name, so they cannot be told apart", by));
                 }
-                else if (b == null || b.problem() != null) out.add(b != null && b.broken() ? Verdict.beforeFailed(f, c.name(), "before the change the file " + b.problem(), by)
-                        : new Verdict(f, c.name(), Kind.UNKNOWN, "before the change the file " + (b == null ? "gave no result" : b.problem()), by));
-                else if (p == null) out.add(Verdict.beforeFailed(f, c.name(), "was not found before the change", by));
-                else if (p.status() == Status.PASSED && shared != null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after, but " + shared, by));
-                else if (p.status() == Status.PASSED && e.problem() != null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after, but run as it was before the change, the file "
+                else if (b == null || b.problem() != null) out.add(b != null && b.broken() ? Verdict.beforeFailed(f, shown(sh, key(c)), "before the change the file " + b.problem(), by)
+                        : new Verdict(f, shown(sh, key(c)), Kind.UNKNOWN, "before the change the file " + (b == null ? "gave no result" : b.problem()), by));
+                else if (p == null) out.add(Verdict.beforeFailed(f, shown(sh, key(c)), "was not found before the change", by));
+                else if (p.status() == Status.PASSED && shared != null) out.add(new Verdict(f, shown(sh, key(c)), Kind.UNKNOWN, "passes before and after, but " + shared, by));
+                else if (p.status() == Status.PASSED && e.problem() != null) out.add(new Verdict(f, shown(sh, key(c)), Kind.UNKNOWN, "passes before and after, but run as it was before the change, the file "
                         + e.problem() + ", so it cannot be told whether this test is new", by));
                 else if (p.status() == Status.PASSED) {
                     clean++;
                     passing.add(key(c));
-                    if (n == null) out.add(new Verdict(f, c.name(), Kind.PASSES_ON_BOTH, "", by));
+                    if (n == null) out.add(new Verdict(f, shown(sh, key(c)), Kind.PASSES_ON_BOTH, "", by));
                     else if (fresh.contains(key(c))) passBoth.add(c);
-                    else out.add(new Verdict(f, c.name(), Kind.EXISTING_PASSES_ON_BOTH, "", by));
+                    else out.add(new Verdict(f, shown(sh, key(c)), Kind.EXISTING_PASSES_ON_BOTH, "", by));
                 }
-                else if (p.status() == Status.SKIPPED) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "was skipped before the change", by));
-                else if (p.status() == Status.FLAKY) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "before the change the build ran it again and got another result", by));
-                else if (p.status() == Status.ERRORED) out.add(Verdict.beforeFailed(f, c.name(), "before the change it threw " + shortType(p) + ", not an assertion", by));
+                else if (p.status() == Status.SKIPPED) out.add(new Verdict(f, shown(sh, key(c)), Kind.UNKNOWN, "was skipped before the change", by));
+                else if (p.status() == Status.FLAKY) out.add(new Verdict(f, shown(sh, key(c)), Kind.UNKNOWN, "before the change the build ran it again and got another result", by));
+                else if (p.status() == Status.ERRORED) out.add(Verdict.beforeFailed(f, shown(sh, key(c)), "before the change it threw " + shortType(p) + ", not an assertion", by));
                 else candidates.computeIfAbsent(f, k -> new LinkedHashSet<>()).add(key(c));
             }
             if (n == null) {
                 // a file the change adds, or one whose earlier version gave no result: its skipped tests are listed
-                for (JUnitXml.Case c : a.cases()) if (c.status() == Status.SKIPPED) out.add(new Verdict(f, c.name(), Kind.SKIPPED, "skipped after the change", by));
+                for (JUnitXml.Case c : a.cases()) if (c.status() == Status.SKIPPED) out.add(new Verdict(f, shown(sh, key(c)), Kind.SKIPPED, "skipped after the change", by));
             } else {
                 named.put(f, n);
                 rewrites.put(f, a.cases().stream().filter(c -> (c.status() == Status.PASSED || c.status() == Status.FLAKY) && !passing.contains(key(c))).toList());
@@ -267,7 +270,7 @@ final class Witness {
             for (String k : new ArrayList<>(candidates.get(f))) {
                 if (status(solo, k) == Status.PASSED) continue;
                 candidates.get(f).remove(k);
-                out.add(new Verdict(f, k.substring(k.indexOf('#') + 1), Kind.UNKNOWN,
+                out.add(new Verdict(f, shown(shownIn.get(f), k), Kind.UNKNOWN,
                         "after the change it passes only together with the other changed test files, so its failure before the change may come from them", by));
             }
             if (candidates.get(f).isEmpty()) candidates.remove(f);
@@ -343,7 +346,7 @@ final class Witness {
         }
         for (String f : sensitive) {
             for (String k : candidates.get(f)) {
-                String name = k.substring(k.indexOf('#') + 1);
+                String name = shown(shownIn.get(f), k);
                 String why = unstable.get(f + "\n" + k);
                 if (why != null) out.add(new Verdict(f, name, Kind.UNSTABLE, why, by));
                 else out.add(new Verdict(f, name, Kind.SENSITIVE, "", by));
@@ -362,11 +365,11 @@ final class Witness {
         static final Fourth NONE = new Fourth(Map.of(), Map.of(), Map.of());
 
         /** "passed before the change; as the test was, on the code after the change x fails: why", of those keys that broke. */
-        String said(String file, java.util.Collection<String> keys) {
+        String said(String file, java.util.Collection<String> keys, Map<String, String> shown) {
             List<String> which = keys.stream().filter(broke.getOrDefault(file, Set.of())::contains).toList();
             FileRun run = first.get(file);
             JUnitXml.Case one = run.cases().stream().filter(c -> key(c).equals(which.get(0))).findFirst().orElseThrow();
-            String names = which.size() == 1 ? one.name() + " " + describe(one) : shortList(which.stream().map(k -> k.substring(k.indexOf('#') + 1)).toList()) + " fail or throw";
+            String names = which.size() == 1 ? shown(shown, which.get(0)) + " " + describe(one) : shortList(which.stream().map(k -> shown(shown, k)).toList()) + " fail or throw";
             return "passed before the change; as the test was, on the code after the change " + names;
         }
 
@@ -486,9 +489,9 @@ final class Witness {
      * gone, fresh: the cases left over on each side. off: per name, how many ran before and are
      * skipped now. on: how many were skipped before and run now. asBefore: per name, how many are
      * skipped on both sides. r0, s0, r1, s1: how many ran and were skipped in the old run (0)
-     * and after the change (1), over the whole file.
+     * and after the change (1), over the whole file. shown: how each case is shown (see shown).
      */
-    private record Names(List<JUnitXml.Case> gone, List<JUnitXml.Case> fresh, List<Flip> off, long on, List<Flip> asBefore, long r0, long s0, long r1, long s1) {
+    private record Names(List<JUnitXml.Case> gone, List<JUnitXml.Case> fresh, List<Flip> off, long on, List<Flip> asBefore, long r0, long s0, long r1, long s1, Map<String, String> shown) {
         List<JUnitXml.Case> freshSkipped() {
             return fresh.stream().filter(c -> c.status() == Status.SKIPPED).toList();
         }
@@ -498,6 +501,7 @@ final class Witness {
     private record Flip(String key, String name, long tests) {}
 
     private static Names names(List<JUnitXml.Case> old, List<JUnitXml.Case> now) {
+        Map<String, String> shown = shown(old, now);
         Map<String, List<JUnitXml.Case>> was = byKey(old), is = byKey(now);
         Set<String> keys = new LinkedHashSet<>(was.keySet());
         keys.addAll(is.keySet());
@@ -512,12 +516,12 @@ final class Witness {
                 continue;
             }
             long ranO = ran(o), ranN = ran(n), both = Math.min(o.size() - ranO, n.size() - ranN);
-            String name = n.get(0).name();
+            String name = shown.get(k);
             if (ranO > ranN) off.add(new Flip(k, name, ranO - ranN));
             else on += ranN - ranO;
             if (both > 0) asBefore.add(new Flip(k, name, both));
         }
-        return new Names(gone, fresh, off, on, asBefore, ran(old), old.size() - ran(old), ran(now), now.size() - ran(now));
+        return new Names(gone, fresh, off, on, asBefore, ran(old), old.size() - ran(old), ran(now), now.size() - ran(now), shown);
     }
 
     private static Map<String, List<JUnitXml.Case>> byKey(List<JUnitXml.Case> cases) {
@@ -567,7 +571,7 @@ final class Witness {
         for (Flip s : n.asBefore()) listed.add(new Verdict(f, s.name(), Kind.EXISTING_SKIPPED, "skipped before the change too", by, (int) s.tests()));
         List<JUnitXml.Case> freshOff = n.freshSkipped();
         if (n.off().isEmpty() && (freshOff.isEmpty() || n.r0() == 0)) {
-            for (JUnitXml.Case c : freshOff) listed.add(new Verdict(f, c.name(), Kind.SKIPPED, "skipped after the change; no test of the file ran before it", by));
+            for (JUnitXml.Case c : freshOff) listed.add(new Verdict(f, shown(n.shown(), key(c)), Kind.SKIPPED, "skipped after the change; no test of the file ran before it", by));
             return new Skips(answer, listed);
         }
         String counts = counts(n);
@@ -611,7 +615,7 @@ final class Witness {
         List<String> parts = new ArrayList<>();
         if (!n.off().isEmpty()) parts.add("skipped now under " + (n.off().size() == 1 ? "a name" : "names") + " that ran before: " + shortList(n.off().stream().map(Flip::name).toList()));
         List<JUnitXml.Case> freshOff = n.freshSkipped();
-        if (!freshOff.isEmpty()) parts.add((parts.isEmpty() ? "skipped " : "") + "under " + (freshOff.size() == 1 ? "a name" : "names") + " the file did not report before: " + shortList(shown(freshOff)));
+        if (!freshOff.isEmpty()) parts.add((parts.isEmpty() ? "skipped " : "") + "under " + (freshOff.size() == 1 ? "a name" : "names") + " the file did not report before: " + shortList(shown(n.shown(), freshOff)));
         return parts.isEmpty() ? "" : " (" + String.join("; ", parts) + ")";
     }
 
@@ -637,16 +641,30 @@ final class Witness {
         return out;
     }
 
-    /** The cases' names, each with its suite where two of them share a name (nested classes with a method of one name). */
-    private static List<String> shown(List<JUnitXml.Case> cases) {
-        return shown(cases, cases);
+    /**
+     * How each case of a file is shown, by its identity (suite#name): by its name, and with its
+     * suite where cases of two suites of the file have that name, in the file as it was or after
+     * the change (nested classes with a method of one name). The identity is what is compared and
+     * kept; this is only what is printed.
+     */
+    private static Map<String, String> shown(List<JUnitXml.Case> old, List<JUnitXml.Case> now) {
+        List<JUnitXml.Case> all = new ArrayList<>(old);
+        all.addAll(now);
+        Map<String, Set<String>> suites = new LinkedHashMap<>();
+        for (JUnitXml.Case c : all) suites.computeIfAbsent(c.name(), k -> new LinkedHashSet<>()).add(c.suite());
+        Map<String, String> out = new LinkedHashMap<>();
+        for (JUnitXml.Case c : all) out.putIfAbsent(key(c), suites.get(c.name()).size() > 1 ? c.suite() + "." + c.name() : c.name());
+        return out;
     }
 
-    /** As above, where a name is told by its suite when it has more than one among these cases (among). */
-    private static List<String> shown(List<JUnitXml.Case> cases, List<JUnitXml.Case> among) {
-        Map<String, Set<String>> suites = new LinkedHashMap<>();
-        for (JUnitXml.Case c : among) suites.computeIfAbsent(c.name(), k -> new LinkedHashSet<>()).add(c.suite());
-        return cases.stream().map(c -> suites.getOrDefault(c.name(), Set.of()).size() > 1 ? c.suite() + "." + c.name() : c.name()).toList();
+    /** How a case is shown, by its identity (see shown). */
+    private static String shown(Map<String, String> shown, String key) {
+        return shown.getOrDefault(key, name(key));
+    }
+
+    /** How these cases are shown (see shown). */
+    private static List<String> shown(Map<String, String> shown, List<JUnitXml.Case> cases) {
+        return cases.stream().map(c -> shown(shown, key(c))).toList();
     }
 
     /**
@@ -689,7 +707,7 @@ final class Witness {
                 + (other > 0 ? ", and " + other + " of its tests " + (other == 1 ? "does" : "do") + " not pass on both sides" : "");
         if (least > 0) {
             out.add(new Verdict(f, "", Kind.PASSES_ON_BOTH, counts + ": at least " + least + (least == 1 ? " new test passes" : " new tests pass") + " before and after. Under names the file "
-                    + "did not have, " + p + (p == 1 ? " passes" : " pass") + " before and after (" + shortList(shown(passBoth)) + "); the names do not say which "
+                    + "did not have, " + p + (p == 1 ? " passes" : " pass") + " before and after (" + shortList(shown(n.shown(), passBoth)) + "); the names do not say which "
                     + (least == 1 ? "test is" : "tests are") + " new, as where tests are named by their place a row put in before the others moves an old one to a name the file did not have",
                     by, (int) least));
             return out;
@@ -698,7 +716,7 @@ final class Witness {
         if (g > 0) why.add(g == 1 ? "the test it no longer reports, under a new name" : "one of the " + g + " tests it no longer reports, under a new name");
         if (other > 0) why.add("a test moved to this name by one put in before it, where cases are named by their place (the new "
                 + (fr - g == 1 ? "test" : "tests") + " then being among the " + other + " that do not pass on both sides)");
-        List<String> names = shown(passBoth, n.fresh());
+        List<String> names = shown(n.shown(), passBoth);
         for (int i = 0; i < passBoth.size(); i++) out.add(new Verdict(f, names.get(i), Kind.UNKNOWN, "passes before and after, but it cannot be told whether it is a new test: " + counts
                 + ". It may be a new test that does not test the change, or a test the file had: " + String.join(", or ", why), by));
         return out;
@@ -737,17 +755,17 @@ final class Witness {
             int g = lost.size(), nf = fresh.size();
             if (g == 0) continue;
             if (g > nf && recounted.contains(f)) {
-                out.add(new Verdict(f, "", Kind.UNSTABLE, had(lost, fresh) + ", but what the file reports, after the change or as it was, is not the same in every run", by, g - nf));
+                out.add(new Verdict(f, "", Kind.UNSTABLE, had(e.getValue()) + ", but what the file reports, after the change or as it was, is not the same in every run", by, g - nf));
             } else if (g > nf) {
                 long t = said.getOrDefault(f, 0L), least = g - nf - t;
                 said.put(f, Math.max(0, -least)); // what is left of it for the skips
                 if (least <= 0) continue;
                 String which = ". The names do not say which: where tests are named by their place, one taken out leaves its name to the next";
-                out.add(new Verdict(f, "", Kind.REMOVED, had(lost, fresh) + ": at least " + (g - nf) + (g - nf == 1 ? " test was" : " tests were") + " removed"
+                out.add(new Verdict(f, "", Kind.REMOVED, had(e.getValue()) + ": at least " + (g - nf) + (g - nf == 1 ? " test was" : " tests were") + " removed"
                         + (t == 0 ? "" : ", of which at most " + t + (t == 1 ? " is an old test" : " are old tests") + " said above to be taken out of the way, so at least "
                                 + least + " more") + which, by, (int) least));
             } else if (!counted.contains(f) && !lost.stream().allMatch(c -> judged.contains(f + "\n" + key(c)))) {
-                out.add(new Verdict(f, "", Kind.UNKNOWN, had(lost, fresh) + ". The reports cannot tell a test renamed from a test deleted and another written" + fourth.note(f), by));
+                out.add(new Verdict(f, "", Kind.UNKNOWN, had(e.getValue()) + ". The reports cannot tell a test renamed from a test deleted and another written" + fourth.note(f), by));
             }
         }
         return out;
@@ -800,21 +818,21 @@ final class Witness {
         for (String k : fourth.wavering.getOrDefault(f, Set.of())) {
             // a gone test of a file with no new one was removed all the same, and one switched off by name is so all the same
             if (now.containsKey(k) ? !now.get(k).stream().allMatch(c -> c.status() == Status.SKIPPED) : n.fresh().isEmpty()) continue;
-            out.add(new Verdict(f, name(k), Kind.UNSTABLE, WAVERED, by));
+            out.add(new Verdict(f, shown(n.shown(), k), Kind.UNSTABLE, WAVERED, by));
             judged.add(f + "\n" + k);
         }
         long b = out1.size(), m = rewrites.size();
         if (b > 0 && m == 0) {
             for (String k : out1) {
-                out.add(new Verdict(f, name(k), Kind.OLD_FAILS_AFTER, fourth.said(f, List.of(k)) + (now.containsKey(k) ? ", and the change skips it now" : ". The edited file does not report it now"), by));
+                out.add(new Verdict(f, shown(n.shown(), k), Kind.OLD_FAILS_AFTER, fourth.said(f, List.of(k), n.shown()) + (now.containsKey(k) ? ", and the change skips it now" : ". The edited file does not report it now"), by));
                 judged.add(f + "\n" + k);
             }
             said.put(f, b);
         } else if (b > 0) {
-            String what = shortList(out1.stream().map(Witness::name).toList()) + (b == 1 ? " passed" : " passed") + " before the change and " + (b == 1 ? "fails" : "fail")
+            String what = shortList(out1.stream().map(k -> shown(n.shown(), k)).toList()) + (b == 1 ? " passed" : " passed") + " before the change and " + (b == 1 ? "fails" : "fail")
                     + " on the code after it as the file was, and the file does not report " + (b == 1 ? "it now or skips it" : "them now or skips them") + ". It has "
                     + m + (m == 1 ? " test that passes" : " tests that pass") + " after the change and " + (m == 1 ? "does" : "do") + " not pass on both sides ("
-                    + shortList(shown(rewrites)) + ")";
+                    + shortList(shown(n.shown(), rewrites)) + ")";
             if (b > m) {
                 out.add(new Verdict(f, "", Kind.OLD_FAILS_AFTER, what + ", and at most " + m + " of the " + b + " old tests can be among them, rewritten for the changed "
                         + "behaviour: at least " + (b - m) + (b - m == 1 ? " was" : " were") + " taken out of the way", by, (int) (b - m)));
@@ -822,7 +840,7 @@ final class Witness {
             } else out.add(new Verdict(f, "", Kind.UNKNOWN, what + ", so it cannot be told whether the old " + (b == 1 ? "test was" : "tests were") + " rewritten for the changed "
                     + "behaviour under other names, or taken out of the way and other tests written", by, (int) b));
         }
-        if (!running.isEmpty()) out.add(new Verdict(f, "", Kind.UNKNOWN, shortList(running.stream().map(Witness::name).toList()) + (running.size() == 1 ? " passed" : " passed")
+        if (!running.isEmpty()) out.add(new Verdict(f, "", Kind.UNKNOWN, shortList(running.stream().map(k -> shown(n.shown(), k)).toList()) + (running.size() == 1 ? " passed" : " passed")
                 + " before the change and " + (running.size() == 1 ? "fails" : "fail") + " on the code after it as the file was. A test of " + (running.size() == 1 ? "that name" : "each name")
                 + " still runs after the change, so it cannot be told whether " + (running.size() == 1 ? "it was" : "each was") + " edited for the changed behaviour, or taken out and its "
                 + "name given to another case, as a row taken out does to the rows after it where cases are named by their place"
@@ -836,11 +854,10 @@ final class Witness {
     }
 
     /** "the file no longer reports 2 tests under the names it had (a, b), and reports 1 under a name it did not have (c)": what the reports show, not which tests these are. */
-    private static String had(List<JUnitXml.Case> gone, List<JUnitXml.Case> fresh) {
-        List<JUnitXml.Case> both = new ArrayList<>(gone);
-        both.addAll(fresh);
-        return "the file no longer reports " + tests(gone.size()) + " under the " + (gone.size() == 1 ? "name" : "names") + " it had (" + shortList(shown(gone, both)) + "), and reports "
-                + (fresh.isEmpty() ? "none under a name it did not have" : fresh.size() + " under " + (fresh.size() == 1 ? "a name" : "names") + " it did not have (" + shortList(shown(fresh, both)) + ")");
+    private static String had(Names n) {
+        List<JUnitXml.Case> gone = n.gone(), fresh = n.fresh();
+        return "the file no longer reports " + tests(gone.size()) + " under the " + (gone.size() == 1 ? "name" : "names") + " it had (" + shortList(shown(n.shown(), gone)) + "), and reports "
+                + (fresh.isEmpty() ? "none under a name it did not have" : fresh.size() + " under " + (fresh.size() == 1 ? "a name" : "names") + " it did not have (" + shortList(shown(n.shown(), fresh)) + ")");
     }
 
     private static String tests(long n) {

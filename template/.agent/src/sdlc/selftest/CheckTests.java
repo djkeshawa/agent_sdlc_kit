@@ -207,6 +207,7 @@ final class CheckTests {
         write(repo, "checks/asleep.t", ASLEEP);
         write(repo, "checks/swap.t", SWAP);
         write(repo, "checks/side/both.t", SIDE);
+        write(repo, "checks/pair.t", PAIR);
         write(repo, ".gitignore", "ignored/\n");
         git(repo, "init", "-q", "-b", "main");
         commit(repo, "base");
@@ -814,6 +815,18 @@ final class CheckTests {
                 && !late.contains("ran before the change and is skipped now") && code == 0);
         write(repo, "checks/off.t", OFF);
 
+        // which of two nested classes' tests of one name is skipped changes from run to run: the counts are the same, the tests are not
+        write(repo, "checks/nested.t", NESTED.replace("demo.Outer$A::works: pass", "demo.Outer$A::works: skip-once fixed").replace("demo.Outer$B::works: pass", "demo.Outer$B::works: pass-once"));
+        String alternate = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a test of a nested class skipped now is shown with its class where another class has a test of its name",
+                alternate.contains("at least 1 ran before the change and is skipped now\n      checks/nested.t  [self test]\n        the file runs 2 of its tests where it ran 3 before the change, "
+                        + "and skips 1 where it skipped 0 (skipped now under a name that ran before: demo.Outer$A.works)") && code == 1);
+        alternate = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("check: a skip that moves between two nested classes' tests of one name from run to run is unstable, not switched off",
+                alternate.contains("1 gave different results from run to run\n      checks/nested.t  [self test]\n        whether tests that ran before the change are skipped now differs from "
+                        + "run to run") && !alternate.contains("ran before the change and is skipped now") && code == 0);
+        write(repo, "checks/nested.t", NESTED);
+
         // the file as it was ran the test in its first run and skipped it in a later one: the repeat runs of the old side count
         write(repo, "checks/once.t", "target: skip\n");
         String once = report(Map.of("selftest-runner", "true", "runs", "2"));
@@ -916,6 +929,18 @@ final class CheckTests {
                         + "longer reports 2 tests under the names it had (holds, steady), and reports none under a name it did not have: at least 2 tests were removed, of which at most 1 "
                         + "is an old test said above to be taken out of the way, so at least 1 more. The names do not say which") && code == 1);
 
+        // two nested classes each lose their method of one name, and the change breaks only the first: the second is not taken for the first
+        write(repo, "checks/broken.t", BROKEN);
+        write(repo, "checks/pair.t", "demo.Pair::top: pass\n");
+        String pair = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: of two nested classes' tests of one name, the one the change breaks is taken out of the way, and the other is still counted as removed",
+                pair.contains("      checks/pair.t  [self test]\n        demo.Pair$A.works: passed before the change; as the test was, on the code after the change demo.Pair$A.works "
+                        + "fails: expected something else. The edited file does not report it now\n")
+                && pair.contains("at least 1 test was removed: the edited file reports fewer tests than it had before the change\n      checks/pair.t  [self test]\n        the file no "
+                        + "longer reports 2 tests under the names it had (demo.Pair$A.works, demo.Pair$B.works), and reports none under a name it did not have: at least 2 tests were "
+                        + "removed, of which at most 1 is an old test said above to be taken out of the way, so at least 1 more.") && code == 1);
+        write(repo, "checks/pair.t", PAIR);
+
         // fails as it was on the change in one run and not in another: unstable
         write(repo, "checks/broken.t", MENDED.replace("wobbly: pass", "wobbled: pass"));
         String wobbly = report(Map.of("selftest-runner", "true", "runs", "2"));
@@ -990,6 +1015,9 @@ final class CheckTests {
         write(repo, "checks/era.t", ERA);
         write(repo, "prod.txt", "v1\nfixed\n");
     }
+
+    /** A test file of the base with two nested classes that have a method of one name, the first of which the fix breaks. */
+    private static final String PAIR = "demo.Pair$A::works: fails-with fixed\ndemo.Pair$B::works: pass\ndemo.Pair::top: pass\n";
 
     /** A test file of the base that a second stand-in runner owns. */
     private static final String SIDE = "stays: pass\ngoes: pass\n";
