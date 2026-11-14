@@ -204,58 +204,6 @@ final class Declared {
         return out.toString();
     }
 
-    /**
-     * What a call is about, read from the place after its name and members: the value of a plain
-     * string title, else the first argument as written. Members, type arguments and the table of
-     * a table of cases are passed over. "" when nothing that can be read follows.
-     */
-    static String subject(String text, String code, int at) {
-        int n = code.length();
-        boolean table = false;
-        for (int step = 0; step < 12; step++) {
-            at = skipSpace(code, at);
-            if (at >= n) return "";
-            char c = code.charAt(at);
-            if (c == '.') {
-                int name = skipSpace(code, at + 1), end = name;
-                while (end < n && (Character.isLetterOrDigit(code.charAt(end)) || code.charAt(end) == '_' || code.charAt(end) == '$')) end++;
-                if (end == name) return "";
-                String member = code.substring(name, end);
-                table |= member.equals("each") || member.equals("for");
-                at = end;
-            } else if (c == '<') {
-                int after = typeArguments(code, at);
-                if (after == at) return "";
-                at = after;
-            } else if (c == '`' && table) {
-                int close = code.indexOf('`', at + 1);
-                if (close < 0) return "";
-                at = close + 1;
-                table = false;
-            } else if (c == '(') {
-                int first = skipSpace(code, at + 1);
-                char q = first < n ? code.charAt(first) : ' ';
-                int close = Code.closing(code, at);
-                if (table && q != '"' && q != '\'' && q != '`' && close >= 0) {
-                    at = close + 1; // the table; the call with the title follows
-                    table = false;
-                    continue;
-                }
-                if (q == '"' || q == '\'' || q == '`') {
-                    int closing = code.indexOf(q, first + 1);
-                    int after = closing < 0 ? n : skipSpace(code, closing + 1);
-                    if (closing > first && !code.substring(first, closing).contains("${") && after < n && (code.charAt(after) == ',' || code.charAt(after) == ')')) {
-                        return TestNames.unescaped(text.substring(first + 1, closing));
-                    }
-                }
-                return "?(" + expression(text, code, first) + ")";
-            } else {
-                return "";
-            }
-        }
-        return "";
-    }
-
     private static final Pattern JAVA_TYPE = Pattern.compile("\\b(?:class|interface|record|enum)\\s+(\\w+)");
     private static final Pattern JAVA_METHOD = Pattern.compile("\\bvoid\\s+(\\w+)\\s*\\(");
     private static final Pattern JAVA_TEST = Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*)*(?:Test|ParameterizedTest|RepeatedTest|TestFactory|TestTemplate)\\b");

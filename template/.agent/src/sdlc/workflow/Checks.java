@@ -181,15 +181,20 @@ public final class Checks {
         List<String> everyChange = Git.changed(base + "...HEAD");
         check(!testsMissing(files), "Main code changes come with test changes", passes, fails);
         Map<String, List<String>> added = Git.addedLines(Git.patch(base + "...HEAD"));
-        // configured patterns that are also built-in switches are judged below from the whole file, where a comment or a
-        // string is known as one; the others (a repository's own marks, comment directives) are judged by the added line
-        List<String> disabled = new ArrayList<>();
+        // configured patterns that are also built-in switches are judged below, from the whole file or by the line lint, where a
+        // comment or a string is known as one; the others (a repository's own marks, comment directives) are judged by the added line
+        Set<String> disabled = new LinkedHashSet<>();
         for (String hit : disabledTests(added)) if (containsDisabled(sdlc.check.Integrity.withoutBuiltInSwitches(hit.substring(hit.indexOf(": ") + 2)))) disabled.add(hit);
-        // a switch that no added line shows (it, a line break, .skip; it.concurrent.skip): read from the whole file, before and
-        // after, each with the test it stands on, so that one taken off a test does not make up for one put on another
+        // a switch that no added line shows (@, a line break, Disabled): read from the whole file, before and after, each with the
+        // test it stands on, so that one taken off a test does not make up for one put on another. Script test files are linted by
+        // the lines the change adds; their run is the judge.
         String branchPoint = Contracts.mergeBase(base);
         for (String f : files) {
             if (!Glob.any(Ctx.cfg.list("paths.test"), f)) continue;
+            if (!sdlc.check.Integrity.readWhole(f)) {
+                for (String line : added.getOrDefault(f, List.of())) if (sdlc.check.Integrity.lintedSwitch(line)) disabled.add(f + ": " + line.trim());
+                continue;
+            }
             String was = Trusted.read(branchPoint, f), now = Trusted.read("HEAD", f);
             for (sdlc.check.Integrity.Switch s : sdlc.check.Integrity.addedSwitches(f, was, now)) disabled.add(f + ": " + s.shown());
             if (sdlc.check.Integrity.unsure(f, now)) warns.add(f + ": the reader could not follow this file to its end (its brackets do not pair up for it); its switches are still found, a reviewer looks at its tests");

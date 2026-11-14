@@ -125,26 +125,16 @@ public final class Integrity {
     }
 
     /**
-     * Every switch in the code of a file that skips a test, marks it as to do, or focuses on one,
-     * with its line. The switch word itself is looked for, wherever it stands and whatever calls
-     * it (it.skip, test.describe.skip, vitest.it.skip, a helper of the repository's own with a
-     * .skip): nothing about the file's structure has to be understood to see it. Comments and the
-     * insides of strings are not code.
+     * Every switch in the code of a file that skips a test or marks it as to do, with its line.
+     * Comments and the insides of strings are not code. Script test files are not read here: the
+     * run of the file says which of its tests are skipped, and the lines a change adds are linted
+     * (see lintedSwitch).
      */
     private static List<Found> found(String path, String text) {
         List<Found> out = new ArrayList<>();
-        if (text == null) return out;
+        if (text == null || !readWhole(path)) return out;
         String code = Code.mask(path, text);
-        if (Code.isScript(path)) {
-            List<Declared.Item> items = Declared.script(path, text);
-            boolean unsure = Declared.unsure(path, text);
-            Matcher m = SCRIPT_SWITCH.matcher(code);
-            while (m.find()) {
-                String written = m.group().replaceAll("\\s+", "");
-                String how = written.endsWith(".skip") || written.endsWith(".fixme") || written.startsWith("x") ? "skip" : written.endsWith(".todo") ? "todo" : "only"; // fixme: playwright's skip
-                out.add(new Found(new Switch(how, Declared.subject(text, code, m.end())), Lines.at(text, m.end() - 1), homeOf(items, unsure, m.start())));
-            }
-        } else if (isJava(path)) {
+        if (isJava(path)) {
             List<Declared.Item> items = Declared.java(path, text);
             boolean unsure = Declared.unsure(path, text);
             Matcher m = Declared.JAVA_OFF.matcher(code);
@@ -174,9 +164,30 @@ public final class Integrity {
         return Code.isScript(path) ? Declared.script(path, text) : Declared.java(path, text);
     }
 
-    /** True when a script or Java file cannot be relied on for what stands where (see Declared.unsure). */
+    /** True when a Java file cannot be relied on for what stands where (see Declared.unsure). */
     public static boolean unsure(String path, String text) {
-        return text != null && (Code.isScript(path) || isJava(path)) && Declared.unsure(path, text);
+        return text != null && isJava(path) && Declared.unsure(path, text);
+    }
+
+    /**
+     * True when the switches of a test file are read from the whole file, before and after the
+     * change (addedSwitches); false when they are found by the line lint of the lines the change
+     * adds (lintedSwitch). Script test files are linted: their run is the judge.
+     */
+    public static boolean readWhole(String path) {
+        return !Code.isScript(path);
+    }
+
+    /**
+     * The line lint: true when the code of a line (its comments dropped and the insides of its
+     * strings emptied) holds a switch that skips a test, marks it as to do, or focuses on one. A
+     * switch written over several lines (it, a line break, .skip) is not seen, and a skipped test
+     * that a change moves or gives another title is reported like any other skip on a line the
+     * change wrote.
+     */
+    public static boolean lintedSwitch(String line) {
+        String code = code(line);
+        return FOCUSED.matcher(code).find() || SCRIPT_SWITCH.matcher(code).find();
     }
 
     /**
@@ -257,15 +268,10 @@ public final class Integrity {
         return out;
     }
 
-    /** True when a line holds one of the switches this class reads from whole files. */
-    public static boolean builtInSwitch(String line) {
-        return SCRIPT_SWITCH.matcher(line).find() || OTHER_SWITCH.matcher(line).find();
-    }
-
     /**
      * A line with its built-in switches taken out. What a configured pattern still finds in it is
      * the repository's own (a helper of its own that skips, a comment directive) and is judged by
-     * the line; the built-in ones are judged from the whole file.
+     * the line as written; the built-in ones are judged from the whole file or by the line lint.
      */
     public static String withoutBuiltInSwitches(String line) {
         return OTHER_SWITCH.matcher(SCRIPT_SWITCH.matcher(line).replaceAll(" ")).replaceAll(" ");
@@ -380,19 +386,26 @@ public final class Integrity {
 
     // ---------------- problems ----------------
 
+    /** The built-in idea of a test file, and the repository's own (paths.test). */
+    private static boolean anyTestFile(String path) {
+        return isTestFile(path) || sdlc.util.Glob.any(sdlc.core.Ctx.cfg.list("paths.test"), path);
+    }
+
     private void switchedOff() {
-        // the repository's own settings first (they may name more test folders), then the patterns of every stack
-        // The whole file is read, before and after: a switch may be written over several lines, and one that is
-        // taken off a test does not make up for one put on another.
+        // A file read whole is read before and after: a switch may be written over several lines, and one that is taken
+        // off a test does not make up for one put on another. Other test files are linted by the lines the change adds.
         Set<String> read = new LinkedHashSet<>();
         for (String path : change.paths("AM")) {
-            // the built-in idea of a test file, and the repository's own (paths.test)
-            if (!isTestFile(path) && !sdlc.util.Glob.any(sdlc.core.Ctx.cfg.list("paths.test"), path)) continue;
+            if (!anyTestFile(path)) continue;
+            if (!readWhole(path)) {
+                for (String line : added.getOrDefault(path, List.of())) if (lintedSwitch(line)) switchedOff(path, line.trim());
+                continue;
+            }
             read.add(path);
             for (Switch s : addedSwitches(path, before(path), after(path))) problem(s.focuses() ? "test focused" : "test switched off", path,
                     s.focuses() ? "only this test runs, the others in the file are skipped: " + s.shown() : s.shown());
-            if (unsure(path, after(path))) note("could not be read with confidence", path, "its brackets do not pair up for the reader, or a test in it could not be read to its end "
-                    + "(text of a JSX element with a bracket or a quote in it does this). Switches in it are still found; which tests it declares, and which are new, is not relied on");
+            if (unsure(path, after(path))) note("could not be read with confidence", path, "its brackets do not pair up for the reader, or a declaration in it could not be read to its end. "
+                    + "Switches in it are still found; which tests it declares, and which are new, is not relied on");
             List<String> inText = addedSwitchesInText(path, before(path), after(path));
             if (!inText.isEmpty()) note("switch in a comment or a string", path, inText.size() + (inText.size() == 1 ? " place looks" : " places look")
                     + " like a skipped or focused test inside a comment or a string (" + inText.get(0) + "). That switches nothing off, unless the file is written so that the reading took code for text: look at it");

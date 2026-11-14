@@ -219,22 +219,31 @@ final class TrustTests {
 
         // the same, written so that no added line shows it
         git(repo, "switch", "-q", "-c", "feature/PROJ-15-spread", "origin/main");
-        write(repo, "src/test/java/web.test.ts", "it\n  .skip('later', () => {})\n");
+        write(repo, "src/test/java/WebTest.java", "class WebTest {\n  @\n  Disabled\n  @Test void later() {}\n}\n");
         write(repo, "src/main/java/A.java", "class A { int c; }\n");
         commit(repo, "feat(PROJ-15): switch a test off over two lines");
         Ctx.init(repo);
         check("trust: a test switched off by a call written over two lines is still found",
-                Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No test was disabled or focused") && f.contains("web.test.ts")));
+                Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No test was disabled or focused") && f.contains("WebTest.java")));
+
+        // a script test file is linted by the lines the change adds; its run is the judge
+        git(repo, "switch", "-q", "-c", "feature/PROJ-17-script", "origin/main");
+        write(repo, "src/test/java/web.test.ts", "it.skip('later', () => {})\nit\n  .skip('sooner', () => {})\n");
+        write(repo, "src/main/java/A.java", "class A { int e; }\n");
+        commit(repo, "feat(PROJ-17): switch script tests off");
+        Ctx.init(repo);
+        check("trust: a script test switched off on an added line fails, and one written over two lines is not seen by the lint",
+                Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No test was disabled or focused") && f.contains("web.test.ts: it.skip('later'") && !f.contains("sooner")));
 
         // text that looks like a skipped test, inside a string: no failure, but a warning
         git(repo, "switch", "-q", "-c", "feature/PROJ-16-example", "origin/main");
-        write(repo, "src/test/java/docs.test.ts", "const example = `\nit.skip('example', () => {})\n`;\nit('real', () => { expect(example).toBeTruthy() })\n");
+        write(repo, "src/test/java/DocsTest.java", "class DocsTest {\n  String example = \"\"\"\n      @Disabled\n      \"\"\";\n  @Test void real() { assertNotNull(example); }\n}\n");
         write(repo, "src/main/java/A.java", "class A { int d; }\n");
         commit(repo, "feat(PROJ-16): a test about source text");
         Ctx.init(repo);
         Checks.Result example = Checks.prPolicy(null, false);
         check("trust: a skip inside a string of a test file does not fail the pull request, and is named for the reviewer",
-                example.fails().stream().noneMatch(f -> f.contains("No test was disabled or focused")) && example.warns().stream().anyMatch(w -> w.contains("docs.test.ts") && w.contains("inside a comment or a string")));
+                example.fails().stream().noneMatch(f -> f.contains("No test was disabled or focused")) && example.warns().stream().anyMatch(w -> w.contains("DocsTest.java") && w.contains("inside a comment or a string")));
 
         // a branch with no commit in common with the base: every diff would be empty or fail
         git(repo, "switch", "-q", "--orphan", "feature/PROJ-13-orphan");
