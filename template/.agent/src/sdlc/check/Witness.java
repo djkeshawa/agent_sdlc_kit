@@ -332,13 +332,13 @@ final class Witness {
         }
         Set<String> counted = new LinkedHashSet<>(); // files of which the counts say that fewer tests run
         for (Map.Entry<String, List<Verdict>> s : skips.entrySet()) if (s.getValue().stream().anyMatch(v -> v.kind() == Kind.SKIPPED_NOW)) counted.add(s.getKey());
-        out.addAll(gone(named, fourth, counted, said, judged, recounted, by));
+        out.addAll(gone(named, counted, said, judged, recounted, by));
         for (Map.Entry<String, List<Verdict>> s : skips.entrySet()) {
             String f = s.getKey();
             for (Verdict v : s.getValue()) {
                 if (unsteady.contains(f)) out.add(new Verdict(f, "", Kind.UNSTABLE,
                         "whether tests that ran before the change are skipped now differs from run to run: what the file reports, after the change or as it was, is not the same in every run", by, v.tests()));
-                else if (v.kind() == Kind.UNKNOWN) out.add(new Verdict(f, "", Kind.UNKNOWN, v.detail() + fourth.note(f), by, v.tests()));
+                else if (v.kind() == Kind.UNKNOWN) out.add(v);
                 else {
                     // what the old tests said to be taken out of the way, and the tests removed, did not already say (see budget)
                     long left = said.getOrDefault(f, 0L), least = v.tests() - left;
@@ -346,6 +346,8 @@ final class Witness {
                 }
             }
         }
+        // the fourth run was asked for these files, and did not judge every old test: said of each such file, whatever else is said of it
+        for (Map.Entry<String, Names> e : named.entrySet()) if (fourth.unclear().containsKey(e.getKey())) out.add(fourth.untold(e.getKey(), e.getValue().shown(), by));
         for (String f : sensitive) {
             for (String k : candidates.get(f)) {
                 String name = shown(shownIn.get(f), k);
@@ -363,10 +365,12 @@ final class Witness {
      * per file, the old tests that passed in the file as it was and failed or threw here in every
      * run; wavering: those that did so in some runs only. after: per file with a test in broke or
      * wavering, the runs of the file as the change has it that were made with the repeat runs
-     * (see broken).
+     * (see broken). unclear: per file, the old tests of which the first run gave no clean result,
+     * passed or failed (see untold).
      */
-    private record Fourth(Map<String, FileRun> first, Map<String, Set<String>> broke, Map<String, Set<String>> wavering, Map<String, List<FileRun>> after) {
-        static final Fourth NONE = new Fourth(Map.of(), Map.of(), Map.of(), Map.of());
+    private record Fourth(Map<String, FileRun> first, Map<String, Set<String>> broke, Map<String, Set<String>> wavering, Map<String, List<FileRun>> after,
+            Map<String, List<String>> unclear) {
+        static final Fourth NONE = new Fourth(Map.of(), Map.of(), Map.of(), Map.of(), Map.of());
 
         /** "passed before the change; as the test was, on the code after the change x fails: why", of those keys that broke. */
         String said(String file, java.util.Collection<String> keys, Map<String, String> shown) {
@@ -377,12 +381,25 @@ final class Witness {
             return "passed before the change; as the test was, on the code after the change " + names;
         }
 
-        /** For a verdict that could not be judged: why the fourth run of its file told nothing, or "". */
-        String note(String file) {
-            if (!first.containsKey(file)) return "";
+        /**
+         * The verdict of a file of which the fourth run did not judge every old test it was asked
+         * about: could not be judged, a verdict of its own, as no other verdict need be there to
+         * carry it. A file whose list grew while a test the change broke was taken out, [a, b] to
+         * [b, d, c] named by place, has nothing gone, skipped or short; when its old version does
+         * not compile or load on the code after the change, this is all that says that the old
+         * tests could not be judged.
+         */
+        Verdict untold(String file, Map<String, String> shown, String by) {
+            List<String> keys = unclear.get(file);
             FileRun run = first.get(file);
             String problem = run == null ? "gave no result" : run.problem();
-            return problem == null ? "" : ". The file as it was, run on the code after the change, " + problem + ", so whether the change broke these tests is not known";
+            int n = keys.size();
+            String which = n == 1 ? "the old test that passed before it (" + shown(shown, keys.get(0)) + ")" : "any of the " + n + " old tests that passed before it ("
+                    + shortList(keys.stream().map(k -> shown(shown, k)).toList()) + ")";
+            String head = problem != null ? "the old tests could not be run on the code after the change: there the file as it was " + problem
+                    : "the old tests could not all be judged on the code after the change: there the file as it was gave no clean result, passed or failed, for "
+                            + (n == 1 ? "one" : n) + " of them (not reported, reported more than once, skipped, or run again by the build with another result)";
+            return new Verdict(file, "", Kind.UNKNOWN, head + ", so it is not known whether the change broke " + which + " and took it out of the way or replaced it", by, n);
         }
     }
 
@@ -407,8 +424,11 @@ final class Witness {
      * and not because of the production code; that is still a test that passed before, fails on
      * what the change wrote, and the report says no more than that. A test
      * file that does not compile or load here (the change renamed what it used), or gives no
-     * result, tells nothing: its tests stay as they were judged without it, and the report says
-     * why (note).
+     * result, tells nothing of its old tests; nor does a run that does not report an old test
+     * once, as passed or as failed (it is not there, is there twice, is skipped, or the build ran
+     * it again and got another result). Such an old test is not judged, and its file gets a
+     * verdict of its own, could not be judged, with why (untold): the run was asked for, so
+     * what it did not say is said, and no other verdict of the file need be there to carry it.
      *
      * Which files: each edited file whose list of tests changed, in any way (Names.changed): a
      * name it did not report, a name it no longer reports, or a name with more or fewer of its
@@ -439,15 +459,24 @@ final class Witness {
             mixed.write(change.base, files);
             runner.forgetBuilt(mixed.dir, files);
         } catch (java.io.IOException e) {
-            for (String f : files) first.put(f, FileRun.failed("could not be set up (" + e.getMessage() + ")"));
-            return new Fourth(first, Map.of(), Map.of(), Map.of());
+            Map<String, List<String>> unclear = new LinkedHashMap<>();
+            for (String f : files) {
+                first.put(f, FileRun.failed("could not be set up (" + e.getMessage() + ")"));
+                unclear.put(f, new ArrayList<>(wanted.get(f)));
+            }
+            return new Fourth(first, Map.of(), Map.of(), Map.of(), unclear);
         }
         Map<String, FileRun> ran = runner.run(mixed.dir, files, timeout);
         for (String f : files) first.put(f, ran.get(f));
         Map<String, Set<String>> broke = new LinkedHashMap<>(), wavering = new LinkedHashMap<>();
+        Map<String, List<String>> unclear = new LinkedHashMap<>();
         for (String f : files) {
-            FileRun was = new FileRun(earlier.get(f).cases(), null);
-            for (String k : wanted.get(f)) if (status(was, k) == Status.PASSED && failed(status(first.get(f), k))) broke.computeIfAbsent(f, x -> new LinkedHashSet<>()).add(k);
+            // each old test asked about passes here, fails or throws here, or is told of (untold): no result, not reported, reported twice, skipped, run again
+            for (String k : wanted.get(f)) {
+                Status s = status(first.get(f), k);
+                if (failed(s)) broke.computeIfAbsent(f, x -> new LinkedHashSet<>()).add(k);
+                else if (s != Status.PASSED) unclear.computeIfAbsent(f, x -> new ArrayList<>()).add(k);
+            }
         }
         List<String> again = new ArrayList<>(broke.keySet());
         Map<String, List<FileRun>> after = new LinkedHashMap<>();
@@ -459,7 +488,7 @@ final class Witness {
             }
         }
         for (Map.Entry<String, Set<String>> w : wavering.entrySet()) broke.get(w.getKey()).removeAll(w.getValue());
-        return new Fourth(first, broke, wavering, after);
+        return new Fourth(first, broke, wavering, after, unclear);
     }
 
     private static boolean failed(Status s) {
@@ -789,7 +818,7 @@ final class Witness {
      * whatever the counts say. A gone test of which the runs disagree on that is unstable. What
      * those said is not said again (see budget).
      */
-    private static List<Verdict> gone(Map<String, Names> named, Fourth fourth, Set<String> counted, Map<String, Long> said, Set<String> judged, Set<String> recounted, String by) {
+    private static List<Verdict> gone(Map<String, Names> named, Set<String> counted, Map<String, Long> said, Set<String> judged, Set<String> recounted, String by) {
         List<Verdict> out = new ArrayList<>();
         for (Map.Entry<String, Names> e : named.entrySet()) {
             String f = e.getKey();
@@ -799,7 +828,7 @@ final class Witness {
             if (g > nf && recounted.contains(f)) {
                 out.add(new Verdict(f, "", Kind.UNSTABLE, had(e.getValue()) + ", but what the file reports, after the change or as it was, is not the same in every run", by, g - nf));
             } else if (g > nf && e.getValue().unlisted() != null) {
-                out.add(new Verdict(f, "", Kind.UNKNOWN, had(e.getValue()) + ". But " + e.getValue().unlisted() + ": whether tests were removed is not known" + fourth.note(f), by, g - nf));
+                out.add(new Verdict(f, "", Kind.UNKNOWN, had(e.getValue()) + ". But " + e.getValue().unlisted() + ": whether tests were removed is not known", by, g - nf));
             } else if (g > nf) {
                 long t = said.getOrDefault(f, 0L), least = g - nf - t;
                 said.put(f, Math.max(0, -least)); // what is left of it for the skips
@@ -809,7 +838,7 @@ final class Witness {
                         + (t == 0 ? "" : ", of which at most " + t + (t == 1 ? " is an old test" : " are old tests") + " said above to be taken out of the way, so at least "
                                 + least + " more") + which, by, (int) least));
             } else if (!counted.contains(f) && !lost.stream().allMatch(c -> judged.contains(f + "\n" + key(c)))) {
-                out.add(new Verdict(f, "", Kind.UNKNOWN, had(e.getValue()) + ". The reports cannot tell a test renamed from a test deleted and another written" + fourth.note(f), by));
+                out.add(new Verdict(f, "", Kind.UNKNOWN, had(e.getValue()) + ". The reports cannot tell a test renamed from a test deleted and another written", by));
             }
         }
         return out;

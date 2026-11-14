@@ -195,6 +195,8 @@ final class CheckTests {
         write(repo, "checks/judged.t", JUDGED);
         write(repo, "checks/legacy.t", LEGACY);
         write(repo, "checks/era.t", ERA);
+        write(repo, "checks/grow.t", GROW);
+        write(repo, "checks/shy.t", SHY);
         write(repo, "checks/named.t", NAMED);
         write(repo, "checks/off.t", OFF);
         write(repo, "checks/titles.t", TITLES);
@@ -1066,10 +1068,32 @@ final class CheckTests {
         String era = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: a gone test whose old file does not compile on the change could not be judged, and the report says why",
                 era.contains("        the file no longer reports 1 test under the name it had (lasting), and reports 1 under a name it did not have (enduring). The reports cannot tell a test renamed "
-                        + "from a test deleted and another written. The file as it was, run on the code after the change, does not compile, so whether the change broke these tests is not known\n")
-                && !era.contains("out of the way") && code == 0);
+                        + "from a test deleted and another written\n        the old tests could not be run on the code after the change: there the file as it was does not compile, so it "
+                        + "is not known whether the change broke any of the 2 old tests that passed before it (era, lasting) and took it out of the way or replaced it\n")
+                && !era.contains("out of the way:") && code == 0);
         write(repo, "checks/era.t", ERA);
+
+        // the audit's shape: a row the change breaks taken out while the file grows, [a, b] to [b, d, c] named by place, and the change also takes out
+        // what the old file needs to load. Nothing is gone, skipped or short, and no other verdict of the file is there to carry why the old tests
+        // could not be judged: the file gets a verdict of its own
+        write(repo, "checks/grow.t", "rows(int)[1]: pass\nrows(int)[2]: pass\nrows(int)[3]: needs fixed\nloads: pass\n");
+        String outgrown = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a file whose old version does not load on the change, where nothing else is said of it, could not be judged: the old tests could not be run on the change",
+                outgrown.contains("      checks/grow.t  [self test]\n        the old tests could not be run on the code after the change: there the file as it was does not compile, so it "
+                        + "is not known whether the change broke any of the 3 old tests that passed before it (rows(int)[1], rows(int)[2], loads) and took it out of the way or replaced it\n")
+                && outgrown.contains("      checks/grow.t  [self test]\n        rows(int)[3]\n") && !outgrown.contains("out of the way:") && code == 0);
+        write(repo, "checks/grow.t", GROW);
         write(repo, "prod.txt", "v1\nfixed\n");
+
+        // the file as it was runs on the change, and skips one of the old tests asked about: that one is not judged, and the file says so
+        write(repo, "checks/shy.t", "steady: pass\nshy: pass\nfresh: needs fixed\n");
+        String shy = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: an old test that the fourth run does not report as passed or failed could not be judged, said of its file",
+                shy.contains("      checks/shy.t  [self test]\n        the old tests could not all be judged on the code after the change: there the file as it was gave no clean "
+                        + "result, passed or failed, for one of them (not reported, reported more than once, skipped, or run again by the build with another result), so it is not known "
+                        + "whether the change broke the old test that passed before it (shy) and took it out of the way or replaced it\n")
+                && shy.contains("      checks/shy.t  [self test]\n        fresh\n") && code == 0);
+        write(repo, "checks/shy.t", SHY);
     }
 
     /** A test file of the base whose report holds a case for a failure outside the tests, as Vitest reports a failed afterAll. */
@@ -1161,6 +1185,12 @@ final class CheckTests {
 
     /** A test file of the base that, as it is there, compiles only on the base's code. */
     private static final String ERA = "era: compile-needs v1\nlasting: pass\n";
+
+    /** A test file of the base with a parameterized test whose first row the fix breaks, that compiles only on the base's code. */
+    private static final String GROW = "rows(int)[1]: fails-with fixed\nrows(int)[2]: pass\nloads: compile-needs v1\n";
+
+    /** A test file of the base whose second test, as it is there, is skipped the first time it runs on the code of the fix. */
+    private static final String SHY = "steady: pass\nshy: skip-once fixed\n";
 
     private static int code;
 
