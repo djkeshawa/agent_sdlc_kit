@@ -430,22 +430,28 @@ final class Witness {
         String detail = mine.size() == 1 ? "" : off.size() + " of " + mine.size() + " are skipped after the change; " + ran + " of " + had + " ran before it";
         SkipGroup s = new SkipGroup(file, name, afterKeys, oldKeys, detail);
         if (switchedOff(a, new FileRun(e.cases(), null), s)) return List.of(s);
-        for (JUnitXml.Case x : off) out.add(new Verdict(file, x.name(), Kind.EXISTING_SKIPPED, "skipped before the change too", runner.name()));
+        // not switched off: each case says what is true of it
+        for (JUnitXml.Case x : off) {
+            JUnitXml.Case was = l == null ? null : l.was().get(key(x));
+            if (was == null) out.add(new Verdict(file, x.name(), Kind.SKIPPED, "skipped after the change", runner.name()));
+            else if (was.status() == Status.SKIPPED) out.add(new Verdict(file, x.name(), Kind.EXISTING_SKIPPED, "skipped before the change too", runner.name()));
+            else out.add(new Verdict(file, x.name(), Kind.EXISTING_SKIPPED, "ran before the change, but as many cases of its test are skipped as before", runner.name()));
+        }
         return List.of();
     }
 
     /**
-     * True when, in these two runs, the file as it was ran the test more often than the file after
-     * the change does, and skipped it less often. A test that failed or threw there ran too. False
-     * when either run gave no result.
+     * True when, in these two runs, more cases of the test are skipped after the change than in
+     * the file as it was, and the file as it was ran at least one of them (one that failed or threw
+     * ran too). A new case that runs does not make up for an old one switched off; arguments that
+     * only changed places skip as many cases as before. False when either run gave no result.
      */
     private static boolean switchedOff(FileRun after, FileRun old, SkipGroup s) {
         if (after == null || after.problem() != null || old == null || old.problem() != null) return false;
         long ranOld = old.cases().stream().filter(c -> s.oldKeys().contains(key(c)) && c.status() != Status.SKIPPED).count();
         long offOld = old.cases().stream().filter(c -> s.oldKeys().contains(key(c)) && c.status() == Status.SKIPPED).count();
-        long ranNow = after.cases().stream().filter(c -> s.afterKeys().contains(key(c)) && c.status() != Status.SKIPPED).count();
         long offNow = after.cases().stream().filter(c -> s.afterKeys().contains(key(c)) && c.status() == Status.SKIPPED).count();
-        return offNow > offOld && ranNow < ranOld;
+        return offNow > offOld && ranOld > 0;
     }
 
     /**

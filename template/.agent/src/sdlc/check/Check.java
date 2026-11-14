@@ -65,7 +65,7 @@ public final class Check {
             long old = w.count(Kind.EXISTING_PASSES_ON_BOTH);
             if (old > 0) out.println("  " + old + " test" + (old == 1 ? "" : "s") + " that " + (old == 1 ? "was" : "were") + " already in the edited files " + (old == 1 ? "passes" : "pass") + " before and after (not counted)");
             long off = w.count(Kind.EXISTING_SKIPPED);
-            if (off > 0) out.println("  " + off + " test" + (off == 1 ? " that was" : "s that were") + " skipped before the change " + (off == 1 ? "is" : "are") + " skipped after it too (not counted)");
+            if (off > 0) out.println("  " + off + (off == 1 ? " test is" : " tests are") + " skipped as before the change: as many of " + (off == 1 ? "its" : "their") + " cases as before (not counted)");
             if (w.count(Kind.SENSITIVE) > 0) {
                 out.println("  A test that fails before and passes after is sensitive to the change. That is not evidence that the change is correct.");
             }
@@ -241,8 +241,8 @@ public final class Check {
     /** The line of a commit whose tests were all there before it and kept their result. */
     private static String onlyOld(Witness.Result w) {
         boolean passing = w.count(Kind.EXISTING_PASSES_ON_BOTH) > 0, skipped = w.count(Kind.EXISTING_SKIPPED) > 0;
-        if (passing && skipped) return "only tests that were already there, passing on both sides or skipped before and after";
-        if (skipped) return "only tests that were already there, skipped before and after";
+        if (passing && skipped) return "only tests that were already there, passing on both sides or skipped as before";
+        if (skipped) return "only tests that were already there, skipped as before";
         return "only tests that were already there, passing on both sides";
     }
 

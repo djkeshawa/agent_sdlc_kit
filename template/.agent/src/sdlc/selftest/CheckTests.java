@@ -310,7 +310,7 @@ final class CheckTests {
         commit(repo, "an edit of a skipped test");
         String history = report(Map.of("selftest-runner", "true", "runs", "1", "since", "1d"));
         check("check: --since says of a commit whose tests were only skipped before and after that they were",
-                history.contains("an edit of a skipped test\n    tests: only tests that were already there, skipped before and after\n"));
+                history.contains("an edit of a skipped test\n    tests: only tests that were already there, skipped as before\n"));
         check("check: --since replays each recent commit", history.contains("commits on this branch since 1 days ago") && history.contains("  the fix")
                 && history.contains("tests: 1 fail before and pass after") && history.contains("does not test the change: tests/old.t  idle")
                 && history.contains("new tests pass on both sides, so do not test their commit") && code == 0);
@@ -348,7 +348,7 @@ final class CheckTests {
         check("check: a test that ran before the change and is skipped now is a problem",
                 off.contains("1 ran before the change and is skipped now\n      checks/judged.t  [self test]\n        turned off\n") && code == 1);
         check("check: a test skipped before and after the change is not counted",
-                off.contains("1 test that was skipped before the change is skipped after it too (not counted)") && !off.contains("        was off") && !off.contains(" is skipped\n"));
+                off.contains("1 test is skipped as before the change: as many of its cases as before (not counted)") && !off.contains("        was off") && !off.contains(" is skipped\n"));
         java.io.InputStream in = System.in;
         java.io.PrintStream err = System.err;
         ByteArrayOutputStream reasons = new ByteArrayOutputStream();
@@ -512,7 +512,13 @@ final class CheckTests {
         // the arguments of a parameterized test reordered: the same ones run and are skipped, only their places changed
         write(repo, "checks/off.t", OFF.replace("params(int)[1]: pass\nparams(int)[2]: skip", "params(int)[1]: skip\nparams(int)[2]: pass"));
         String reordered = report(Map.of("selftest-runner", "true", "runs", "1"));
-        check("check: invocations of a parameterized test that change places are not switched off", !reordered.contains("skipped now") && code == 0);
+        check("check: invocations of a parameterized test that change places are not switched off", !reordered.contains("skipped now") && code == 0
+                && reordered.contains("tests are skipped as before the change: as many of their cases as before (not counted)"));
+        // one invocation that ran is skipped now, and a new one that runs is added: the new one does not make up for it
+        write(repo, "checks/off.t", OFF.replace("params(int)[1]: pass", "params(int)[1]: skip").replace("params(int)[2]: skip", "params(int)[2]: skip\nparams(int)[3]: pass"));
+        String paid = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: an invocation switched off is not made up for by a new one that runs",
+                paid.contains("1 ran before the change and is skipped now\n      checks/off.t  [self test]\n        params(int): 2 of 3 are skipped after the change; 1 of 2 ran before it\n") && code == 1);
         write(repo, "checks/off.t", OFF.replace("params(int)[1]: pass", "params(int)[1]: skip"));
         String fewer = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: when more invocations are skipped than before, the method is switched off, with the counts",
