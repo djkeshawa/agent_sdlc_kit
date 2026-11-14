@@ -53,7 +53,7 @@ public final class Check {
                     + (w.runs() > 1 ? ", in " + w.runs() + " of " + w.runs() + " runs" : ""), false);
             failed |= section(out, w, Kind.PASSES_ON_BOTH, n -> n + (n == 1 ? " new test passes" : " new tests pass") + " before and after, so "
                     + (n == 1 ? "it does" : "they do") + " not test the change", false);
-            failed |= section(out, w, Kind.SKIPPED_NOW, n -> n + " ran before the change and " + (n == 1 ? "is" : "are") + " skipped now", false);
+            failed |= section(out, w, Kind.SKIPPED_NOW, n -> n + " ran before the change and " + (n == 1 ? "is" : "are") + " skipped now", true);
             failed |= section(out, w, Kind.REMOVED, n -> n + (n == 1 ? " test was" : " tests were") + " removed: the edited file had "
                     + (n == 1 ? "it" : "them") + " before the change, and the change did not only rename " + (n == 1 ? "it" : "them"), false);
             section(out, w, Kind.UNSTABLE, n -> n + " gave different results from run to run", true);
@@ -145,7 +145,7 @@ public final class Check {
                 part(parts, w.count(Kind.REMOVED), "removed");
                 part(parts, w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE), "could not be judged");
                 part(parts, w.count(Kind.SKIPPED), "skipped");
-                out.println("    tests: " + (parts.isEmpty() ? "only tests that were already there, passing on both sides" : String.join("; ", parts)));
+                out.println("    tests: " + (parts.isEmpty() ? onlyOld(w) : String.join("; ", parts)));
                 for (Verdict v : w.verdicts()) {
                     if (v.kind() == Kind.PASSES_ON_BOTH) out.println("        does not test the change: " + v.file() + "  " + v.name());
                     else if (v.kind() == Kind.SKIPPED_NOW) out.println("        ran before, skipped after: " + v.file() + "  " + v.name());
@@ -236,6 +236,14 @@ public final class Check {
             Thread.currentThread().interrupt();
         }
         return text[0];
+    }
+
+    /** The line of a commit whose tests were all there before it and kept their result. */
+    private static String onlyOld(Witness.Result w) {
+        boolean passing = w.count(Kind.EXISTING_PASSES_ON_BOTH) > 0, skipped = w.count(Kind.EXISTING_SKIPPED) > 0;
+        if (passing && skipped) return "only tests that were already there, passing on both sides or skipped before and after";
+        if (skipped) return "only tests that were already there, skipped before and after";
+        return "only tests that were already there, passing on both sides";
     }
 
     private static void part(List<String> parts, long n, String what) {

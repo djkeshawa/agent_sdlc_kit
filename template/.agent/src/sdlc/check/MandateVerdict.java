@@ -172,7 +172,7 @@ final class MandateVerdict {
             for (Witness.Verdict v : w.verdicts()) {
                 if (v.kind() == Kind.PASSES_ON_BOTH) detail.add(v.file() + "  " + v.name() + ": passes before and after, so it does not test the change");
                 else if (v.kind() == Kind.FAILS_AFTER) detail.add(v.file() + "  " + v.name() + ": " + v.detail());
-                else if (v.kind() == Kind.SKIPPED_NOW) detail.add(v.file() + "  " + v.name() + ": ran before the change and is skipped now");
+                else if (v.kind() == Kind.SKIPPED_NOW) detail.add(v.file() + "  " + v.name() + ": ran before the change and is skipped now" + (v.detail().isBlank() ? "" : " (" + v.detail() + ")"));
                 else if (v.kind() == Kind.REMOVED) detail.add(v.file() + "  " + v.name() + ": the file had it before the change, and it is gone");
             }
             for (Witness.Verdict v : w.verdicts()) if (v.kind() == Kind.RENAMED) detail.add(v.file() + ": " + v.detail());

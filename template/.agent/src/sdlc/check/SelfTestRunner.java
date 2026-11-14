@@ -20,6 +20,8 @@ import sdlc.check.JUnitXml.Status;
  *   compile-needs WORD  passes when it does; else no file of the same run compiles
  *   leans-on FILE       passes when the checkout holds that file or an earlier run built it, else fails by assertion
  *   timeout             the whole file gives no result, as a run cut off by the time limit
+ *   skip-without WORD   skipped where prod.txt lacks the word; where it holds it, the case does not exist
+ *   skip-once WORD      where it holds the word, skipped in the first run in that checkout and passes in later ones; else passes
  * A name is reported as a script's string would give it: \' is a quote. A name with %i in it is
  * reported twice, with 1 and with 2 in its place (it.each, a parameterized method). A line
  * without ": " is not a case: it stands for the test's body.
@@ -100,10 +102,12 @@ final class SelfTestRunner implements Runner {
                     String name = line.substring(0, line.indexOf(": "));
                     String[] how = line.substring(line.indexOf(": ") + 2).trim().split(" ");
                     boolean has = how.length > 1 && prod.contains(how[1]);
+                    if (how[0].equals("skip-without") && has) continue; // a test declared only where the word is missing
                     Status s = switch (how[0]) {
                         case "pass" -> Status.PASSED;
                         case "fail" -> Status.FAILED;
-                        case "skip" -> Status.SKIPPED;
+                        case "skip", "skip-without" -> Status.SKIPPED;
+                        case "skip-once" -> has && call == 1 ? Status.SKIPPED : Status.PASSED; // with the word: skipped only the first time
                         case "flaky" -> has || call > 1 ? Status.PASSED : Status.FAILED; // without the word: fails only the first time
                         case "needs" -> has ? Status.PASSED : Status.FAILED;
                         case "error-unless" -> has ? Status.PASSED : Status.ERRORED;

@@ -133,6 +133,7 @@ final class CheckTests {
         write(repo, "checks/legacy.t", LEGACY);
         write(repo, "checks/era.t", ERA);
         write(repo, "checks/named.t", NAMED);
+        write(repo, "checks/off.t", OFF);
         write(repo, ".gitignore", "ignored/\n");
         git(repo, "init", "-q", "-b", "main");
         commit(repo, "base");
@@ -303,7 +304,13 @@ final class CheckTests {
         commit(repo, "a test that proves nothing");
         write(repo, "checks/judged.t", JUDGED.replace("turned off: pass", "turned off: skip").replace("goes too: pass\n", ""));
         commit(repo, "a test switched off and one removed");
+        write(repo, "checks/quiet.t", "asleep: skip\n");
+        commit(repo, "a skipped test");
+        write(repo, "checks/quiet.t", "asleep: skip\n  still later\n");
+        commit(repo, "an edit of a skipped test");
         String history = report(Map.of("selftest-runner", "true", "runs", "1", "since", "1d"));
+        check("check: --since says of a commit whose tests were only skipped before and after that they were",
+                history.contains("an edit of a skipped test\n    tests: only tests that were already there, skipped before and after\n"));
         check("check: --since replays each recent commit", history.contains("commits on this branch since 1 days ago") && history.contains("  the fix")
                 && history.contains("tests: 1 fail before and pass after") && history.contains("does not test the change: tests/old.t  idle")
                 && history.contains("new tests pass on both sides, so do not test their commit") && code == 0);
@@ -311,7 +318,7 @@ final class CheckTests {
                 && history.contains("ran before, skipped after: checks/judged.t  turned off") && history.contains("removed: checks/judged.t  goes too")
                 && history.contains("1 test ran before its commit and is skipped after it; 1 test was removed"));
         check("check: --since wants a time span", Asserts.throwsUsage(() -> Check.run(Map.of("since", "true"))));
-        git(repo, "reset", "-q", "--hard", "HEAD~3");
+        git(repo, "reset", "-q", "--hard", "HEAD~5");
         write(repo, "prod.txt", "v1\nfixed\nmore\n");
         branch = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: commits on the branch and uncommitted edits are one change", branch.contains("2 files changed against main") && branch.contains("1 fails before the change and passes after it"));
@@ -393,6 +400,7 @@ final class CheckTests {
                 && twoGroups.contains("2 new tests pass before and after") && twoGroups.contains("1 test was removed") && twoGroups.contains("        stays\n"));
 
         renamedByTheText(repo);
+        switchedOff(repo);
 
         // a test that went to another changed file has moved
         write(repo, "checks/judged.t", JUDGED.replace("goes too: pass\n", ""));
@@ -475,6 +483,54 @@ final class CheckTests {
         String none = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: a new file with no test is said to report none", none.contains("checks/empty.t  [self test]\n        the file ran after the change and reports no tests\n") && code == 0);
         Files.delete(repo.resolve("checks/empty.t"));
+    }
+
+    /** A test file of the base for "ran before the change, skipped now": tests that failed, threw, passed, a parameterized one, two of one name. */
+    private static final String OFF = "failing: needs fixed\nthrowing: error-unless fixed\ntarget: pass\nparams(int)[1]: pass\nparams(int)[2]: skip\ntwin: skip\ntwin: pass\n";
+
+    /** Which skipped tests the change switched off, and which it did not. */
+    private static void switchedOff(Path repo) throws IOException {
+        write(repo, "checks/judged.t", JUDGED);
+        // a test that failed or threw before the change also ran
+        write(repo, "checks/off.t", OFF.replace("failing: needs fixed", "failing: skip").replace("throwing: error-unless fixed", "throwing: skip"));
+        String failed = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a test that failed or threw before the change ran, and is skipped now",
+                failed.contains("2 ran before the change and are skipped now\n      checks/off.t  [self test]\n        failing\n        throwing\n") && code == 1);
+
+        // two cases of one name before the change, one of which ran: both skipped now
+        write(repo, "checks/off.t", OFF.replace("twin: pass", "twin: skip"));
+        String twins = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: of two tests of one name, one ran and both are skipped now: skipped now, with the counts",
+                twins.contains("1 ran before the change and is skipped now\n      checks/off.t  [self test]\n        twin: 2 of 2 are skipped after the change; 1 of 2 ran before it\n") && code == 1);
+
+        // a second test of the name exists only before the change: it does not hide the one switched off
+        write(repo, "checks/off.t", OFF.replace("target: pass", "target: skip\ntarget: skip-without fixed"));
+        String hidden = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: two tests of one name on the side before the change do not hide a test switched off",
+                hidden.contains("1 ran before the change and is skipped now\n      checks/off.t  [self test]\n        target\n") && code == 1);
+
+        // the arguments of a parameterized test reordered: the same ones run and are skipped, only their places changed
+        write(repo, "checks/off.t", OFF.replace("params(int)[1]: pass\nparams(int)[2]: skip", "params(int)[1]: skip\nparams(int)[2]: pass"));
+        String reordered = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: invocations of a parameterized test that change places are not switched off", !reordered.contains("skipped now") && code == 0);
+        write(repo, "checks/off.t", OFF.replace("params(int)[1]: pass", "params(int)[1]: skip"));
+        String fewer = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: when more invocations are skipped than before, the method is switched off, with the counts",
+                fewer.contains("1 ran before the change and is skipped now\n      checks/off.t  [self test]\n        params(int): 2 of 2 are skipped after the change; 1 of 2 ran before it\n") && code == 1);
+
+        // a skip that comes and goes is unstable, not switched off; one run alone cannot tell
+        write(repo, "checks/off.t", OFF.replace("target: pass", "target: skip-once fixed"));
+        String wavering = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("check: a test skipped in one run after the change and not in another is unstable, not switched off",
+                !wavering.contains("skipped now") && wavering.contains("1 gave different results from run to run\n      checks/off.t  [self test]\n        target: skipped after the change in one run and not in another") && code == 0);
+        write(repo, "checks/off.t", OFF);
+
+        // skipped after the change where the file as it was gave no result: listed, not judged switched off
+        write(repo, "checks/legacy.t", "held: skip\n");
+        String unknown = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a test skipped after the change, where the file as it was gave no result, is listed as skipped",
+                unknown.contains("1 is skipped\n      checks/legacy.t  [self test]\n        held\n") && !unknown.contains("skipped now") && code == 0);
+        write(repo, "checks/legacy.t", LEGACY);
     }
 
     /** A test file of the base whose tests the change renames, rewrites or removes. */

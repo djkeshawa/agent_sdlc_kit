@@ -54,7 +54,7 @@ Three parts:
 | Fails before, passes after | The test is sensitive to the change. It is run three times on each side, so a test that fails at random does not count |
 | New test passes before and after | It passes whether or not the change is there, so it does not test the change. This fails the check |
 | Fails after the change | The change's own test fails. This fails the check |
-| Ran before the change, skipped now | The file as it was ran this test, and the change skips it: the change switched it off. This fails the check |
+| Ran before the change, skipped now | The file as it was ran this test (it passed, failed or threw), and the change skips it: the change switched it off. Like a sensitive test it is run again on both sides, and a skip that comes and goes is unstable instead. The invocations of a parameterized test are counted together, as their numbers (`[1]`, `[2]`) say nothing about which arguments ran: it is switched off when more of them are skipped and fewer run than before. This fails the check |
 | Removed | The file as it was had these tests, the file now does not, and the change did not only rename them. They are named. This fails the check, however many new tests came: deleting a test and writing another is not a rename. A file whose tests were all taken out counts too |
 | Could not be judged | Before the change the test did not compile, threw something other than a failed assertion, or was not found. Or the file as it was could not be run (it did not compile, timed out, or no build tool), so it cannot be told whether a test is new. A test of code that did not exist before cannot fail there for the right reason, so it is counted neither way |
 | Different results from run to run | Unstable. Not counted as sensitive |
