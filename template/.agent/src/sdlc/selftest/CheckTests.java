@@ -145,6 +145,15 @@ final class CheckTests {
                 sdlc.check.Runners.vitestReport(xml, "src/refund.test.ts").equals("ERRORED refunds > rejects; PASSED refunds > accepts"));
         Files.delete(xml);
 
+        // which cases are runs of one parameterized test: the runner says, from the shape its tool gives their names
+        check("check: Surefire's names of the runs of a parameterized test give the test and the place",
+                sdlc.check.Runners.invocation("maven", "check(int)[3]").equals("check(int) @ 3") && sdlc.check.Runners.invocation("maven", "check(int, String)[12]").equals("check(int, String) @ 12")
+                && sdlc.check.Runners.invocation("maven", "check(int[])[1]").equals("check(int[]) @ 1") && sdlc.check.Runners.invocation("maven", "testPrint[0]").equals("testPrint @ 0"));
+        check("check: any other name Surefire writes is a test of its own", java.util.stream.Stream.of("rate", "check(int)", "[1] 1, 2", "check[0: x=1]", "factory()[1][2]", "a > rate[3]", "check(int)[3] again", "check(int)[x]")
+                .allMatch(n -> sdlc.check.Runners.invocation("maven", n).equals("a test of its own")));
+        check("check: a vitest title is a test, brackets and all", sdlc.check.Runners.invocation("vitest", "rate[3]").equals("a test of its own")
+                && sdlc.check.Runners.invocation("vitest", "check(int)[3]").equals("a test of its own"));
+
         // Maven: the build passes and no report names the class: the class ran and has no tests. A failed build says nothing.
         if (Proc.WINDOWS) return; // the stand-in for Maven below is a shell script
         Path m = repo.resolve("maven");
@@ -201,6 +210,8 @@ final class CheckTests {
         write(repo, "checks/era.t", ERA);
         write(repo, "checks/named.t", NAMED);
         write(repo, "checks/off.t", OFF);
+        write(repo, "checks/titles.vitest.t", TITLES);
+        write(repo, "checks/once.t", ONCE);
         write(repo, ".gitignore", "ignored/\n");
         git(repo, "init", "-q", "-b", "main");
         commit(repo, "base");
@@ -415,7 +426,7 @@ final class CheckTests {
         check("check: a test that ran before the change and is skipped now is a problem",
                 off.contains("1 ran before the change and is skipped now\n      checks/judged.t  [self test]\n        turned off\n") && code == 1);
         check("check: a test skipped before and after the change is not counted",
-                off.contains("1 test is skipped as before the change: as many of its cases as before (not counted)") && !off.contains("        was off") && !off.contains(" is skipped\n"));
+                off.contains("1 test is skipped as before the change: it was skipped before it too, or its test skips as many of its cases as before, or fewer (not counted)") && !off.contains("        was off") && !off.contains(" is skipped\n"));
         java.io.InputStream in = System.in;
         java.io.PrintStream err = System.err;
         ByteArrayOutputStream reasons = new ByteArrayOutputStream();
@@ -580,12 +591,33 @@ final class CheckTests {
         write(repo, "checks/off.t", OFF.replace("params(int)[1]: pass\nparams(int)[2]: skip", "params(int)[1]: skip\nparams(int)[2]: pass"));
         String reordered = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: invocations of a parameterized test that change places are not switched off", !reordered.contains("skipped now") && code == 0
-                && reordered.contains("tests are skipped as before the change: as many of their cases as before (not counted)"));
-        // one invocation that ran is skipped now, and a new one that runs is added: the new one does not make up for it
+                && reordered.contains("tests are skipped as before the change: each was skipped before it too, or its test skips as many of its cases as before, or fewer (not counted)"));
+        // one invocation that ran is skipped now, and a new one that runs is added: the new one does not make up for it, and the
+        // reports cannot tell this from a skipped case added in front of the others. Not passed, not accused: could not be judged.
         write(repo, "checks/off.t", OFF.replace("params(int)[1]: pass", "params(int)[1]: skip").replace("params(int)[2]: skip", "params(int)[2]: skip\nparams(int)[3]: pass"));
-        String paid = report(Map.of("selftest-runner", "true", "runs", "1"));
-        check("check: an invocation switched off is not made up for by a new one that runs",
-                paid.contains("1 ran before the change and is skipped now\n      checks/off.t  [self test]\n        params(int): 2 of 3 are skipped after the change; 1 of 2 ran before it\n") && code == 1);
+        String paid = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("check: an invocation switched off is not made up for by a new one that runs: it could not be judged, in every run",
+                paid.contains("could not be judged\n") && paid.contains("\n        params(int): 2 of 3 are skipped after the change and 1 of 2 before it, while 1 run where 1 ran before. "
+                        + "The report names its cases only by their place, so it cannot be told whether a skipped case was added or a case that ran was switched off and another one added\n")
+                && !paid.contains("skipped now") && !paid.contains("from run to run"));
+        // a skipped case added in front of cases that all ran: the same
+        write(repo, "checks/named.t", NAMED.replace("rejectsNull(String)[%i]: pass\n", "rejectsNull(String)[1]: pass\nrejectsNull(String)[2]: skip\nrejectsNull(String)[3]: pass\n"));
+        String inserted = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a skipped case among cases that ran, where as many run as before, could not be judged",
+                inserted.contains("\n        rejectsNull(String): 1 of 3 are skipped after the change and 0 of 2 before it, while 2 run where 2 ran before. The report names its cases only by their place")
+                && !inserted.contains("skipped now"));
+        write(repo, "checks/named.t", NAMED);
+        // what could not be judged in one run and is not switched off in another is unstable
+        write(repo, "checks/off.t", OFF.replace("params(int)[1]: pass\nparams(int)[2]: skip", "params(int)[1]: skip-once fixed\nparams(int)[2]: skip\nparams(int)[3]: pass"));
+        String undecidedOnce = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("check: a test that could not be judged in one run and is not switched off in another is unstable",
+                undecidedOnce.contains("1 gave different results from run to run\n      checks/off.t  [self test]\n        params(int): skipped after the change in one run and not in another")
+                && !undecidedOnce.contains("params(int): 2 of 3") && !undecidedOnce.contains("skipped now"));
+        // cases added after the last one, skipped: an ordinary new argument whose assumption does not hold. Not switched off
+        write(repo, "checks/off.t", OFF.replace("params(int)[2]: skip", "params(int)[2]: skip\nparams(int)[3]: skip"));
+        String appended = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a skipped case added after the last one is listed as skipped, and does not switch its test off",
+                appended.contains("1 is skipped\n      checks/off.t  [self test]\n        params(int)[3]\n") && !appended.contains("skipped now") && code == 0);
         write(repo, "checks/off.t", OFF.replace("params(int)[1]: pass", "params(int)[1]: skip"));
         String fewer = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: when more invocations are skipped than before, the method is switched off, with the counts",
@@ -598,6 +630,21 @@ final class CheckTests {
                 !wavering.contains("skipped now") && wavering.contains("1 gave different results from run to run\n      checks/off.t  [self test]\n        target: skipped after the change in one run and not in another") && code == 0);
         write(repo, "checks/off.t", OFF);
 
+        // the file as it was ran the test in its first run and skipped it in a later one: the repeat runs of the old side count
+        write(repo, "checks/once.t", "target: skip\n");
+        String once = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("check: a test that ran as the file was in one run and was skipped there in another is unstable, not switched off",
+                once.contains("1 gave different results from run to run\n      checks/once.t  [self test]\n        target: skipped after the change in one run and not in another")
+                && !once.contains("skipped now") && code == 0);
+        write(repo, "checks/once.t", ONCE);
+
+        // a Vitest title is the test, brackets and all: "rate" and "rate[3]" are two tests, and one does not pay for the other
+        write(repo, "checks/titles.vitest.t", "rate: skip\nrate[3]: pass\n");
+        String titles = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a test whose title differs from another's only by a number in brackets is judged on its own",
+                titles.contains("1 ran before the change and is skipped now\n      checks/titles.vitest.t  [self test]\n        rate\n") && code == 1);
+        write(repo, "checks/titles.vitest.t", TITLES);
+
         // skipped after the change where the file as it was gave no result: listed, not judged switched off
         write(repo, "checks/legacy.t", "held: skip\n");
         String unknown = report(Map.of("selftest-runner", "true", "runs", "1"));
@@ -605,6 +652,12 @@ final class CheckTests {
                 unknown.contains("1 is skipped\n      checks/legacy.t  [self test]\n        held\n") && !unknown.contains("skipped now") && code == 0);
         write(repo, "checks/legacy.t", LEGACY);
     }
+
+    /** A test file of the base, named as Vitest names its tests: two tests whose titles differ only by "[3]". */
+    private static final String TITLES = "rate: pass\nrate[3]: skip\n";
+
+    /** A test file of the base whose test, as it is there, runs only the first time it is run in a checkout. */
+    private static final String ONCE = "target: pass-once\n";
 
     /** A test file of the base whose tests the change renames, rewrites or removes. */
     private static final String NAMED = "has a name: pass\n  expects payments\nadds %i: pass\nit\\'s a name: pass\nrejectsNull(String)[%i]: pass\nrefund: pass\ngoes: pass\n";

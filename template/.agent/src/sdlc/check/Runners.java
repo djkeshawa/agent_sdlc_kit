@@ -33,12 +33,25 @@ public final class Runners {
         return said(Vitest.result(JUnitXml.read(report), file, null, 1, false, ""));
     }
 
+    /** For the self test: how a runner ("maven" or "vitest") reads a case's name, as "test @ place", or "a test of its own". */
+    public static String invocation(String runner, String name) {
+        Runner r = runner.equals("maven") ? new Maven() : new Vitest();
+        Runner.Invocation i = r.invocation(new JUnitXml.Case("demo.ATest", name, JUnitXml.Status.PASSED, "", ""));
+        return i == null ? "a test of its own" : i.test() + " @ " + i.place();
+    }
+
     /** A file's run in words: "no result: why", "ran, no tests", or each case as "STATUS name", joined by "; ". */
     private static String said(Runner.FileRun run) {
         if (run == null) return "no result";
         if (run.problem() != null) return "no result: " + run.problem();
         if (run.cases().isEmpty()) return "ran, no tests";
         return String.join("; ", run.cases().stream().map(c -> c.status() + " " + c.name()).toList());
+    }
+
+    /** A case name as Surefire names a run of a parameterized test (see Maven.INVOCATION), or null. */
+    static Runner.Invocation surefireInvocation(String name) {
+        java.util.regex.Matcher m = Maven.INVOCATION.matcher(name);
+        return m.matches() ? new Runner.Invocation(m.group(1), Integer.parseInt(m.group(2))) : null;
     }
 
     static List<Runner> all() {
@@ -138,6 +151,28 @@ public final class Runners {
         @Override
         public boolean support(String path) {
             return path.contains("src/test/");
+        }
+
+        /**
+         * The two shapes in which Surefire names one run of a parameterized test: JUnit 5, in
+         * Surefire's default names, "method(Type, Type)[n]" (the method, its parameter types, the
+         * place from 1); JUnit 4's Parameterized runner, "method[n]" (from 0). The name before the
+         * brackets must be a Java method name, and the brackets must hold a number and end the
+         * name. That is safe because a Java method name cannot hold brackets or parentheses, so
+         * a test that is not a run of a parameterized one is never reported in either shape, and
+         * no plain test shares a group with the runs: JUnit 5 writes a test without parameters as
+         * "method", without the parentheses its runs have; JUnit 4 writes brackets only under
+         * Parameterized, which runs every test of its class with parameters. What is left is a
+         * runner of one's own that writes such names freely. Anything else is a test of its own,
+         * by its whole name: a name pattern of one's own ("method[0: x=1]"), Surefire's
+         * display-name option ("[1] 1, 2"), a dynamic test inside a dynamic container
+         * ("factory()[1][2]").
+         */
+        static final Pattern INVOCATION = Pattern.compile("([\\p{L}_$][\\p{L}\\p{N}_$]*(?:\\([^()]*\\))?)\\[(\\d{1,9})\\]");
+
+        @Override
+        public Runner.Invocation invocation(JUnitXml.Case c) {
+            return surefireInvocation(c.name());
         }
 
         /** What Maven prints when code does not compile. */
@@ -348,6 +383,12 @@ public final class Runners {
         @Override
         public String name() {
             return "Vitest";
+        }
+
+        /** None: vitest's report keeps each title as it is written, brackets and all, and test.each writes a title per row. A title is a test. */
+        @Override
+        public Runner.Invocation invocation(JUnitXml.Case c) {
+            return null;
         }
 
         @Override

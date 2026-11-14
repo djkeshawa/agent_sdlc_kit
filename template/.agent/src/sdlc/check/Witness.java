@@ -40,7 +40,7 @@ final class Witness {
         EXISTING_PASSES_ON_BOTH,
         /** Fails after the change. */
         FAILS_AFTER,
-        /** Nothing can be said: it could not run before the change, or threw something other than an assertion there. */
+        /** Nothing can be said: it could not run before the change, or threw something other than an assertion there, or the reports cannot tell two answers apart. */
         UNKNOWN,
         /** Runs disagreed with each other. */
         UNSTABLE,
@@ -242,7 +242,7 @@ final class Witness {
         for (String f : alone) before.put(f, runAlone(change, runner, files, f, base, timeout));
         // candidates: failed before by assertion, passed after. They are run again to rule out a test that fails at random.
         Map<String, Set<String>> candidates = new LinkedHashMap<>();
-        List<SkipGroup> skips = new ArrayList<>(); // tests that look switched off: run again too, before it is said
+        List<SkipGroup> skips = new ArrayList<>(); // tests that look switched off, or may be: run again too, before it is said
         Map<String, Lineup> lineups = new LinkedHashMap<>(); // files whose run after the change and run as they were both gave results
         for (String f : files) {
             FileRun a = after.get(f);
@@ -275,7 +275,7 @@ final class Witness {
                 // side before the change do not matter to these.
                 if (c.status() == Status.FLAKY) out.add(new Verdict(f, c.name(), Kind.UNSTABLE, "the build ran it again and got another result", runner.name()));
                 else if (c.status() == Status.SKIPPED) {
-                    if (groups.add(group(c))) skips.addAll(skipped(f, c, a, e, l, runner, out));
+                    if (groups.add(group(runner, c))) skips.addAll(skipped(f, c, a, e, l, runner, out));
                 }
                 else if (c.status() != Status.PASSED) out.add(new Verdict(f, c.name(), Kind.FAILS_AFTER, describe(c), runner.name()));
                 // what is left compares the two sides by name, which must then name one test on each side
@@ -341,12 +341,12 @@ final class Witness {
             }
             if (!switched.isEmpty()) {
                 Map<String, FileRun> o = runner.run(sides.old().dir, switched, timeout);
-                for (SkipGroup s : skips) if (!switchedOff(a.get(s.file()), o.get(s.file()), s)) unsteady.add(s);
+                for (SkipGroup s : skips) if (off(runner, a.get(s.file()), o.get(s.file()), s) != s.off()) unsteady.add(s);
             }
         }
         for (SkipGroup s : skips) {
             if (unsteady.contains(s)) out.add(new Verdict(s.file(), s.name(), Kind.UNSTABLE, "skipped after the change in one run and not in another, or ran as the file was in one run and not in another", runner.name()));
-            else out.add(new Verdict(s.file(), s.name(), Kind.SKIPPED_NOW, s.detail(), runner.name()));
+            else out.add(new Verdict(s.file(), s.name(), s.off() == Off.YES ? Kind.SKIPPED_NOW : Kind.UNKNOWN, s.detail(), runner.name()));
         }
         for (String f : sensitive) {
             for (String k : candidates.get(f)) {
@@ -393,65 +393,114 @@ final class Witness {
     }
 
     /**
-     * The cases of one test, judged together for a skip: all cases of one name, and the
-     * invocations of one parameterized method, whose names differ only by their place ("[2]").
-     * afterKeys and oldKeys are their identities after the change and in the file as it was.
+     * The cases of one test, judged together for a skip: all cases of one name, and the runs of
+     * one parameterized test that the runner names by their place (see Runner.invocation).
+     * afterKeys and oldKeys are their identities after the change and in the file as it was; off
+     * is what the first runs said of them, and detail says it with the counts.
      */
-    private record SkipGroup(String file, String name, Set<String> afterKeys, Set<String> oldKeys, String detail) {}
+    private record SkipGroup(String file, String name, Set<String> afterKeys, Set<String> oldKeys, Off off, String detail) {}
 
-    /** A case's test: its identity without the place of a parameterized invocation, which says nothing about which arguments ran. */
-    private static String group(JUnitXml.Case c) {
-        return c.suite() + "#" + c.name().replaceFirst("\\[\\d+\\]$", "");
+    /** What two runs say of a test some cases of which are skipped after the change. */
+    private enum Off {
+        /** Not switched off: no more of its cases are skipped, none of them ran before, or the change only added cases after the last one. */
+        NO,
+        /** More are skipped and as many or more run: a skipped case added cannot be told from one that ran switched off and another added. */
+        UNDECIDED,
+        /** Fewer of its cases run and more are skipped: switched off. */
+        YES
+    }
+
+    /** A case's test with its suite: the parameterized test of a run the runner names by its place, else the case's own name. */
+    private static String group(Runner runner, JUnitXml.Case c) {
+        Runner.Invocation i = runner.invocation(c);
+        return c.suite() + "#" + (i == null ? c.name() : i.test());
     }
 
     /**
      * The cases of c's test after the change, of which at least c is skipped, against the file as
      * it was. A new test, or one whose earlier state is not known, is listed as skipped. A test
-     * that the file as it was ran more often, and that is skipped more often now, looks switched
-     * off: it is returned, to be run again before it is said. Otherwise it is skipped as it was.
+     * that looks switched off, or of which that cannot be told (see off), is returned, to be run
+     * again before it is said. Otherwise each skipped case is listed for what is true of it.
      */
     private static List<SkipGroup> skipped(String file, JUnitXml.Case c, FileRun a, Earlier e, Lineup l, Runner runner, List<Verdict> out) {
-        String g = group(c);
-        List<JUnitXml.Case> mine = a.cases().stream().filter(x -> group(x).equals(g)).toList();
+        String g = group(runner, c);
+        List<JUnitXml.Case> mine = a.cases().stream().filter(x -> group(runner, x).equals(g)).toList();
         List<JUnitXml.Case> off = mine.stream().filter(x -> x.status() == Status.SKIPPED).toList();
         Set<String> afterKeys = new LinkedHashSet<>(), oldKeys = new LinkedHashSet<>();
         for (JUnitXml.Case x : mine) afterKeys.add(key(x));
         if (l != null) {
-            for (JUnitXml.Case o : e.cases()) if (group(o).equals(g)) oldKeys.add(key(o));
-            for (JUnitXml.Case x : mine) if (l.was().get(key(x)) != null) oldKeys.add(key(l.was().get(key(x)))); // under another name before the change
+            // the test as it was: under its name now, and under the name it had where the change renamed it
+            Set<String> was = new LinkedHashSet<>(List.of(g));
+            for (JUnitXml.Case x : mine) if (l.was().get(key(x)) != null) was.add(group(runner, l.was().get(key(x))));
+            for (JUnitXml.Case o : e.cases()) if (was.contains(group(runner, o))) oldKeys.add(key(o));
         }
         if (oldKeys.isEmpty()) {
             for (JUnitXml.Case x : off) out.add(new Verdict(file, x.name(), Kind.SKIPPED, "skipped after the change", runner.name()));
             return List.of();
         }
         String name = afterKeys.size() == 1 ? c.name() : g.substring(g.indexOf('#') + 1);
-        long had = e.cases().stream().filter(o -> oldKeys.contains(key(o))).count();
-        long ran = e.cases().stream().filter(o -> oldKeys.contains(key(o)) && o.status() != Status.SKIPPED).count();
-        String detail = mine.size() == 1 ? "" : off.size() + " of " + mine.size() + " are skipped after the change; " + ran + " of " + had + " ran before it";
-        SkipGroup s = new SkipGroup(file, name, afterKeys, oldKeys, detail);
-        if (switchedOff(a, new FileRun(e.cases(), null), s)) return List.of(s);
+        List<JUnitXml.Case> before = e.cases().stream().filter(o -> oldKeys.contains(key(o))).toList();
+        long ran = before.stream().filter(o -> o.status() != Status.SKIPPED).count(), runs = mine.size() - off.size();
+        SkipGroup s = new SkipGroup(file, name, afterKeys, oldKeys, Off.NO, "");
+        Off said = off(runner, a, new FileRun(e.cases(), null), s);
+        if (said == Off.YES) return List.of(new SkipGroup(file, name, afterKeys, oldKeys, said,
+                mine.size() == 1 ? "" : off.size() + " of " + mine.size() + " are skipped after the change; " + ran + " of " + before.size() + " ran before it"));
+        boolean placed = mine.stream().allMatch(x -> runner.invocation(x) != null);
+        if (said == Off.UNDECIDED) return List.of(new SkipGroup(file, name, afterKeys, oldKeys, said,
+                off.size() + " of " + mine.size() + " are skipped after the change and " + (before.size() - ran) + " of " + before.size() + " before it, while "
+                + runs + " run where " + ran + " ran before. " + (placed ? "The report names its cases only by their place" : "Its cases share one name")
+                + ", so it cannot be told whether a skipped case was added or a case that ran was switched off and another one added"));
         // not switched off: each case says what is true of it
         for (JUnitXml.Case x : off) {
             JUnitXml.Case was = l == null ? null : l.was().get(key(x));
             if (was == null) out.add(new Verdict(file, x.name(), Kind.SKIPPED, "skipped after the change", runner.name()));
             else if (was.status() == Status.SKIPPED) out.add(new Verdict(file, x.name(), Kind.EXISTING_SKIPPED, "skipped before the change too", runner.name()));
-            else out.add(new Verdict(file, x.name(), Kind.EXISTING_SKIPPED, "ran before the change, but as many cases of its test are skipped as before", runner.name()));
+            else out.add(new Verdict(file, x.name(), Kind.EXISTING_SKIPPED, "ran before the change, but its test skips as many of its cases as before, or fewer", runner.name()));
         }
         return List.of();
     }
 
     /**
-     * True when, in these two runs, more cases of the test are skipped after the change than in
-     * the file as it was, and the file as it was ran at least one of them (one that failed or threw
-     * ran too). A new case that runs does not make up for an old one switched off; arguments that
-     * only changed places skip as many cases as before. False when either run gave no result.
+     * What these two runs say of the test (a case that failed or threw ran too). It is not
+     * switched off when no more of its cases are skipped after the change than in the file as it
+     * was, or when the file as it was ran none of them. It is switched off when, besides, fewer of
+     * them run. When as many or more run, a new case that runs must not make up for an old one
+     * switched off, and the reports cannot tell that from a skipped case added: undecided, except
+     * where the change only added cases after the last one the test had (see appended). NO when
+     * either run gave no result.
      */
-    private static boolean switchedOff(FileRun after, FileRun old, SkipGroup s) {
-        if (after == null || after.problem() != null || old == null || old.problem() != null) return false;
-        long ranOld = old.cases().stream().filter(c -> s.oldKeys().contains(key(c)) && c.status() != Status.SKIPPED).count();
-        long offOld = old.cases().stream().filter(c -> s.oldKeys().contains(key(c)) && c.status() == Status.SKIPPED).count();
-        long offNow = after.cases().stream().filter(c -> s.afterKeys().contains(key(c)) && c.status() == Status.SKIPPED).count();
-        return offNow > offOld && ranOld > 0;
+    private static Off off(Runner runner, FileRun after, FileRun old, SkipGroup s) {
+        if (after == null || after.problem() != null || old == null || old.problem() != null) return Off.NO;
+        List<JUnitXml.Case> was = old.cases().stream().filter(c -> s.oldKeys().contains(key(c))).toList();
+        List<JUnitXml.Case> now = after.cases().stream().filter(c -> s.afterKeys().contains(key(c))).toList();
+        long ranOld = was.stream().filter(c -> c.status() != Status.SKIPPED).count(), offOld = was.size() - ranOld;
+        long ranNow = now.stream().filter(c -> c.status() != Status.SKIPPED).count(), offNow = now.size() - ranNow;
+        if (ranOld == 0 || offNow <= offOld) return Off.NO;
+        if (ranNow < ranOld) return Off.YES;
+        return appended(runner, was, now) ? Off.NO : Off.UNDECIDED;
+    }
+
+    /**
+     * True when the change only added cases after the last one the test had: every case of the
+     * file as it was is at its place after the change, run or skipped as it was, and every other
+     * case has a later place. Only for cases the runner names by their place, one to a place.
+     */
+    private static boolean appended(Runner runner, List<JUnitXml.Case> was, List<JUnitXml.Case> now) {
+        Map<Integer, Boolean> old = places(runner, was), fresh = places(runner, now);
+        if (old == null || fresh == null || old.isEmpty()) return false;
+        int last = java.util.Collections.max(old.keySet());
+        for (Map.Entry<Integer, Boolean> p : old.entrySet()) if (!p.getValue().equals(fresh.get(p.getKey()))) return false;
+        return fresh.keySet().stream().allMatch(p -> old.containsKey(p) || p > last);
+    }
+
+    /** For each place, whether its case is skipped; null when a case is not named by its place, or two share one. */
+    private static Map<Integer, Boolean> places(Runner runner, List<JUnitXml.Case> cases) {
+        Map<Integer, Boolean> out = new LinkedHashMap<>();
+        for (JUnitXml.Case c : cases) {
+            Runner.Invocation i = runner.invocation(c);
+            if (i == null || out.put(i.place(), c.status() == Status.SKIPPED) != null) return null;
+        }
+        return out;
     }
 
     /**
