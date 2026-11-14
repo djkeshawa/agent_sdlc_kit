@@ -43,7 +43,7 @@ Three parts:
 
 | Part | What it is |
 | --- | --- |
-| **Tests this change adds or edits** | Each such test is run after the change and before it. "Before" is the commit your branch started from, with only the change's test files laid over it. A test file the change edits is run a third time as it was, on that commit, to learn which tests it had |
+| **Tests this change adds or edits** | Each such test is run after the change and before it. "Before" is the commit your branch started from, with only the change's test files laid over it. A test file the change edits is run a third time as it was, on that commit, to learn which tests it had. When the change took a test away (it is gone, switched off, or a parameterized test runs fewer times), that file is run a fourth time as it was, on the code after the change |
 | **Integrity** | What the diff does to the things that check the change: tests switched off or removed, secrets, changes to the build, the pipeline, dependencies and migrations |
 | **Not checked** | What this run did not look at, so silence is never read as approval |
 
@@ -55,11 +55,12 @@ Three parts:
 | New test passes before and after | It passes whether or not the change is there, so it does not test the change. This fails the check |
 | Fails after the change | The change's own test fails. This fails the check |
 | Ran before the change, skipped now | The file as it was ran this test (it passed, failed or threw), and the change skips it: the change switched it off. Like a sensitive test it is run again on both sides, and a skip that comes and goes is unstable instead. The runs of a parameterized test that the build tool names by their place (Surefire's `check(int)[1]`, JUnit 4's `check[0]`) are counted together, as the place says nothing about which arguments ran; a Vitest title is a test as written, brackets and all. Such a test is switched off when fewer of its runs run and more are skipped than before. This fails the check. When more are skipped but as many or more run, the reports cannot tell a skipped run added from one switched off and another added in its place: it could not be judged. Runs added after the last one the test had, with every earlier run as it was, are not a switch-off: the new ones are listed as skipped |
-| Removed | The file as it was had these tests, the file now does not, and the change did not only rename them. They are named. This fails the check, however many new tests came: deleting a test and writing another is not a rename. A file whose tests were all taken out counts too |
-| Could not be judged | Before the change the test did not compile, threw something other than a failed assertion, or was not found. Or the file as it was could not be run (it did not compile, timed out, or no build tool), so it cannot be told whether a test is new. A test of code that did not exist before cannot fail there for the right reason, so it is counted neither way |
+| Removed | The edited file reports fewer tests than it had. When it reports no new test, the gone tests are named: they were removed. When it reports some new ones, but fewer than are gone, the file is named with both lists and "at least N were removed": which ones cannot be told. This fails the check. A file whose tests were all taken out counts too |
+| Passed before, fails as it was after, taken out | A test that is gone, switched off, or a run of a parameterized test that now runs fewer times: run as the file was, on the code after the change, it fails, though it passed on the code before. The change broke it and took it out of the way. Like a sensitive test it must do so in every run. This fails the check |
+| Could not be judged | Before the change the test did not compile, threw something other than a failed assertion, or was not found. Or the file as it was could not be run (it did not compile, timed out, or no build tool), so it cannot be told whether a test is new. Or the file has as many new tests as gone ones: a report shows a renamed test exactly as a test deleted and another written, so the file is named with both lists; a new test of such a file that passes on both sides may be a gone one under its new name. A test of code that did not exist before cannot fail there for the right reason, so it is counted neither way |
 | Different results from run to run | Unstable. Not counted as sensitive |
 | Skipped | A new test that is skipped. Listed |
-| Note: renamed or moved | Tests whose name alone the change rewrote; tests found under a renamed group with their own titles unchanged. Each counts as the same test as before. Also tests now in another changed file, where they are judged as new. Not a problem |
+| Note: under another group or in another file | Tests found under a renamed group with their own titles unchanged: each counts as the same test as before. Also tests now in another changed file, where they are judged as new. Not a problem |
 | Already in the file, passes on both | A test you did not add. Not counted. The same for a test that was skipped before the change and still is |
 
 A test is **new** when the run of its file as it was, on the commit your branch started from,
@@ -69,6 +70,20 @@ parameterized test named by their place, the test is the method, not the place: 
 among the arguments moves later runs to new places, so when the file as it was ran the method,
 every run of it is an existing test. A method that still runs, fewer times than before, is not
 removed; it could not be judged, as the reports do not say which arguments were taken out.
+
+A report does not say whether a gone test was renamed or deleted, and the check does not read
+the test files' text to guess. Of the tests a file had and does not report now (G), and the new
+tests it reports (F), only what the counts prove is said, a parameterized test counted once:
+
+| In the file | Result |
+| --- | --- |
+| G gone, no new test | Each gone test was removed. Fails |
+| More gone than new (G > F) | At least G - F were removed. Fails |
+| As many new as gone or more, and fewer of the new ones run than of the gone ones ran | At least that many tests that ran before do not run now: switched off under a new name, or removed while skipped tests were added. Fails |
+| As many new as gone or more, otherwise | Could not be judged |
+| A new test that passes on both sides, in a file with G gone | Could not be judged: it may be a gone test renamed. When more than G new tests pass on both sides, at least the rest are new and do not test the change. Fails |
+
+Then the fourth run tells whether the change broke what it took away: see above.
 
 **What a good result does not mean.** The tests and the code come from the same author. A test
 that fails before and passes after shows the test notices the change. It is not evidence that
@@ -96,8 +111,9 @@ uncommitted changes are checked, and the report says so.
 | `--stop-hook` | For an agent's Stop hook; see below |
 
 Exit code: 0 when nothing is wrong, 1 when a changed test fails, a new test passes on both sides,
-a test that ran before the change is skipped now, tests were removed, or the integrity scan finds
-a problem, 3 on a usage error. "Could not be judged" and notes never fail.
+a test that ran before the change is skipped now, tests were removed, a test the change broke was
+taken out of the way, or the integrity scan finds a problem, 3 on a usage error. "Could not be
+judged" and notes never fail.
 
 ## Which tests it can run
 
@@ -132,7 +148,8 @@ Claude Code, in `.claude/settings.json`:
 
 - It blocks (exit code 2, the reasons on standard error) only on what is certain and fixable: a
   changed test that fails, a new test that passes on both sides, a test that ran before the
-  change and is skipped now, tests removed, a test switched off, a secret.
+  change and is skipped now, tests removed, a test switched off, a test the change broke and
+  took out of the way, a secret.
 - It never blocks on "could not be judged" or on a note, so work on a new feature is not held up.
 - It blocks once. When the agent is already continuing because of a stop hook, the reasons are
   printed and the agent is let go, so it cannot loop.
@@ -151,15 +168,26 @@ Claude Code, in `.claude/settings.json`:
 - An edited test file is run three times instead of two: after the change, before it, and as it
   was. For Maven this is one more build of the module on the base commit (on a small project, 75
   seconds instead of 61). A change that only adds test files needs no third run.
-- In a report, a renamed test looks exactly like one test removed and one added. The file's
-  text tells them apart: a gone test and a new test of the same class or file are one test
-  renamed when every line the change took out where the gone test stood comes back there, as it
-  was or with only the gone test's name turned into the new test's name. Lines added around it
-  (a new test written next to it) do not matter. A title changed in the same place as the
-  test's body, or a test deleted in one place and another added elsewhere, is a removal. A test whose title is built while the
-  file runs is found when the part of the title that changed is written out in the file
-  (`'adds %i'` to `'sums %i'`). A test deleted and another written in its place with the very
-  same lines apart from the name is taken for a rename.
+- A fourth run costs one more checkout of the changed tree and one more run of the files
+  concerned (for Maven, one more build of their modules), and with `--runs N` up to N - 1 more on
+  each of the two sides when it finds a broken test. It is made only when a test is gone,
+  switched off or maybe switched off, or a parameterized test runs fewer times, and only for
+  those files.
+- In a report, a renamed test looks exactly like one test deleted and another written. The
+  check does not read the file's text to tell them apart; it judges the counts (see above). So
+  a pure rename could not be judged, and a test deleted and another written in its place that
+  passes on both sides could not be judged either, unless the fourth run shows the gone test
+  fails on the change.
+- In the fourth run only the test files go back to how they were. Fixtures, helpers, build files
+  and the other changed test files are as the change has them. A test renamed and not otherwise
+  edited therefore runs there exactly as under its new name after the change, and is never
+  accused for the rename. A test the change renamed and rewrote, or whose fixture it rewrote, is
+  run as it was against what the change wrote: when it fails there, the check fails, though the
+  behaviour may have changed on purpose. A test kept under its own name and edited is not run as
+  it was. To change what a test expects on purpose, change it under its own name.
+- When the test file as it was does not compile or load on the change (the change renamed what
+  it used), or gives no result, the fourth run tells nothing: its gone tests could not be judged,
+  and the report says why.
 - A file whose tests were all taken out: its tests were removed. For Maven the file runs and
   reports none (a build that passes with no report for the class; a build that fails, or no
   build tool, is not read as "no tests"). Vitest reports such a file, and a `describe` block
@@ -168,7 +196,9 @@ Claude Code, in `.claude/settings.json`:
 - A renamed group (`describe` block, nested class) renames every test in it. A test whose own
   title is unchanged and fits exactly one gone test and one new test of the file is taken to be
   the same test, so a test deleted in one group and a trivial one of the same title added in
-  another is taken for a rename too.
+  another is taken for a rename too, and the fourth run does not look at it. A title that fits
+  more than one test on either side (an outer class renamed whose nested classes share a method
+  name) pairs nothing: those tests are judged by their counts.
 - A gone test whose own title another changed file now reports as a new test counts as moved
   (a note), not removed. In that other file it is a new test and is judged as one, so a moved
   test that passes on both sides fails the check there.

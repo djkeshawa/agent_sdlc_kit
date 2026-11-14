@@ -83,10 +83,13 @@ or the test configuration changed, those lines are `unknown`, because a changed 
 any test pass.
 
 The last line, the change's own tests, is `violated` when a new test passes before and after the
-change, a changed test fails after it, a test that ran before the change is skipped now, or
-tests were removed. Which tests are new, ran before or are gone is read from a run of each
-edited test file as it was, on the commit the branch started from (see
-[sdlc check](09-check.md#how-to-read-the-test-results)).
+change, a changed test fails after it, a test that ran before the change is skipped now, tests
+were removed, or a test that passed before the change fails as it was on the change and was
+taken out of the way. Which tests are new, ran before or are gone is read from a run of each
+edited test file as it was, on the commit the branch started from; whether the change broke a
+test it took away, from a run of that file as it was on the code after the change (see
+[sdlc check](09-check.md#how-to-read-the-test-results)). A test renamed cannot be told from one
+deleted and another written: then the line is `unknown`, not `violated`.
 
 The command fails (exit code 1) for `OUTSIDE` or a `violated` line. `AMENDED` and `unknown` do
 not fail it; they are there for you to read.
