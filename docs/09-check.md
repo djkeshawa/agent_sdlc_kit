@@ -44,7 +44,7 @@ Three parts:
 | Part | What it is |
 | --- | --- |
 | **Tests this change adds or edits** | Each such test is run after the change and before it. "Before" is the commit your branch started from, with only the change's test files laid over it. A test file the change edits is run a third time as it was, on that commit, to learn which tests it had. When the list of tests such a file reports changed (a name it did not report, one it no longer reports, or a name with more or fewer of its tests skipped), that file is run a fourth time as it was, on the code after the change |
-| **Integrity** | What the diff does to the things that check the change: tests switched off (read from Java test files, linted from the lines added to others) or removed (Java), secrets, changes to the build, the pipeline, dependencies and migrations. Nothing is run for it, so it is the early warning where no test runs |
+| **Integrity** | What the diff does to the things that check the change: tests switched off (linted from the lines the change adds to test files), test files deleted, secrets, changes to the build, the pipeline, dependencies and migrations. Nothing is run for it, so it is the early warning where no test runs |
 | **Not checked** | What this run did not look at, so silence is never read as approval |
 
 ## How to read the test results
@@ -261,8 +261,8 @@ Claude Code, in `.claude/settings.json`:
   skipped, a test rewritten to expect something else. Its reports are exactly those of tests
   edited in place, so this is a limit of reports, not of the runs: running the old file there
   would only add "could not be judged" to every test whose expectation is changed under its own
-  name, the ordinary way to change one. Integrity looks for a skip itself (in a Java file by the
-  declaration it stands on, elsewhere on the lines the change adds).
+  name, the ordinary way to change one. Integrity looks for a skip itself, on the lines the
+  change adds.
 - A test skipped under the same name before and after the change is taken to be the same test,
   here and when new tests are counted. The reports cannot tell; this is a choice, so that a
   test skipped all along does not keep its file from being judged.
@@ -323,50 +323,51 @@ Claude Code, in `.claude/settings.json`:
 - A test is "switched off" when the change puts a skip, a to-do mark or a focus into a test
   file. Integrity finds it without running anything, which is what `check-pr`, `--no-run` and
   files no runner owns rely on. Where a runner ran the file, the run (above) is the judge; a
-  Java test switched off is then said twice, as skipped now under the test results and as
-  switched off under Integrity.
-- In a Java test file the whole file is read before and after the change, and each switch is
-  tied to the declaration it stands on: its class and its name. A switch is new when the file
-  after the change has one of that kind on a declaration that did not have it before. So a
-  switch taken off one test and put on another is found wherever the lines are, and so is a
-  switch on a line the change did not touch that the change puts onto a test (by turning the
-  method under it into a test). A line only written differently, or a test moved within its
-  class with its switch, adds no switch. A test renamed, or moved to another class, while it is
-  switched off is reported as switched off: the reading does not pair it with the old one.
-- Text that looks like a switch in a comment, a string or a text block of a Java file switches
-  nothing off. When a change adds such text, the report says so as a note (a warning in
-  `check-pr`), and a person looks at it: a file can be written so that code is taken for text.
-  The reading knows the tokens of Java, not its grammar. Where it cannot follow a file (its
-  brackets do not pair up for the reader), a note says so; its switches are still found, and
-  tied to declarations by their names alone.
-- Every other test file (JavaScript, TypeScript, Python, Go, Kotlin, ...) is not read for its
-  tests or their switches: only the lines the change adds are linted, with comments and the insides of strings taken out of each
-  line. A switch on such a line is reported as that line, whatever the change did with the
-  test: a skipped test that is moved, given another title or edited on the line of its skip is
-  reported as switched off. A switch that the change writes over two or three lines (`it`, then
-  `.skip(` on the next) is found too, also inside a text that runs over several lines, where it
-  switches nothing off: the lint errs on the safe side. Not seen by the lint: a switch of which
-  the change wrote only a part, one reached through another name (`const later = it.skip`, then
-  `later('x', ...)`), and a test skipped from inside its body. For a file a runner owns (Vitest),
-  the run says which tests ran before the change and are skipped now, whatever the source says;
-  for a file no runner owns, nothing does.
-- Reported as switched off: in Java `@Disabled`, `@DisabledIf...`, `@Ignore` and an assumption
-  that always fails (`assumeTrue` with a plain `false` among its arguments, `assumeFalse` with a
-  plain `true`, `Assumptions.abort`, also as a statically imported `abort`); on the lines added
-  to other test files `skip`, `todo`, `only`, `fixme`, `xit`/`xdescribe`, `fit`/`fdescribe` (also
-  as a member of a longer call: `it.concurrent.skip`, `test.describe.skip`), `@pytest.mark.skip`
-  and its forms, `@unittest.skip` and its forms, `t.Skip`, and the Java switches above. Not
-  reported: `it.skipIf`, `it.runIf`, `@DisabledOnOs`, `@EnabledIf...` and other JUnit conditions.
-- Which tests a file declares is read from Java test files only. A Java test gone from an edited
-  file is reported as removed, unless a test with the same body turns up under another name
-  (renamed, a note) or in another file the change adds or edits (moved, a note). In a test file
-  of another language a test removed or renamed is not read from the source: the run says it
-  when a runner owns the file, and nothing does otherwise. A deleted test file is a problem when
-  it is named like a test file, holds a Java test, or has a line that calls `it`, `test` or
-  `describe` or defines a test function; otherwise it is a note (a fixture or a helper). A test
-  file deleted and added elsewhere with the same text is a note; one edited on the way is a
-  problem unless it is Java and all its tests turn up elsewhere.
-- For Java both the runs and the reading say what they find: a removed Java test may be
-  reported twice, once under Integrity.
+  test switched off is then said twice, as skipped now under the test results and as switched
+  off under Integrity.
+- Integrity reads no test file for its tests, in any language. It lints the lines the change
+  adds to test files, each line read twice: with its comments dropped and the insides of its
+  strings emptied, and as it is written, unless the whole line is a comment (it starts with
+  `//`, or with a `#` that no name follows). One line cannot tell its quotes for certain (a
+  quote inside a regular expression, a string begun on a line above), so what a line shows as
+  written is never hidden. The cost: a switch's words inside a string, a text block, a trailing
+  comment or a block comment's line are reported too, and `check-pr` shows the line. A switch
+  that the change writes over two or three lines (`it`, then `.skip(` on the next; `@`, then
+  `Disabled`) is found too, each line read both ways.
+- A switch on an added line is reported as that line, whatever the change did with the test: a
+  skipped test that is moved, given another title or edited on the line of its switch is
+  reported as switched off. When overloads of a method change places, git shows one of them
+  moved: if that is the one switched off, its switch is on an added line and is reported; if it
+  is the other, nothing is.
+- Not seen by the lint: a switch of which the change wrote only a part (`.skip(` under an `it`
+  that was there) or one written over more than three lines; a switch reached through another
+  name (`const later = it.skip`, then `later('x', ...)`; a custom annotation that carries
+  `@Disabled`; an assumption whose condition is computed, `assumeTrue(ready())`); a test moved
+  into a class or a `describe` block that is already switched off; a test skipped from inside its
+  body. For a file a runner owns (Maven Surefire, Vitest), the run says which tests ran before
+  the change and are skipped now, whatever the source says; for a file no runner owns, and in
+  `check-pr`, which runs no test, nothing does.
+- Reported as switched off, on the lines added to any test file: `@Disabled`, `@DisabledIf...`,
+  `@Ignore` (also qualified, `@org.junit.jupiter.api.Disabled`, and with white space after the
+  `@` or around a dot), an assumption that always fails (`assumeTrue` with a plain `false` among
+  its arguments, `assumeFalse` with a plain `true`), `Assumptions.abort` (also with type
+  arguments, `Assumptions.<Void>abort`), the line that imports it statically, and `abort(` called
+  alone (another object's `controller.abort()` is not); `skip`, `todo`, `only`, `fixme`,
+  `xit`/`xdescribe`, `fit`/`fdescribe` (also as a member of a longer call: `it.concurrent.skip`,
+  `test.describe.skip`), `@pytest.mark.skip` and its forms, `@unittest.skip` and its forms,
+  `t.Skip`. Not reported: `it.skipIf`, `it.runIf`, `@DisabledOnOs`, `@EnabledIf...` and other
+  conditions.
+- Which tests a file holds is not read from its source. A test removed, renamed or moved is
+  said by the run when a runner owns the file, and by nothing otherwise (nor by `check-pr`). A
+  deleted test file is read by the lines the change removes: it is a problem when it is named
+  like a test file, or one of its lines calls `it`, `test` or `describe`, defines a test function
+  or carries a JUnit test annotation (`@Test`, `@ParameterizedTest`, ...); otherwise it is a note
+  (a fixture or a helper). A test file deleted and added elsewhere with exactly the same lines is
+  a note; one edited on the way, if only in its package line, is a problem.
+- "Fewer assertions" is a note and a plain count: the calls that look like assertions on the
+  lines an edit of a Java or script test file removes, against those on the lines it adds.
+- Test files are never read whole, so their size does not matter. Only build and configuration
+  files are read whole (a pom, `package.json`, a coverage configuration); one larger than 2 MB
+  is not read, and is a problem ("too large to scan").
 - In a pull request build the base branch must be fetched, with enough history to reach the
   commit the branch started from. Otherwise the check stops with an error.
