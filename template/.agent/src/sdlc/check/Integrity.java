@@ -26,10 +26,10 @@ import sdlc.workflow.Checks;
  * a simple reading can only guess at is a NOTE, and says "appears".
  *
  * Test files of every language are read the same way: only the lines a change adds are linted for
- * the usual ways of writing a switch (lintedSwitches). That lint is a helper that catches mistakes
- * and plain attempts early, not a guard: text can be written to hide a switch from a reader of
- * text. Which tests a file holds, and how many that ran do not run now, is read from its run
- * (Witness), not from its source; the run is the guard.
+ * the usual ways of writing a switch (lintedSwitches), each line no longer than LONGEST. That lint
+ * is a helper that catches mistakes and plain attempts early, not a guard: text can be written to
+ * hide a switch from a reader of text. Which tests a file holds, and how many that ran do not run
+ * now, is read from its run (Witness), not from its source; the run is the guard.
  *
  * A test file that moves shows as a deletion and an addition. It is reported as a NOTE ("test file
  * moved") when a file the change adds has the same text, or (a JVM class) the same text but its
@@ -90,43 +90,148 @@ public final class Integrity {
 
     // ---------------- tests switched off, assertions ----------------
 
-    // Switches as a line shows them: the usual ways of writing one, to catch mistakes and plain attempts early, in commands that
-    // run no test. Not a guard: an author who sets out to hide a switch from a reader of text can (see lintedSwitches); the run
-    // of a test file (sdlc check) is the guard. White space may stand around each dot (and ?. for a dot) and after the @ of an
-    // annotation, other members may stand between (it.concurrent.skip, test.skip.each), a qualifier before
-    // (@org.junit.jupiter.api.Disabled), and type arguments before or after a method's name (Assumptions.<Void>abort, Kotlin's
-    // abort<Unit>). abort is a switch as Assumptions.abort, on the line that imports it, and called alone (statically imported):
-    // not a call of another object's abort (controller . abort()), nor a declaration of a method of that name (see bareAborts).
-    // An assumption is a switch when one of its arguments is a plain false (assumeTrue) or true (assumeFalse), whatever the
-    // others compute (see assumptions).
+    // The switch lint: the usual ways of writing a switch that skips a test, marks it as to do or focuses on one, looked for on
+    // the lines a change adds to test files. A helper that catches mistakes and plain attempts early, in commands that run no
+    // test; not a guard: an author who sets out to hide a switch from a reader of text can (see lintedSwitches). The run of a
+    // test file (sdlc check) is the guard.
+    //
+    // Its work is bounded and linear in what it is given. An added line longer than LONGEST is not read at all (the report says
+    // how many were not). A line is read two ways (see reading), and so is a run of two or three added lines, joined (see
+    // joined); nothing else. Each reading is made in one forward pass (decoded, code, fold). No pattern below can match one
+    // stretch of text in two ways that both go on (each repetition holds a character the next part cannot start with), so each
+    // walks a reading about once from each place it can start. The arguments of a call are read at most SCAN characters far,
+    // and all the calls of one reading together at most a few times its length (see Budget): a line of nothing but calls
+    // (abort(abort(abort(...) costs no more than another.
+
+    /** The longest added line the switch lint reads: a longer one is not read, and the report says so. */
+    public static final int LONGEST = 2000;
+    /** How far the arguments of one call are read. */
+    private static final int SCAN = 500;
+
     private static final String DOT = "\\s*\\??\\.\\s*";
+    /** it.skip, test.only, describe.todo, test.fixme; also it.concurrent.skip, it?.skip. Group 1 is the modifier. */
     private static final Pattern SCRIPT_SWITCH = Pattern.compile(
-            "\\b(?:it|test|describe|context|suite)(?:" + DOT + "\\w+){0,8}?" + DOT + "(?:skip|todo|only|fixme)\\b|\\bx(?:it|test|describe|context)(?=\\s*\\()|\\bf(?:it|describe)(?=\\s*\\()");
+            "(?=[itdcs])\\b(?:it|test|describe|context|suite)(?:" + DOT + "\\w+){0,8}?" + DOT + "(skip|todo|only|fixme)\\b");
+    /** xit, xtest, xdescribe, xcontext, fit, fdescribe, called or with .each: not another object's (model.fit(x)) nor a declaration (def fit(...)). */
+    private static final Pattern ALIAS = Pattern.compile(
+            "(?=[xf])(?<![\\w$.])(?<!def )(?<!function )(?<!fun )(?:x(?:it|test|describe|context)|f(?:it|describe))(?=\\s*(?:\\(|\\.\\s*each\\b))");
     private static final String TYPE_ARGUMENTS = "(?:<[^()<>]{0,200}>\\s*)?";
-    private static final Pattern OTHER_SWITCH = Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*){0,12}(?:Disabled|DisabledIf\\w*|Ignore)\\b"
-            + "|\\bAssumptions\\s*\\.\\s*" + TYPE_ARGUMENTS + "abort\\b"
-            + "|@\\s*\\(?\\s*pytest\\s*\\.\\s*mark\\s*\\.\\s*skip|@\\s*\\(?\\s*unittest\\s*\\.\\s*skip|\\bt\\s*\\.\\s*Skip(?:Now)?(?=\\s*\\()");
-    private static final Pattern ABORT = Pattern.compile("\\babort\\s*" + TYPE_ARGUMENTS + "\\(");
-    private static final Pattern ASSUME = Pattern.compile("\\bassume(True|False)\\s*\\(");
+    /** @Disabled and @Ignore, also qualified; @DisabledIf("true") and @EnabledIf("false"), whose condition is a plain literal. */
+    private static final Pattern ANNOTATION = Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*){0,12}(?:(?:Disabled|Ignore)\\b"
+            + "|DisabledIf\\s*\\(\\s*(?:(?:value|expression)\\s*=\\s*)?\"\\s*true\\s*\"|EnabledIf\\s*\\(\\s*(?:(?:value|expression)\\s*=\\s*)?\"\\s*false\\s*\")");
+    /** Assumptions.abort (also Assumptions.<Void>abort), and the line that imports it statically. */
+    private static final Pattern ABORTS = Pattern.compile("(?=A)\\bAssumptions\\s*\\.\\s*" + TYPE_ARGUMENTS + "abort\\b");
+    /** A pytest mark where it applies to tests: a decorator, pytestmark = ..., marks=... Group 1: skip, skipif or xfail. */
+    private static final Pattern PYTEST_MARK = Pattern.compile(
+            "(?=[@pm])(?:@\\s*(?:\\(\\s*)?|\\b(?:pytestmark|marks)\\s*=\\s*(?:\\[[^\\]=]{0,200}?)?)pytest\\s*\\.\\s*mark\\s*\\.\\s*(skip|skipif|xfail)\\b");
+    /** unittest's decorators. Group 1: skip, skipIf or skipUnless. */
+    private static final Pattern UNITTEST_SKIP = Pattern.compile("@\\s*(?:\\(\\s*)?unittest\\s*\\.\\s*(skip|skipIf|skipUnless)\\b");
+    /** A skip from inside a test, as a statement of its own: pytest.skip(...), self.skipTest(...), raise unittest.SkipTest(...), Mocha's this.skip(), Go's t.Skip, t.Skipf, t.SkipNow. */
+    private static final Pattern BODY_SKIP = Pattern.compile("(?:^|[;{}:])\\s*(?:pytest\\s*\\.\\s*skip|self\\s*\\.\\s*skipTest|raise\\s+(?:unittest\\s*\\.\\s*)?SkipTest"
+            + "|this\\s*\\.\\s*skip|t\\s*\\.\\s*Skip(?:f|Now)?)\\s*\\(");
+    /** What makes a skip from inside a test conditional, on its line or the one above it: if, else, a ternary, &&, || and their kin. */
+    private static final Pattern CONDITION = Pattern.compile("(?=[iuewcf?&|])(?:\\b(?:if|unless|elif|else|when|except|catch|case|while|for)\\b|\\?(?![.?])|&&|\\|\\|)");
+    /** A test declared without a body, on one line of its own (its code: strings emptied): it('pending'); Mocha and Vitest report it as pending. */
+    private static final Pattern PENDING = Pattern.compile("^(?:it|test|specify)\\s*\\(\\s*(?:''|\"\"|``)\\s*\\)\\s*;?$");
+    /** A test declaration, for its option object (Vitest: test('x', { skip: true }, fn)). */
+    private static final Pattern DECLARATION = Pattern.compile("(?=[itdsc])\\b(?:it|test|describe|suite|context)(?:" + DOT + "\\w+){0,3}?\\s*\\(");
+    private static final Pattern OPTION = Pattern.compile("(?=[sot])\\b(?:skip|only|todo)\\s*:\\s*true\\b");
+    private static final Pattern ABORT = Pattern.compile("(?=a)\\babort\\s*" + TYPE_ARGUMENTS + "\\(");
+    private static final Pattern ASSUME = Pattern.compile("(?=a)\\bassume(True|False)\\s*\\(");
+    /** A keyword argument of a Python call (reason="x"), not a comparison. */
+    private static final Pattern KEYWORD = Pattern.compile("[A-Za-z_]\\w*\\s*=(?!=)");
     /** Words after which abort( is still called alone: return abort(...), else abort(...). */
     private static final Set<String> CALLED_AFTER = Set.of("return", "await", "else", "yield", "do");
-
     /**
-     * The line lint: true when a line holds a switch that skips a test, marks it as to do, or
-     * focuses on one (seen). A skipped test that a change moves or gives another title is reported
-     * like any other skip on a line the change wrote.
+     * A word every switch the lint knows holds (but a pending test). Which of them a line holds
+     * says which kinds of switch are looked for in it (see keys): a line with none is not linted
+     * further. A reading never makes a word its line does not hold (it drops comments and the
+     * insides of strings, and makes white space one space), so the line's words stand for its readings'.
      */
-    public static boolean lintedSwitch(String line) {
-        return readings(line).stream().anyMatch(Integrity::hit);
+    private static final Pattern KEY = Pattern.compile(
+            "(?=[sStofDIEaxf])(?:skip|Skip|todo|only|fixme|Disabled|Ignore|EnabledIf|abort|assume|xfail|xit|xtest|xdescribe|xcontext|fit|fdescribe)");
+    private static final int SKIP = 1, MODIFIER = 2, ANNOTATED = 4, ABORTED = 8, ASSUMED = 16, XFAIL = 32, ALIASED = 64;
+
+    /** The kinds of switch a line's words allow (see KEY), in one pass. */
+    private static int keys(String decodedLine) {
+        int keys = 0;
+        for (Matcher k = KEY.matcher(new Counted(decodedLine)); k.find();) {
+            keys |= switch (k.group()) {
+                case "skip", "Skip" -> SKIP | MODIFIER;
+                case "todo", "only", "fixme" -> MODIFIER;
+                case "Disabled", "Ignore", "EnabledIf" -> ANNOTATED;
+                case "abort" -> ABORTED;
+                case "assume" -> ASSUMED;
+                case "xfail" -> XFAIL;
+                default -> ALIASED;
+            };
+        }
+        return keys;
+    }
+
+    /** The characters the switch lint has read, its patterns' reads included: the self test bounds its work by what it is given. */
+    private static long work;
+
+    public static long lintWork() {
+        return work;
+    }
+
+    /** A reading as the patterns read it: each character they look at is counted (see work). */
+    private record Counted(String text) implements CharSequence {
+        @Override
+        public int length() {
+            return text.length();
+        }
+
+        @Override
+        public char charAt(int i) {
+            work++;
+            return text.charAt(i);
+        }
+
+        @Override
+        public CharSequence subSequence(int from, int to) {
+            return new Counted(text.substring(from, to));
+        }
+
+        @Override
+        public String toString() {
+            return text;
+        }
     }
 
     /**
-     * True when a line shows what the test finds, in one of its readings (see readings): what a
-     * line shows as written is never hidden by the masking, so the cost is that a switch's words
-     * inside a string, a trailing comment or a block comment's line are reported too.
+     * How many characters the calls of one reading may still read for their arguments: a few
+     * times the reading's length. A call read when none are left has its end out of reach.
      */
+    private static final class Budget {
+        private long left;
+
+        Budget(int length) {
+            left = 4L * length + 4L * SCAN;
+        }
+
+        boolean spend() {
+            return --left >= 0;
+        }
+    }
+
+    /** As much as a line of LONGEST characters can need: for a line the lint does not bound (withoutBuiltInSwitches). */
+    private static Budget unbounded() {
+        return new Budget(Integer.MAX_VALUE / 8);
+    }
+
+    /** True when one line holds a switch (see lintedSwitches), read without the lines around it. */
+    public static boolean lintedSwitch(String line) {
+        if (line.length() > LONGEST) return false;
+        String d = decoded(line);
+        return switched(readDecoded(d), keys(d), "", true);
+    }
+
+    /** True when a line shows what the test finds, in one of its two readings (see reading). */
     static boolean seen(String line, Predicate<String> test) {
-        return readings(line).stream().anyMatch(test);
+        Reading r = reading(line);
+        return test.test(r.code()) || r.written() != null && test.test(r.written());
     }
 
     /** A line wholly a comment: it starts with // or with a # that no name follows (in JavaScript #name is code). */
@@ -136,198 +241,366 @@ public final class Integrity {
         return t.startsWith("#") && (t.length() == 1 || !Character.isJavaIdentifierPart(t.charAt(1)));
     }
 
-    /** Unicode escapes (a backslash, one u or more, four hex digits; in JavaScript also a backslash, u, and hex digits in braces): read before the words of a line. */
-    private static final Pattern ESCAPE = Pattern.compile("\\\\u+([0-9a-fA-F]{4})|\\\\u\\{([0-9a-fA-F]{1,6})\\}");
-    /** Line terminators a line can hold once its escapes are read, or as JavaScript reads them (U+2028, U+2029). */
-    private static final Pattern BREAK = Pattern.compile("[\\n\\r\\u2028\\u2029\\u0085]");
-    /** White space a language allows between words besides the ASCII kind (JavaScript: a no-break space, U+FEFF, ...). */
-    private static final Pattern WIDE_SPACE = Pattern.compile("[\\u000B\\u000C\\u00A0\\u1680\\u2000-\\u200A\\u202F\\u205F\\u3000\\uFEFF]");
-    private static final Pattern RUN_OF_SPACE = Pattern.compile("[ \\t]{2,}");
+    /**
+     * The two ways a line, or a run of lines, is read, each with its white space of any kind made
+     * one space: its code (see code), and the text as written, unless it is wholly a comment
+     * (null then). Both are read with their Unicode escapes decoded (see decoded). One line cannot
+     * tell its quotes for certain (a quote in a regular expression), so the code is never the only
+     * reading: what a line shows as written is not hidden by the masking, and a switch's words
+     * inside a string or a trailing comment are reported too.
+     */
+    private record Reading(String code, String written) {}
+
+    private static Reading reading(String line) {
+        return readDecoded(decoded(line));
+    }
+
+    private static Reading readDecoded(String d) {
+        return new Reading(fold(code(d)), commentLine(d) ? null : fold(d));
+    }
 
     /**
-     * The ways one line is read, each with its runs of white space made one space (white space of
-     * any kind a language allows): its code (comments dropped, string insides emptied); and, unless
-     * the whole line is a comment, the line as written and the line with its block comments taken
-     * out without regard to quotes (for a line whose quotes the masking cannot tell, as a regular
-     * expression with a quote in it, where a comment between the words of a switch would hide it
-     * from both). A line with Unicode escapes is read again with them decoded, and a line that
-     * holds a line terminator (a decoded escape of a line feed, a U+2028) is read again piece by piece.
+     * Two or three added lines, read together: their code, read across the line breaks (a block
+     * comment that closes on the next line, a Python line that ends in a backslash), and the
+     * lines as written, joined by a space (a line wholly a comment counts as empty, a backslash
+     * that ends a line is dropped).
      */
-    private static List<String> readings(String line) {
-        Set<String> out = new LinkedHashSet<>();
-        List<String> forms = new ArrayList<>(List.of(line));
-        if (line.contains("\\u")) forms.add(decoded(line));
-        for (String form : forms) {
-            String spaced = WIDE_SPACE.matcher(form).replaceAll(" ");
-            read(spaced, out);
-            if (!BREAK.matcher(spaced).find()) continue;
-            for (String piece : BREAK.split(spaced)) read(piece, out);
-            read(BREAK.matcher(spaced).replaceAll(" "), out);
+    private static Reading joined(List<String> lines) {
+        StringBuilder code = new StringBuilder(), written = new StringBuilder();
+        for (int k = 0; k < lines.size(); k++) {
+            String d = decoded(lines.get(k));
+            if (k > 0) {
+                code.append('\n');
+                written.append(' ');
+            }
+            code.append(d);
+            if (commentLine(d)) continue;
+            String t = d.stripTrailing();
+            written.append(t.endsWith("\\") ? t.substring(0, t.length() - 1) : t);
         }
-        List<String> squeezed = new ArrayList<>();
-        for (String r : out) squeezed.add(RUN_OF_SPACE.matcher(r).replaceAll(" "));
-        return List.copyOf(new LinkedHashSet<>(squeezed));
+        return new Reading(fold(code(code.toString())), fold(written));
     }
 
-    private static void read(String line, Set<String> out) {
-        out.add(code(line));
-        if (commentLine(line)) return;
-        out.add(line);
-        out.add(BLOCK_COMMENT.matcher(line).replaceAll(" "));
-    }
-
-    /** A line with its Unicode escapes decoded. */
-    private static String decoded(String line) {
-        Matcher m = ESCAPE.matcher(line);
-        StringBuilder out = new StringBuilder();
-        while (m.find()) {
-            int cp = Integer.parseInt(m.group(1) != null ? m.group(1) : m.group(2), 16);
-            m.appendReplacement(out, Matcher.quoteReplacement(Character.isValidCodePoint(cp) ? new String(Character.toChars(cp)) : m.group()));
+    /**
+     * A line with its Unicode escapes decoded, in one pass: a backslash, one u or more and four hex
+     * digits (Java), or a backslash, u and one to six hex digits in braces (JavaScript). A decoded
+     * line break is a line break (it ends a comment, see code).
+     */
+    static String decoded(String line) {
+        if (line.indexOf("\\u") < 0) return line;
+        int n = line.length();
+        work += n;
+        StringBuilder out = new StringBuilder(n);
+        int i = 0;
+        while (i < n) {
+            char c = line.charAt(i);
+            if (c != '\\' || i + 1 >= n || line.charAt(i + 1) != 'u') {
+                out.append(c);
+                i++;
+                continue;
+            }
+            int j = i + 1;
+            while (j < n && line.charAt(j) == 'u') j++;
+            if (j + 4 <= n && hex(line, j, j + 4)) {
+                out.append((char) Integer.parseInt(line, j, j + 4, 16));
+                i = j + 4;
+                continue;
+            }
+            if (j == i + 2 && j < n && line.charAt(j) == '{') {
+                int k = j + 1;
+                while (k < n && k <= j + 6 && Character.digit(line.charAt(k), 16) >= 0) k++;
+                if (k > j + 1 && k < n && line.charAt(k) == '}') {
+                    int cp = Integer.parseInt(line, j + 1, k, 16);
+                    if (Character.isValidCodePoint(cp)) {
+                        out.appendCodePoint(cp);
+                        i = k + 1;
+                        continue;
+                    }
+                }
+            }
+            out.append(c);
+            i++;
         }
-        m.appendTail(out);
         return out.toString();
     }
 
-    private static final Pattern BLOCK_COMMENT = Pattern.compile("/\\*.*?\\*/");
-
-    /** A word every switch the lint knows holds: a reading without one is not linted further. */
-    private static final Pattern KEY = Pattern.compile("skip|todo|only|fixme|Disabled|Ignore|abort|assume|Skip|xit|xtest|xdescribe|xcontext|fit|fdescribe");
-
-    private static boolean lintedCode(String code) {
-        if (!KEY.matcher(code).find()) return false;
-        return FOCUSED.matcher(code).find() || SCRIPT_SWITCH.matcher(code).find() || OTHER_SWITCH.matcher(code).find() || !bareAborts(code).isEmpty()
-                || !assumptions(code).isEmpty();
+    private static boolean hex(String s, int from, int to) {
+        for (int i = from; i < to; i++) if (Character.digit(s.charAt(i), 16) < 0) return false;
+        return true;
     }
 
-    /** How far the arguments of one call are read: a call whose end is further is read to there. */
-    private static final int SCAN = 1000;
+    /** White space of any kind a language allows between words: ASCII, a no-break space, U+FEFF, the line and paragraph separators, ... */
+    private static boolean blank(char c) {
+        return Character.isWhitespace(c) || Character.isSpaceChar(c) || c == '\uFEFF';
+    }
 
-    /** How much of one reading is linted at once, and by how much the pieces of a longer one overlap: the work per line is bounded. */
-    private static final int READ = 2000, EDGE = 300;
+    /** A text with each run of white space made one space, and none at its ends, in one pass. */
+    private static String fold(CharSequence s) {
+        int n = s.length();
+        work += n;
+        StringBuilder out = new StringBuilder(n);
+        boolean space = false;
+        for (int i = 0; i < n; i++) {
+            char c = s.charAt(i);
+            if (blank(c)) {
+                space = true;
+                continue;
+            }
+            if (space && out.length() > 0) out.append(' ');
+            space = false;
+            out.append(c);
+        }
+        return out.toString();
+    }
+
+    /** The added lines longer than LONGEST, which the switch lint does not read. */
+    public static int unlinted(List<String> addedLines) {
+        int n = 0;
+        for (String line : addedLines) if (line.length() > LONGEST) n++;
+        return n;
+    }
 
     /**
-     * True when a reading holds a switch. A reading longer than READ is linted in pieces that
-     * overlap by EDGE, each cut where a word ends, so that no piece makes a word of a part of one.
-     * A switch is a few words, and its white space is one space here, so it fits in the overlap
-     * unless its words stand more than EDGE characters apart.
+     * The line lint over the lines a change adds to one file, in their order, as the change wrote
+     * them: each line that holds a switch, as it is written, and each run of two or three added
+     * lines that hold one only together (it, a line break, .skip; @, a line break, Disabled),
+     * joined by a space. A line longer than LONGEST is not read, nor joined (see unlinted). The
+     * lines are taken as neighbours as the diff lists them; lines of two places of the file that
+     * only together read as a switch are reported too, which errs on the safe side.
+     *
+     * A skip from inside a test (pytest.skip, self.skipTest, this.skip(), t.Skip, Playwright's
+     * test.skip()) is reported only where the added lines show it unconditional: not when its
+     * line, or the added line above it, holds an if, an else, a ternary, && or ||. A skip with a
+     * condition first (Playwright's test.skip(browserName === 'webkit', 'reason'), skipif,
+     * skipUnless, @DisabledIf..., @EnabledIf...) is not a switch, unless its condition is a plain
+     * true (test.skip(true, ...), skipif(True, ...)).
+     *
+     * It finds the usual ways of writing a switch, to catch mistakes and plain attempts early. It
+     * is not a guard: an author who sets out to hide a switch from a reader of text can (a switch
+     * reached through another name, one of which the change wrote only a part, one over more than
+     * three lines or on a line longer than LONGEST, a quote in a regular expression before a
+     * comment between a switch's words). The run of the file says which tests that ran before
+     * the change do not run now, whatever the source says.
      */
-    private static boolean hit(String r) {
-        if (r.length() <= READ || !KEY.matcher(r).find()) return lintedCode(r);
-        for (int at = 0; at < r.length(); at += READ - EDGE) {
-            int from = at == 0 ? 0 : wordEdge(r, at), to = Math.min(r.length(), at + READ);
-            while (to < r.length() && to > from && word(r.charAt(to - 1)) && word(r.charAt(to))) to--;
-            if (from < to && lintedCode(r.substring(from, to))) return true;
-            if (at + READ >= r.length()) break;
+    public static List<String> lintedSwitches(List<String> addedLines) {
+        int n = addedLines.size();
+        List<String> out = new ArrayList<>();
+        boolean[] told = new boolean[n], read = new boolean[n];
+        int[] keys = new int[n];
+        String[] code = new String[n];
+        for (int i = 0; i < n; i++) {
+            String line = addedLines.get(i);
+            read[i] = line.length() <= LONGEST;
+            if (!read[i]) continue;
+            String d = decoded(line);
+            Reading r = readDecoded(d);
+            code[i] = r.code();
+            keys[i] = keys(d);
+            if (switched(r, keys[i], above(code, i), true)) {
+                told[i] = true;
+                out.add(line.trim());
+            }
+        }
+        for (int width = 2; width <= 3; width++) {
+            for (int i = 0; i + width <= n; i++) {
+                boolean fresh = true;
+                int key = 0;
+                for (int k = i; k < i + width; k++) {
+                    fresh &= read[k] && !told[k];
+                    key |= keys[k];
+                }
+                // every word a switch needs is on one line (a join puts a space between lines), so a run with none holds none
+                if (!fresh || key == 0) continue;
+                List<String> lines = addedLines.subList(i, i + width);
+                if (!switched(joined(lines), key, above(code, i), false)) continue;
+                for (int k = i; k < i + width; k++) told[k] = true;
+                out.add(String.join(" ", lines.stream().map(String::trim).toList()));
+            }
+        }
+        return out;
+    }
+
+    /** The code of the nearest added line above line i that has any (up to three lines up), for whether a skip under it is conditional. */
+    private static String above(String[] code, int i) {
+        for (int k = i - 1; k >= 0 && k >= i - 3; k--) if (code[k] != null && !code[k].isEmpty()) return code[k];
+        return "";
+    }
+
+    /**
+     * True when a reading holds a switch. above is the code of the added line above (see
+     * lintedSwitches); single is false for lines read together, where a pending test (a whole
+     * declaration on one line) is not looked for.
+     */
+    private static boolean switched(Reading r, int keys, String above, boolean single) {
+        String around = r.code() + " " + above;
+        return switched(r.code(), keys, true, around, single) || r.written() != null && switched(r.written(), keys, false, around, single);
+    }
+
+    /** True when one reading holds a switch; keys are its line's (see keys): each kind of switch is looked for only where its word stands. */
+    private static boolean switched(String text, int keys, boolean code, String around, boolean single) {
+        CharSequence s = new Counted(text);
+        if (single && code && PENDING.matcher(s).lookingAt()) return true;
+        if (keys == 0) return false;
+        if (code && (keys & SKIP) != 0 && BODY_SKIP.matcher(s).find() && !conditional(around)) return true;
+        if ((keys & ANNOTATED) != 0 && ANNOTATION.matcher(s).find() || (keys & ABORTED) != 0 && ABORTS.matcher(s).find()
+                || (keys & ALIASED) != 0 && ALIAS.matcher(s).find()) {
+            return true;
+        }
+        Budget budget = new Budget(s.length());
+        if ((keys & MODIFIER) != 0 && (scriptSwitch(s, around, budget) || options(s, budget))) return true;
+        if ((keys & (SKIP | XFAIL)) != 0 && pythonSwitch(s, budget)) return true;
+        return (keys & ABORTED) != 0 && !bareAborts(s, budget, true).isEmpty() || (keys & ASSUMED) != 0 && !assumptions(s, budget, true).isEmpty();
+    }
+
+    private static boolean conditional(String around) {
+        return CONDITION.matcher(new Counted(around)).find();
+    }
+
+    /**
+     * it.skip, test.only and their kin. A skip or a fixme whose first argument is a title (a
+     * string) or a plain true is a switch, and so is one followed by another member (.each) or
+     * by nothing (a reference); one with no arguments skips from inside a test (Playwright's
+     * test.skip()), a switch where it is unconditional; one whose first argument is a condition,
+     * and whose second is a description or absent, is a conditional skip (Playwright's
+     * test.skip(browserName === 'webkit', 'reason')): not a switch. A function as the second
+     * argument makes it a declaration with a computed title (it.skip(name, () => {})): a switch.
+     */
+    private static boolean scriptSwitch(CharSequence s, String around, Budget budget) {
+        Matcher m = SCRIPT_SWITCH.matcher(s);
+        while (m.find()) {
+            String modifier = m.group(1);
+            if (modifier.equals("only") || modifier.equals("todo")) return true;
+            int at = m.end();
+            while (at < s.length() && blank(s.charAt(at))) at++;
+            if (at >= s.length() || s.charAt(at) != '(') return true;
+            Arguments a = arguments(s, at, budget);
+            if (a.list().isEmpty()) {
+                if (!a.closed() || !conditional(around)) return true;
+                continue;
+            }
+            String first = a.list().get(0);
+            if (first.isEmpty() && !a.closed() || literal(first) || first.equals("true")) return true;
+            if (a.list().size() >= 2 && !a.list().get(1).isEmpty() && !literal(a.list().get(1))) return true;
         }
         return false;
     }
 
-    private static boolean word(char c) {
-        return Character.isJavaIdentifierPart(c);
-    }
-
-    /** The first index at or after at that does not cut a word. */
-    private static int wordEdge(String r, int at) {
-        while (at < r.length() && at > 0 && word(r.charAt(at - 1)) && word(r.charAt(at))) at++;
-        return at;
-    }
-
-    /** The last EDGE characters of a reading, from where a word starts. */
-    private static String tail(String r) {
-        return r.length() <= EDGE ? r : r.substring(wordEdge(r, r.length() - EDGE));
-    }
-
-    /** The first EDGE characters of a reading, to where a word ends. */
-    private static String head(String r) {
-        if (r.length() <= EDGE) return r;
-        int to = EDGE;
-        while (to > 0 && word(r.charAt(to - 1)) && word(r.charAt(to))) to--;
-        return r.substring(0, to);
+    private static boolean literal(String arg) {
+        return !arg.isEmpty() && "'\"`".indexOf(arg.charAt(0)) >= 0;
     }
 
     /**
-     * Where abort( is called alone, as a statically imported Assumptions.abort is: not after a dot
-     * (controller.abort(), x?.abort()), a # or a name (a declaration: function abort(), void
-     * abort(), def abort(); but return abort(...) is a call), and not followed by a body (abort()
-     * { ... }, a method declared in a class or an object). Each as [start, end).
+     * pytest's skip mark, applied to tests (a decorator, pytestmark, marks=); skipif with a plain
+     * True; xfail with run=False and no condition. unittest's skip; skipIf(True; skipUnless(False.
      */
-    private static List<int[]> bareAborts(String s) {
-        List<int[]> out = new ArrayList<>();
-        Matcher m = ABORT.matcher(s);
+    private static boolean pythonSwitch(CharSequence s, Budget budget) {
+        Matcher m = PYTEST_MARK.matcher(s);
         while (m.find()) {
-            int p = m.start() - 1;
-            while (p >= 0 && Character.isWhitespace(s.charAt(p))) p--;
-            if (p >= 0) {
-                char c = s.charAt(p);
-                if (c == '.' || c == '#' || c == '>' || c == '@') continue;
-                if (word(c)) {
-                    int q = p;
-                    while (q >= 0 && word(s.charAt(q))) q--;
-                    if (!CALLED_AFTER.contains(s.substring(q + 1, p + 1))) continue;
-                }
+            String mark = m.group(1);
+            if (mark.equals("skip")) return true;
+            Arguments a = argumentsAfter(s, m.end(), budget);
+            if (a == null || a.list().isEmpty()) continue;
+            String first = a.list().get(0).replace(" ", "");
+            if (mark.equals("skipif") && (first.equals("True") || first.equals("condition=True"))) return true;
+            if (mark.equals("xfail") && a.list().stream().anyMatch(x -> x.replace(" ", "").equals("run=False"))
+                    && (first.equals("True") || KEYWORD.matcher(first).lookingAt())
+                    && a.list().stream().map(x -> x.replace(" ", "")).noneMatch(x -> x.startsWith("condition=") && !x.equals("condition=True"))) {
+                return true;
             }
-            int close = closing(s, m.end() - 1, ')');
-            if (close >= 0) {
-                int k = close + 1;
-                while (k < s.length() && Character.isWhitespace(s.charAt(k))) k++;
-                if (k < s.length() && s.charAt(k) == '{') continue;
-            }
-            out.add(new int[] {m.start(), close >= 0 ? close + 1 : s.length()});
         }
-        return out;
+        Matcher u = UNITTEST_SKIP.matcher(s);
+        while (u.find()) {
+            String mark = u.group(1);
+            if (mark.equals("skip")) return true;
+            Arguments a = argumentsAfter(s, u.end(), budget);
+            if (a == null || a.list().isEmpty()) continue;
+            if (a.list().get(0).equals(mark.equals("skipIf") ? "True" : "False")) return true;
+        }
+        return false;
+    }
+
+    /** A test declaration whose option object, an argument after its title, says skip, only or todo: true (Vitest). */
+    private static boolean options(CharSequence s, Budget budget) {
+        if (!OPTION.matcher(s).find()) return false;
+        Matcher m = DECLARATION.matcher(s);
+        while (m.find()) {
+            List<String> args = arguments(s, m.end() - 1, budget).list();
+            for (int k = 1; k < args.size(); k++) if (args.get(k).startsWith("{") && OPTION.matcher(args.get(k)).find()) return true;
+        }
+        return false;
+    }
+
+    /** The arguments of a call, each stripped; whether its closing parenthesis was reached; the index after it, or after where the reading stopped. */
+    private record Arguments(List<String> list, boolean closed, int end) {}
+
+    /** The arguments of the call whose ( follows at (after white space), or null when none follows. */
+    private static Arguments argumentsAfter(CharSequence s, int at, Budget budget) {
+        while (at < s.length() && blank(s.charAt(at))) at++;
+        return at < s.length() && s.charAt(at) == '(' ? arguments(s, at, budget) : null;
     }
 
     /**
-     * Where an assumption never holds: assumeTrue with an argument that is a plain false, or
-     * assumeFalse with one that is a plain true, whatever the other arguments are (a message, a
-     * lambda, String.format(...)): the arguments are told apart by their parentheses, brackets
-     * and braces, and strings. A call whose end is not on the line runs to the end of it. Each as
-     * [start, end).
+     * The arguments of the call whose parenthesis is at open, told apart by their parentheses,
+     * brackets and braces, and strings, read at most SCAN characters far, and while the budget
+     * lasts: a call whose end is further has its last argument cut there. No argument is an
+     * empty list.
      */
-    private static List<int[]> assumptions(String s) {
-        List<int[]> out = new ArrayList<>();
-        Matcher m = ASSUME.matcher(s);
-        while (m.find()) {
-            String never = m.group(1).equals("True") ? "false" : "true";
-            int depth = 0, from = m.end(), i = m.end(), stop = Math.min(s.length(), m.end() + SCAN);
-            boolean plain = false;
-            for (; i < stop; i++) {
-                char c = s.charAt(i);
-                if (c == '"' || c == '\'' || c == '`') {
-                    int end = closing(s, i);
-                    if (end < 0 || end >= stop) {
-                        i = stop;
-                        break;
-                    }
-                    i = end;
-                } else if (c == '(' || c == '[' || c == '{') {
-                    depth++;
-                } else if ((c == ')' || c == ']' || c == '}') && depth > 0) {
-                    depth--;
-                } else if (depth == 0 && (c == ',' || c == ')')) {
-                    plain |= s.substring(from, i).strip().equals(never);
-                    from = i + 1;
-                    if (c == ')') break;
-                }
+    private static Arguments arguments(CharSequence s, int open, Budget budget) {
+        List<String> out = new ArrayList<>();
+        int depth = 0, from = open + 1, stop = Math.min(s.length(), open + 1 + SCAN);
+        for (int i = open + 1; i < stop; i++) {
+            if (!budget.spend()) {
+                stop = i;
+                break;
             }
-            if (i >= stop) plain |= s.substring(Math.min(from, stop), stop).strip().equals(never);
-            if (plain) out.add(new int[] {m.start(), Math.min(s.length(), i + 1)});
-        }
-        return out;
-    }
-
-    /** The index of the bracket that closes the one at open (a parenthesis), counting brackets and skipping strings; -1 when it is not on the line. */
-    private static int closing(String s, int open, char close) {
-        int depth = 0;
-        for (int i = open, stop = Math.min(s.length(), open + SCAN); i < stop; i++) {
             char c = s.charAt(i);
             if (c == '"' || c == '\'' || c == '`') {
-                int end = closing(s, i);
-                if (end < 0 || end >= stop) return -1;
+                int end = closingQuote(s, i, stop, budget);
+                if (end < 0) break;
+                i = end;
+            } else if (c == '(' || c == '[' || c == '{') {
+                depth++;
+            } else if ((c == ')' || c == ']' || c == '}') && depth > 0) {
+                depth--;
+            } else if (depth == 0 && (c == ',' || c == ')')) {
+                String arg = s.subSequence(from, i).toString().strip();
+                if (c == ',' || !arg.isEmpty() || !out.isEmpty()) out.add(arg);
+                from = i + 1;
+                if (c == ')') return new Arguments(out, true, i + 1);
+            }
+        }
+        out.add(s.subSequence(Math.min(from, stop), stop).toString().strip());
+        return new Arguments(out.size() == 1 && out.get(0).isEmpty() ? List.of() : out, false, stop);
+    }
+
+    /** The index of the quote that closes the string starting at from, before limit and while the budget lasts, or -1. */
+    private static int closingQuote(CharSequence t, int from, int limit, Budget budget) {
+        char quote = t.charAt(from);
+        for (int i = from + 1; i < limit; i++) {
+            if (!budget.spend()) return -1;
+            char c = t.charAt(i);
+            if (c == '\\') i++;
+            else if (c == quote) return i;
+        }
+        return -1;
+    }
+
+    /**
+     * The index of the parenthesis that closes the one at open, counting parentheses and skipping
+     * strings, at most SCAN characters on and while the budget lasts; -1 when it is not within reach.
+     */
+    private static int closingParenthesis(CharSequence s, int open, Budget budget) {
+        int depth = 0;
+        for (int i = open, stop = Math.min(s.length(), open + SCAN); i < stop; i++) {
+            if (!budget.spend()) return -1;
+            char c = s.charAt(i);
+            if (c == '"' || c == '\'' || c == '`') {
+                int end = closingQuote(s, i, stop, budget);
+                if (end < 0) return -1;
                 i = end;
             } else if (c == '(') {
                 depth++;
-            } else if (c == close && --depth == 0) {
+            } else if (c == ')' && --depth == 0) {
                 return i;
             }
         }
@@ -335,75 +608,78 @@ public final class Integrity {
     }
 
     /**
-     * The line lint over the lines a change adds to one file, in their order, as the change wrote
-     * them: each line that holds a switch (lintedSwitch), as it is written, and each run of two or
-     * three added lines that hold one only together (it, a line break, .skip; @, a line break,
-     * Disabled), joined by a space: each line read every way (readings) and every way of joining
-     * them tried, and the lines joined as written and then read (a block comment that opens on one
-     * line and closes on the next, a Python line that ends in a backslash). Where they are joined,
-     * only the last EDGE characters of a line and the first EDGE of the next count. Without the
-     * second part, breaking a switch over two lines would hide it from a command that runs no test
-     * (check-pr). The lines are taken as neighbours as the diff lists them; lines of two places of
-     * the file that only together read as a switch are reported too, which errs on the safe side.
-     *
-     * It finds the usual ways of writing a switch, to catch mistakes and plain attempts early. It
-     * is not a guard: an author who sets out to hide a switch from a reader of text can (a quote
-     * in a regular expression before a comment between the switch's words, a switch reached
-     * through another name, one of which the change wrote only a part, one over more than three
-     * lines). The run of the file says which tests that ran before the change do not run now,
-     * whatever the source says.
+     * Where abort( is called alone, as a statically imported Assumptions.abort is: not after a dot
+     * (controller.abort(), x?.abort()), a # or a name (a declaration: function abort(), void
+     * abort(), def abort(); but return abort(...) is a call), and not followed by a body or a
+     * return type (abort() { ... }, abort(): void { ... }, a method declared in a class, an object
+     * or an interface; but x ? abort() : y is a call). Each as [start, end); with first, only the
+     * first.
      */
-    public static List<String> lintedSwitches(List<String> addedLines) {
-        List<String> out = new ArrayList<>();
-        List<List<String>> read = new ArrayList<>();
-        boolean[] told = new boolean[addedLines.size()];
-        for (int i = 0; i < told.length; i++) {
-            read.add(readings(addedLines.get(i)));
-            if (read.get(i).stream().noneMatch(Integrity::hit)) continue;
-            told[i] = true;
-            out.add(addedLines.get(i).trim());
-        }
-        for (int width = 2; width <= 3; width++) {
-            for (int i = 0; i + width <= told.length; i++) {
-                boolean fresh = true;
-                StringBuilder shown = new StringBuilder(), written = new StringBuilder();
-                for (int k = i; k < i + width; k++) {
-                    fresh &= !told[k];
-                    shown.append(k == i ? "" : " ").append(addedLines.get(k).trim());
-                    String line = addedLines.get(k).stripTrailing();
-                    if (line.endsWith("\\")) line = line.substring(0, line.length() - 1); // a Python line continued on the next
-                    written.append(k == i ? "" : " ").append(k == i ? tail(line) : k == i + width - 1 ? head(line) : line.length() > 2 * EDGE ? head(line) : line);
-                }
-                if (!fresh || !joinedHit(read.subList(i, i + width), "") && readings(written.toString()).stream().noneMatch(Integrity::hit)) continue;
-                for (int k = i; k < i + width; k++) told[k] = true;
-                out.add(shown.toString());
+    private static List<int[]> bareAborts(CharSequence s, Budget budget, boolean first) {
+        List<int[]> out = new ArrayList<>();
+        Matcher m = ABORT.matcher(s);
+        while (m.find()) {
+            int p = m.start() - 1;
+            while (p >= 0 && Character.isWhitespace(s.charAt(p))) p--;
+            char before = p >= 0 ? s.charAt(p) : ' ';
+            if (before == '.' || before == '#' || before == '>' || before == '@') continue;
+            if (p >= 0 && word(before)) {
+                int q = p;
+                while (q >= 0 && word(s.charAt(q))) q--;
+                if (!CALLED_AFTER.contains(s.subSequence(q + 1, p + 1).toString())) continue;
             }
+            int close = closingParenthesis(s, m.end() - 1, budget);
+            if (close >= 0) {
+                int k = close + 1;
+                while (k < s.length() && Character.isWhitespace(s.charAt(k))) k++;
+                if (k < s.length() && (s.charAt(k) == '{' || s.charAt(k) == ':' && before != '?')) continue;
+            }
+            out.add(new int[] {m.start(), close >= 0 ? close + 1 : s.length()});
+            if (first) break;
         }
         return out;
     }
 
-    /**
-     * True when some way of joining the readings of these lines, one of each after what is joined
-     * so far, holds a switch: the end of each line with the start of the next (see tail, head).
-     */
-    private static boolean joinedHit(List<List<String>> lines, String so) {
-        if (lines.isEmpty()) return lintedCode(so);
-        boolean last = lines.size() == 1;
-        for (String r : lines.get(0)) {
-            String part = so.isEmpty() ? tail(r) : last ? head(r) : r.length() > 2 * EDGE ? head(r) : r;
-            if (joinedHit(lines.subList(1, lines.size()), so.isEmpty() ? part : so + " " + part)) return true;
-        }
-        return false;
+    private static boolean word(char c) {
+        return Character.isJavaIdentifierPart(c);
     }
 
     /**
-     * A line with its built-in switches taken out. What a configured pattern still finds in it is
-     * the repository's own (a helper of its own that skips, a comment directive) and is judged by
-     * the line as written; the built-in ones are judged by the line lint.
+     * Where an assumption never holds: assumeTrue with an argument that is a plain false, or
+     * assumeFalse with one that is a plain true, whatever the other arguments are (a message, a
+     * lambda, String.format(...)). A call whose end is not within reach has its last argument cut
+     * there. Each as [start, end); with first, only the first.
+     */
+    private static List<int[]> assumptions(CharSequence s, Budget budget, boolean first) {
+        List<int[]> out = new ArrayList<>();
+        Matcher m = ASSUME.matcher(s);
+        while (m.find()) {
+            String never = m.group(1).equals("True") ? "false" : "true";
+            Arguments a = arguments(s, m.end() - 1, budget);
+            if (!a.list().contains(never)) continue;
+            out.add(new int[] {m.start(), a.end()});
+            if (first) break;
+        }
+        return out;
+    }
+
+    /** What withoutBuiltInSwitches takes out: the words of every switch the lint judges, conditional ones too (it judges them not switches). */
+    private static final Pattern BUILT_IN = Pattern.compile(SCRIPT_SWITCH.pattern() + "|\\b[xf](?:it|test|describe|context)\\b"
+            + "|@\\s*(?:[\\w$]+\\s*\\.\\s*){0,12}(?:Disabled\\w*|Ignore|EnabledIf\\w*)\\b|" + ABORTS.pattern()
+            + "|\\bpytest\\s*\\.\\s*(?:mark\\s*\\.\\s*)?(?:skip\\w*|xfail)\\b|\\bunittest\\s*\\.\\s*skip\\w*|\\bself\\s*\\.\\s*skipTest\\b|\\bSkipTest\\b"
+            + "|\\bthis\\s*\\.\\s*skip\\b|\\bt\\s*\\.\\s*Skip\\w*");
+
+    /**
+     * A line with the words of its built-in switches taken out. What a configured pattern still
+     * finds in it is the repository's own (a helper of its own that skips, a comment directive)
+     * and is judged by the line as written; the built-in ones, conditional ones included, are
+     * judged by the line lint. A line longer than LONGEST, which the lint does not read, is kept
+     * as it is: the configured patterns judge it.
      */
     public static String withoutBuiltInSwitches(String line) {
-        List<int[]> spans = new ArrayList<>(assumptions(line));
-        spans.addAll(bareAborts(line));
+        if (line.length() > LONGEST) return line;
+        List<int[]> spans = new ArrayList<>(assumptions(line, unbounded(), false));
+        spans.addAll(bareAborts(line, unbounded(), false));
         spans.sort(Comparator.comparingInt((int[] x) -> x[0]).reversed());
         StringBuilder out = new StringBuilder(line);
         int limit = line.length();
@@ -412,12 +688,14 @@ public final class Integrity {
             out.replace(x[0], x[1], " ");
             limit = x[0];
         }
-        return OTHER_SWITCH.matcher(SCRIPT_SWITCH.matcher(out.toString()).replaceAll(" ")).replaceAll(" ");
+        return BUILT_IN.matcher(out.toString()).replaceAll(" ");
     }
 
-    private static final Pattern FOCUSED = Pattern.compile("\\b(it|test|describe|context|suite)(" + DOT + "\\w+){0,8}" + DOT + "only\\b|\\bf(it|describe)\\s*\\(");
+    /** How a reported line is named: focused (only this test runs) or switched off. */
+    private static final Pattern FOCUSED = Pattern.compile("\\b(?:it|test|describe|context|suite)(?:" + DOT + "\\w+){0,8}" + DOT + "only\\b"
+            + "|(?<![\\w$.])f(?:it|describe)(?=\\s*(?:\\(|\\.\\s*each\\b))|\\bonly\\s*:\\s*true\\b");
     private static final Pattern JAVA_ASSERT = Pattern.compile(
-            "\\b(?:assert|verify)\\w*\\s*\\(|(?i:expect)\\w*\\s*\\(|\\.should\\w*\\s*\\(|\\bfail\\s*\\(|\\bassert\\s|\\bexpected\\s*=");
+            "\\b(?:assert|verify)\\w*\\s*\\(|\\b(?=\\w*?(?i:expect))\\w++\\s*\\(|\\.should\\w*\\s*\\(|\\bfail\\s*\\(|\\bassert\\s|\\bexpected\\s*=");
     private static final Pattern SCRIPT_ASSERT = Pattern.compile("\\bexpect(?:TypeOf)?\\s*[(.]|\\bassert\\w*\\s*[(.]|\\.should\\b|\\bshould\\s*\\(");
 
     // ---------------- flags that skip tests or ignore their failures ----------------
@@ -458,10 +736,12 @@ public final class Integrity {
     private final Map<String, String> afterText = new HashMap<>();
     private final Set<Finding> out = new LinkedHashSet<>();
     /**
-     * The scan reads what the change wrote, so its work per line and per file is bounded. Nothing is
-     * dropped for that: a long line is scanned in overlapping pieces. Test files are read by the
-     * lines the change adds and removes, never whole; only build and configuration files are read
-     * whole (a pom, package.json, a coverage configuration), and one too large to read is reported.
+     * The scan reads what the change wrote, so its work per line and per file is bounded. The
+     * detectors other than the switch lint drop nothing for that: a long line is scanned in
+     * overlapping pieces. The switch lint does not read an added line longer than LONGEST, and
+     * says so (see switchedOff). Test files are read by the lines the change adds and removes,
+     * never whole; only build and configuration files are read whole (a pom, package.json, a
+     * coverage configuration), and one too large to read is reported.
      */
     private static final int MAX_LINE = 2000;
     private static final int OVERLAP = 300;
@@ -519,106 +799,161 @@ public final class Integrity {
     }
 
     private void switchedOff() {
-        // every test file alike: the lines the change adds, as it wrote them, are linted alone and two or three together (the lint
-        // bounds its own work on a long line, so no line is cut into pieces that would count as lines of their own)
+        // every test file alike: the lines the change adds, as it wrote them, are linted alone and two or three together; a line
+        // longer than the lint reads is not read, and the report says how many were not
         for (String path : change.paths("AM")) {
             if (!anyTestFile(path)) continue;
-            for (String hit : lintedSwitches(whole.getOrDefault(path, List.of()))) switchedOff(path, hit);
+            List<String> lines = whole.getOrDefault(path, List.of());
+            for (String hit : lintedSwitches(lines)) switchedOff(path, hit);
+            int unread = unlinted(lines);
+            if (unread > 0) {
+                note("lines too long for the switch lint", path, unread + (unread == 1 ? " added line is" : " added lines are") + " longer than " + LONGEST
+                        + " characters and " + (unread == 1 ? "was" : "were") + " not read for switches; the run of the file judges its tests");
+            }
         }
-        // the repository's own patterns may name more than the built-in lint knows; a line is read as the lint reads it
+        // the repository's own patterns may name more than the built-in lint knows; a line is read as the lint reads it, and the
+        // built-in switches in it are the lint's to judge (as check-pr does)
         for (String hit : Checks.disabledTests(added)) {
-            if (!seen(hitLine(hit), Checks::containsDisabled)) continue;
+            if (!seen(hitLine(hit), l -> Checks.containsDisabled(withoutBuiltInSwitches(l)))) continue;
             switchedOff(hitPath(hit), hitLine(hit));
         }
     }
 
     /**
-     * A line with what looks like no code taken out: comments are dropped (a block comment becomes a
-     * space, so "@", a block comment and "Disabled" read as "@ Disabled") and the inside of each string is
-     * emptied. Code that follows a comment on the same line stays, and so does code inside ${...}
-     * of a template string. Where a quote never closes, the rest is kept as it is. One line cannot
-     * tell its quotes for certain, so this is never the only reading of a line (see seen).
+     * The code of a text, one line or lines joined by line breaks, in one forward pass that
+     * carries what it is in (a block comment, a template string, the ${...} of one) from line to
+     * line: comments are dropped (a block comment becomes a space, so "@", a block comment and
+     * "Disabled" read as "@ Disabled"), the inside of each string is emptied, and what a template
+     * string computes (${...}) stays code. A ' or " string ends with its line: one that does not
+     * close there keeps the rest of the line as written. At the start of a line, a # begins a
+     * comment (Python, a shell) and a * is the middle of a block comment (a doc comment whose
+     * start the text does not hold), to the comment's end on that line or the line's end. A
+     * backslash that ends a line (a Python line continued) is dropped. Line breaks (also U+2028,
+     * U+2029) are kept.
+     * Reading text cannot tell every quote for certain (a quote in a regular expression), so this
+     * is never the only reading of an added line (see reading).
      */
-    static String code(String line) {
-        return code(line, 0);
-    }
-
-    private static String code(String line, int depth) {
-        String t = line.stripLeading();
-        if (t.startsWith("#")) return ""; // a comment of a script or a Python file
-        if (t.startsWith("*")) {
-            // the inside of a block comment; what follows its end on the same line is code again
-            int end = t.indexOf("*/");
-            if (end < 0) return "";
-            t = t.substring(end + 2);
-        }
-        StringBuilder out = new StringBuilder();
+    static String code(String t) {
+        int n = t.length();
+        work += n;
+        StringBuilder out = new StringBuilder(n);
+        // what the pass is in, innermost last: -1 the text of a template string, k >= 0 the code of a ${...} with k braces open
+        int[] stack = new int[8];
+        int top = 0;
+        boolean lineStart = true;
         int i = 0;
-        while (i < t.length()) {
+        while (i < n) {
             char c = t.charAt(i);
-            if (c == '/' && i + 1 < t.length() && t.charAt(i + 1) == '/') break;
-            if (c == '/' && i + 1 < t.length() && t.charAt(i + 1) == '*') {
-                int end = t.indexOf("*/", i + 2);
-                if (end < 0) break;
-                i = end + 2;
-                out.append(' ');
-                continue;
-            }
-            if (c == '"' || c == '\'' || c == '`') {
-                int end = closing(t, i);
-                if (end < 0) return out.append(t, i, t.length()).toString();
-                out.append(c);
-                if (c == '`') {
-                    // what a template string computes is code; it is read the same way, strings inside it included
-                    int at = t.indexOf("${", i);
-                    while (at >= 0 && at < end) {
-                        int close = matching(t, at + 1, end);
-                        if (close < 0) {
-                            out.append(' ').append(t, at + 2, end).append(' '); // braces that do not pair up: kept as written
-                            break;
-                        }
-                        String inner = t.substring(at + 2, close);
-                        out.append(' ').append(depth < 4 ? code(inner, depth + 1) : inner).append(' ');
-                        at = t.indexOf("${", close);
-                    }
+            if (top > 0 && stack[top - 1] < 0) { // the text of a template string
+                if (lineBreak(c)) out.append('\n');
+                if (c == '\\' && i + 1 < n && !lineBreak(t.charAt(i + 1))) i++;
+                else if (c == '`') {
+                    top--;
+                    out.append('`');
+                } else if (c == '$' && i + 1 < n && t.charAt(i + 1) == '{') {
+                    stack = push(stack, top++, 0);
+                    out.append(' ');
+                    i++;
                 }
-                out.append(c);
-                i = end + 1;
+                i++;
                 continue;
             }
-            out.append(c);
-            i++;
+            if (lineBreak(c)) {
+                out.append('\n');
+                lineStart = true;
+                i++;
+                continue;
+            }
+            if (lineStart && top == 0) {
+                lineStart = false;
+                int k = i;
+                while (k < n && (t.charAt(k) == ' ' || t.charAt(k) == '\t')) k++;
+                if (k < n && t.charAt(k) == '#') {
+                    i = lineEnd(t, k);
+                    continue;
+                }
+                if (k < n && t.charAt(k) == '*') {
+                    int end = lineEnd(t, k), close = indexOf(t, "*/", k, end);
+                    out.append(' ');
+                    i = close < 0 ? end : close + 2;
+                    continue;
+                }
+            }
+            lineStart = false;
+            char next = i + 1 < n ? t.charAt(i + 1) : '\0';
+            if (c == '/' && next == '/') {
+                i = lineEnd(t, i);
+            } else if (c == '/' && next == '*') {
+                i = blockComment(t, i + 2, out);
+            } else if (c == '\\' && lineBreak(next)) {
+                i++;
+            } else if (c == '"' || c == '\'') {
+                i = string(t, i, out);
+            } else if (c == '`') {
+                stack = push(stack, top++, -1);
+                out.append('`');
+                i++;
+            } else if (top > 0 && c == '}' && stack[top - 1] == 0) {
+                top--; // the end of a ${...}: back in the template's text
+                out.append(' ');
+                i++;
+            } else {
+                if (top > 0 && c == '{') stack[top - 1]++;
+                else if (top > 0 && c == '}') stack[top - 1]--;
+                out.append(c);
+                i++;
+            }
         }
         return out.toString();
     }
 
-    /** The index of the brace that closes the one at open, before limit, counting braces in between; -1 when there is none. */
-    private static int matching(String t, int open, int limit) {
-        int depth = 0;
-        for (int i = open; i < limit; i++) {
-            char c = t.charAt(i);
-            if (c == '"' || c == '\'' || c == '`') {
-                int end = closing(t, i); // a brace inside a string is text
-                if (end < 0 || end >= limit) return -1;
-                i = end;
-            } else if (c == '{') {
-                depth++;
-            } else if (c == '}' && --depth == 0) {
-                return i;
-            }
-        }
-        return -1;
+    private static int[] push(int[] stack, int at, int value) {
+        int[] s = at < stack.length ? stack : java.util.Arrays.copyOf(stack, stack.length * 2);
+        s[at] = value;
+        return s;
     }
 
-    /** The index of the quote that closes the string starting at from, or -1. */
-    private static int closing(String t, int from) {
-        char quote = t.charAt(from);
-        for (int i = from + 1; i < t.length(); i++) {
+    private static boolean lineBreak(char c) {
+        return c == '\n' || c == '\r' || c == 0x2028 || c == 0x2029; // also JavaScript's line and paragraph separators
+    }
+
+    /** The index of the line break at or after from, or the text's end. */
+    private static int lineEnd(String t, int from) {
+        int i = from;
+        while (i < t.length() && !lineBreak(t.charAt(i))) i++;
+        return i;
+    }
+
+    private static int indexOf(String t, String what, int from, int to) {
+        int at = t.indexOf(what, from);
+        return at >= 0 && at + what.length() <= to ? at : -1;
+    }
+
+    /** A block comment whose inside starts at from: a space for it, its line breaks kept; the index after its end, or the text's end. */
+    private static int blockComment(String t, int from, StringBuilder out) {
+        out.append(' ');
+        for (int i = from; i < t.length(); i++) {
             char c = t.charAt(i);
-            if (c == '\\') i++;
-            else if (c == quote) return i;
+            if (c == '*' && i + 1 < t.length() && t.charAt(i + 1) == '/') return i + 2;
+            if (lineBreak(c)) out.append('\n');
         }
-        return -1;
+        return t.length();
+    }
+
+    /** A ' or " string that starts at from: emptied when it closes on its line, else the rest of the line as written. The index after it. */
+    private static int string(String t, int from, StringBuilder out) {
+        char quote = t.charAt(from);
+        int i = from + 1;
+        while (i < t.length() && !lineBreak(t.charAt(i))) {
+            char c = t.charAt(i);
+            if (c == quote) {
+                out.append(quote).append(quote);
+                return i + 1;
+            }
+            i += c == '\\' && i + 1 < t.length() && !lineBreak(t.charAt(i + 1)) ? 2 : 1;
+        }
+        out.append(t, from, i);
+        return i;
     }
 
     private void switchedOff(String path, String line) {
@@ -664,22 +999,21 @@ public final class Integrity {
     private static final Pattern JVM = Pattern.compile(".*\\.(?:java|kt|groovy|scala)");
 
     /**
-     * What the lines of a deleted test file say of the tests it declared: "code" when a line's
-     * code calls it, test, describe or their kin, defines a test function (Python, Go), or carries
-     * a JUnit test annotation; "text" when only a comment or a string of a line does (a helper
-     * whose comment shows an example, a fixture that holds sample source); null when none does.
-     * The conservative readings of the switch lint (a line as written) are for finding switches,
-     * not for proving that a file declared tests, so only the code reading proves it. A file that
-     * is not source (see SOURCE) declares nothing. A lint of lines: which tests it held is not read.
+     * What the lines of a deleted test file say of the tests it declared: "code" when its code
+     * calls it, test, describe or their kin, defines a test function (Python, Go), or carries a
+     * JUnit test annotation; "text" when only the text does (a helper whose comment shows an
+     * example, a fixture that holds sample source); null when none does. The lines a change
+     * removes from a deleted file are all of its lines, in order, so its code is read as one text
+     * (see code), carrying a comment or a string that runs over several lines from line to line:
+     * an example in such a comment or template string declares nothing. Where that reading may
+     * go wrong (a quote it cannot tell), what it hides is still "text": a note, not a problem. A
+     * file that is not source (see SOURCE) declares nothing. Which tests it held is not read.
      */
     private static String declaresTests(String path, List<String> lines) {
         if (!SOURCE.matcher(path).matches()) return null;
-        String found = null;
-        for (String line : lines) {
-            if (TEST_CALL.matcher(code(line)).find()) return "code";
-            if (found == null && seen(line, l -> TEST_CALL.matcher(l).find())) found = "text";
-        }
-        return found;
+        for (String line : code(String.join("\n", lines)).split("\n", -1)) if (TEST_CALL.matcher(line).find()) return "code";
+        for (String line : lines) if (TEST_CALL.matcher(line).find()) return "text";
+        return null;
     }
 
     /** The lines that are not package lines (and, with imports, not import lines either). */
@@ -1049,8 +1383,9 @@ public final class Integrity {
     }
 
     private static String tag(String xml, String name) {
-        Matcher m = Pattern.compile("<" + name + ">\\s*([^<]*?)\\s*</" + name + ">").matcher(xml);
-        return m.find() ? m.group(1) : "";
+        // [^<]* then trim, not \s*([^<]*?)\s*: the two would share a run of white space and try every way of splitting it
+        Matcher m = Pattern.compile("<" + name + ">([^<]*)</" + name + ">").matcher(xml);
+        return m.find() ? m.group(1).trim() : "";
     }
 
     private static List<Double> numbers(Pattern p, List<String> lines) {
