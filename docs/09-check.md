@@ -55,11 +55,11 @@ Three parts:
 | New test passes before and after | It passes whether or not the change is there, so it does not test the change. This fails the check |
 | Fails after the change | The change's own test fails. This fails the check |
 | Ran before the change, skipped now | The file as it was ran this test, and the change skips it: the change switched it off. This fails the check |
-| Removed | The file as it was had these tests, the file now does not, and fewer new tests came in their place. They are named. This fails the check |
+| Removed | The file as it was had these tests, the file now does not, and the change did not only rename them. They are named. This fails the check, however many new tests came: deleting a test and writing another is not a rename. A file whose tests were all taken out counts too |
 | Could not be judged | Before the change the test did not compile, threw something other than a failed assertion, or was not found. Or the file as it was could not be run (it did not compile, timed out, or no build tool), so it cannot be told whether a test is new. A test of code that did not exist before cannot fail there for the right reason, so it is counted neither way |
 | Different results from run to run | Unstable. Not counted as sensitive |
 | Skipped | A new test that is skipped. Listed |
-| Note: renamed, replaced or moved | Tests the file no longer reports under their names, with as many new ones or more; tests found under a renamed group with their own titles unchanged; tests now in another changed file. Not a problem: each new test is judged on its own |
+| Note: renamed or moved | Tests whose name alone the change rewrote; tests found under a renamed group with their own titles unchanged. Each counts as the same test as before. Also tests now in another changed file, where they are judged as new. Not a problem |
 | Already in the file, passes on both | A test you did not add. Not counted. The same for a test that was skipped before the change and still is |
 
 A test is **new** when the run of its file as it was, on the commit your branch started from,
@@ -147,16 +147,25 @@ Claude Code, in `.claude/settings.json`:
 - An edited test file is run three times instead of two: after the change, before it, and as it
   was. For Maven this is one more build of the module on the base commit (on a small project, 75
   seconds instead of 61). A change that only adds test files needs no third run.
-- A renamed test looks exactly like one test removed and one added; no report tells the two
-  apart. So when at least as many new tests came as went, the report says so in a note, and each
-  new test is judged on its own: one that passes on both sides fails the check as usual. Only
-  when fewer came than went are the gone ones reported as removed.
+- In a report, a renamed test looks exactly like one test removed and one added. The file's
+  text tells them apart: a gone test and a new test of the same class or file are one test
+  renamed when every line the change took out where the gone test stood comes back there, as it
+  was or with only the gone test's name turned into the new test's name. Lines added around it
+  (a new test written next to it) do not matter. A title changed in the same place as the
+  test's body, or a test deleted in one place and another added elsewhere, is a removal. A test whose title is built while the
+  file runs is found when the part of the title that changed is written out in the file
+  (`'adds %i'` to `'sums %i'`). A test deleted and another written in its place with the very
+  same lines apart from the name is taken for a rename.
+- A file whose tests were all taken out runs and reports none: its tests were removed. For
+  Maven this is a build that passes with no report for the class; a build that fails, or no
+  build tool, is not read as "no tests".
 - A renamed group (`describe` block, nested class) renames every test in it. A test whose own
   title is unchanged and fits exactly one gone test and one new test of the file is taken to be
   the same test, so a test deleted in one group and a trivial one of the same title added in
   another is taken for a rename too.
 - A gone test whose own title another changed file now reports as a new test counts as moved
-  (a note), not removed. In that other file it is a new test and is judged as one.
+  (a note), not removed. In that other file it is a new test and is judged as one, so a moved
+  test that passes on both sides fails the check there.
 - A test file that is moved or renamed (git sees one file deleted and one added) has no earlier
   version under its new name: all its tests count as new.
 - A test whose name changes from run to run (a time or a random value in it) looks new each time.

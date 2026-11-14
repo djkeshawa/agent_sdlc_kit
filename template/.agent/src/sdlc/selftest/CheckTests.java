@@ -132,6 +132,7 @@ final class CheckTests {
         write(repo, "checks/judged.t", JUDGED);
         write(repo, "checks/legacy.t", LEGACY);
         write(repo, "checks/era.t", ERA);
+        write(repo, "checks/named.t", NAMED);
         write(repo, ".gitignore", "ignored/\n");
         git(repo, "init", "-q", "-b", "main");
         commit(repo, "base");
@@ -361,11 +362,11 @@ final class CheckTests {
                 later.contains("1 is skipped\n      checks/judged.t  [self test]\n        later\n") && !later.contains("skipped now") && code == 0);
         write(repo, "checks/judged.t", JUDGED);
 
-        // two gone and only one new in their place: removed
+        // two gone and one new in their place: removed
         write(repo, "checks/judged.t", "stays: pass\nturned off: pass\nwas off: skip\nidle: pass\n");
         String fewer = report(Map.of("selftest-runner", "true", "runs", "1"));
-        check("check: tests the file had and does not report now, with fewer new ones, were removed",
-                fewer.contains("2 tests were removed: the edited file had them before the change, and fewer new tests came than went\n      checks/judged.t  [self test]\n        goes\n        goes too\n")
+        check("check: tests the file had and does not report now were removed",
+                fewer.contains("2 tests were removed: the edited file had them before the change, and the change did not only rename them\n      checks/judged.t  [self test]\n        goes\n        goes too\n")
                 && fewer.contains("1 new test passes before and after") && code == 1);
         reasons.reset();
         try {
@@ -379,25 +380,19 @@ final class CheckTests {
             System.setErr(err);
         }
 
-        // one gone and one new: a rename cannot be told from a replacement, and the new one is judged on its own
-        write(repo, "checks/judged.t", JUDGED.replace("goes too: pass", "renamed: needs fixed"));
-        String renamed = report(Map.of("selftest-runner", "true", "runs", "1"));
-        check("check: a renamed test is a note, not a problem", code == 0 && !renamed.contains("removed")
-                && renamed.contains("Note: tests renamed, replaced or moved (1 note; each new test is judged on its own)\n      checks/judged.t  [self test]\n"
-                        + "        1 test is no longer reported under its name and 1 new one is: renamed or replaced. No longer reported: goes too. New: renamed\n")
-                && renamed.contains("2 fail before the change and pass after it"));
-
         // a renamed group: the test keeps its own title, and is the same test
         write(repo, "checks/judged.t", JUDGED.replace("stays: pass", "group > stays: pass"));
         String regrouped = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: a test under a renamed group, with its title unchanged, is the same test and a note", code == 0 && !regrouped.contains("removed")
                 && regrouped.contains("1 test is reported under another group, with its own title unchanged, and counts as the same test: stays is now group > stays")
                 && regrouped.contains("5 tests that were already in the edited files pass before and after (not counted)"));
-        // but not when the title fits two new tests: then which one it is cannot be told
-        write(repo, "checks/judged.t", JUDGED.replace("stays: pass", "one > stays: pass\ntwo > stays: pass"));
+        // but not when the title fits two new tests (written elsewhere in the file, so its text does not tell either): which one it is cannot be told
+        write(repo, "checks/judged.t", JUDGED.replace("stays: pass\n", "") + "one > stays: pass\ntwo > stays: pass\n");
         String twoGroups = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: a title that fits two new tests pairs with neither", code == 1
-                && twoGroups.contains("2 new tests pass before and after") && twoGroups.contains("1 test is no longer reported under its name and 2 new ones are"));
+                && twoGroups.contains("2 new tests pass before and after") && twoGroups.contains("1 test was removed") && twoGroups.contains("        stays\n"));
+
+        renamedByTheText(repo);
 
         // a test that went to another changed file has moved
         write(repo, "checks/judged.t", JUDGED.replace("goes too: pass\n", ""));
@@ -433,6 +428,57 @@ final class CheckTests {
         java.util.List<Path> made = Check.checkoutsAfterClose(sdlc.check.Change.of(null));
         check("check: the checkouts after, before and as it was are all removed", made.size() == 3 && made.stream().noneMatch(Files::exists));
     }
+
+    /**
+     * A gone test and a new one are one test renamed only when the file's text shows that nothing
+     * but the name changed. Otherwise the gone test was removed, however many new ones came.
+     */
+    private static void renamedByTheText(Path repo) throws IOException {
+        write(repo, "checks/judged.t", JUDGED);
+        // a title, a title built while the file runs, a title with an escaped quote, a method of several cases: only the names change
+        write(repo, "checks/named.t", "has a title: pass\n  expects payments\nsums %i: pass\nit\\'s a title: pass\nrefusesNull(String)[%i]: pass\nrefund: pass\ngoes: pass\n");
+        String renamed = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: tests whose names alone the change rewrote are renamed, a note, and the same tests", code == 0 && !renamed.contains("removed")
+                && renamed.contains("Note: tests renamed or moved (1 note)\n      checks/named.t  [self test]\n        6 tests were renamed (only the name changed in the file), and count as the same tests: "
+                        + "has a name is now has a title, adds 1 is now sums 1, adds 2 is now sums 2, it's a name is now it's a title, "
+                        + "rejectsNull(String)[1] is now refusesNull(String)[1], rejectsNull(String)[2] is now refusesNull(String)[2]\n")
+                && !renamed.contains("new test"));
+
+        // a test renamed, and a new one written right after it, in one place
+        write(repo, "checks/named.t", NAMED.replace("goes: pass\n", "went: pass\nextra: pass\n"));
+        String beside = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a test renamed next to a new one is still renamed, and the new one is judged as new",
+                beside.contains("1 test was renamed (only the name changed in the file), and counts as the same test: goes is now went\n")
+                && beside.contains("1 new test passes before and after, so it does not test the change\n      checks/named.t  [self test]\n        extra\n")
+                && !beside.contains("removed") && code == 1);
+
+        // the title and the body changed in the same place: not a rename
+        write(repo, "checks/named.t", NAMED.replace("has a name: pass\n  expects payments", "has a title: pass\n  expects anything"));
+        String rewritten = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a test whose title and body changed in one place was removed, and the other one is new",
+                rewritten.contains("1 test was removed: the edited file had it before the change, and the change did not only rename it\n      checks/named.t  [self test]\n        has a name\n")
+                && rewritten.contains("1 new test passes before and after, so it does not test the change\n      checks/named.t  [self test]\n        has a title\n") && code == 1);
+
+        // one test deleted, another added elsewhere: not a rename, however the counts compare
+        write(repo, "checks/named.t", "arrives: pass\n" + NAMED.replace("goes: pass\n", ""));
+        String swapped = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a test deleted and another added elsewhere is a removal, not a rename",
+                swapped.contains("1 test was removed") && swapped.contains("        goes\n") && swapped.contains("        arrives\n") && !swapped.contains("Note:") && code == 1);
+
+        // every test of the file removed: the file runs and has none
+        write(repo, "checks/named.t", "  nothing left\n");
+        String emptied = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a file whose tests were all removed reports them removed", emptied.contains("8 tests were removed") && !emptied.contains("reports no tests") && code == 1);
+        write(repo, "checks/named.t", NAMED);
+        // a new file with no test: nothing to judge, and the report says so
+        write(repo, "checks/empty.t", "  nothing yet\n");
+        String none = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a new file with no test is said to report none", none.contains("checks/empty.t  [self test]\n        the file ran after the change and reports no tests\n") && code == 0);
+        Files.delete(repo.resolve("checks/empty.t"));
+    }
+
+    /** A test file of the base whose tests the change renames, rewrites or removes. */
+    private static final String NAMED = "has a name: pass\n  expects payments\nadds %i: pass\nit\\'s a name: pass\nrejectsNull(String)[%i]: pass\nrefund: pass\ngoes: pass\n";
 
     /** A test file of the base that, as it is there, gives no result: what it had cannot be learnt from a run of it. */
     private static final String LEGACY = "held: pass\nslow: timeout\n";

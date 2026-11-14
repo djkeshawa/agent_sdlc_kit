@@ -20,6 +20,9 @@ import sdlc.check.JUnitXml.Status;
  *   compile-needs WORD  passes when it does; else no file of the same run compiles
  *   leans-on FILE       passes when the checkout holds that file or an earlier run built it, else fails by assertion
  *   timeout             the whole file gives no result, as a run cut off by the time limit
+ * A name is reported as a script's string would give it: \' is a quote. A name with %i in it is
+ * reported twice, with 1 and with 2 in its place (it.each, a parameterized method). A line
+ * without ": " is not a case: it stands for the test's body.
  * A changed shared.lock in a test's folder or above it is a setup both sides share. Like a build,
  * a run leaves something behind for each file it ran (.built/), until forgetBuilt removes it.
  */
@@ -109,7 +112,10 @@ final class SelfTestRunner implements Runner {
                                 ? Status.PASSED : Status.FAILED;
                         default -> Status.ERRORED;
                     };
-                    cases.add(new JUnitXml.Case(f, name, s, s == Status.ERRORED ? "java.lang.IllegalStateException" : s == Status.FAILED ? "AssertionError" : "", s == Status.FAILED ? "expected something else" : ""));
+                    String shown = name.replace("\\'", "'");
+                    for (String one : shown.contains("%i") ? List.of(shown.replace("%i", "1"), shown.replace("%i", "2")) : List.of(shown)) {
+                        cases.add(new JUnitXml.Case(f, one, s, s == Status.ERRORED ? "java.lang.IllegalStateException" : s == Status.FAILED ? "AssertionError" : "", s == Status.FAILED ? "expected something else" : ""));
+                    }
                 }
                 out.put(f, new FileRun(cases, null));
             } catch (IOException e) {

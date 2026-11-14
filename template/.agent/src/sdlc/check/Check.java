@@ -55,13 +55,13 @@ public final class Check {
                     + (n == 1 ? "it does" : "they do") + " not test the change", false);
             failed |= section(out, w, Kind.SKIPPED_NOW, n -> n + " ran before the change and " + (n == 1 ? "is" : "are") + " skipped now", false);
             failed |= section(out, w, Kind.REMOVED, n -> n + (n == 1 ? " test was" : " tests were") + " removed: the edited file had "
-                    + (n == 1 ? "it" : "them") + " before the change, and fewer new tests came than went", false);
+                    + (n == 1 ? "it" : "them") + " before the change, and the change did not only rename " + (n == 1 ? "it" : "them"), false);
             section(out, w, Kind.UNSTABLE, n -> n + " gave different results from run to run", true);
             if (section(out, w, Kind.UNKNOWN, n -> n + " could not be judged", true)) {
                 out.println("      A test of code that did not exist before the change cannot fail there for the right reason, so it is not counted either way.");
             }
             section(out, w, Kind.SKIPPED, n -> n + (n == 1 ? " is" : " are") + " skipped", false);
-            section(out, w, Kind.RENAMED, n -> "Note: tests renamed, replaced or moved (" + n + (n == 1 ? " note" : " notes") + "; each new test is judged on its own)", true);
+            section(out, w, Kind.RENAMED, n -> "Note: tests renamed or moved (" + n + (n == 1 ? " note" : " notes") + ")", true);
             long old = w.count(Kind.EXISTING_PASSES_ON_BOTH);
             if (old > 0) out.println("  " + old + " test" + (old == 1 ? "" : "s") + " that " + (old == 1 ? "was" : "were") + " already in the edited files " + (old == 1 ? "passes" : "pass") + " before and after (not counted)");
             long off = w.count(Kind.EXISTING_SKIPPED);

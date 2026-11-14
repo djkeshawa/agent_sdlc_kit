@@ -206,6 +206,8 @@ public final class Runners {
                     else if (p.code() == 124) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
                     else if (doesNotCompile.get()) out.put(f, FileRun.broken(Witness.DOES_NOT_COMPILE));
                     else if (p.code() == 127) out.put(f, FileRun.failed("Maven could not be started (" + tail(text, 1) + ")"));
+                    // the build passed, its reports could be read, and none is about this class: the class ran and has no tests
+                    else if (p.code() == 0) out.put(f, new FileRun(List.of(), null));
                     else out.put(f, FileRun.failed("did not run (Maven exit " + p.code() + ": " + firstError(text) + ")"));
                 }
             }
@@ -302,6 +304,9 @@ public final class Runners {
                 if (DID_NOT_LOAD.matcher(text).find()) for (Set<String> named : last) failed.addAll(named);
             }
         }
+
+        /** How vitest's report begins the message of a file or a group that holds no test. */
+        private static final String NO_TEST = "No test found in suite";
 
         private static final Pattern SUPPORT_DIR = Pattern.compile("(^|.*/)(__tests__|__mocks__|__fixtures__|__snapshots__|fixtures|tests?)/.*");
 
@@ -447,9 +452,11 @@ public final class Runners {
                     }
                     for (int i = 0; i < rel.size(); i++) {
                         String name = rel.get(i);
-                        List<JUnitXml.Case> mine = cases.stream().filter(c -> c.suite().replace('\\', '/').equals(name)).map(Runners::assertionOrError).toList();
+                        List<JUnitXml.Case> reported = cases.stream().filter(c -> c.suite().replace('\\', '/').equals(name)).toList();
+                        // vitest reports a file or a describe block without tests as an error case of that name: not a test
+                        List<JUnitXml.Case> mine = reported.stream().filter(c -> !c.message().startsWith(NO_TEST)).map(Runners::assertionOrError).toList();
                         String f = e.getValue().get(i);
-                        if (!mine.isEmpty()) out.put(f, new FileRun(mine, null));
+                        if (!mine.isEmpty() || !reported.isEmpty()) out.put(f, new FileRun(mine, null));
                         else if (unreadable != null) out.put(f, FileRun.failed("its report cannot be read (" + unreadable + ")"));
                         else if (p.code() == 124) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
                         else if (p.code() == 127) out.put(f, FileRun.failed("node could not be started (is Node.js on the PATH?)"));
