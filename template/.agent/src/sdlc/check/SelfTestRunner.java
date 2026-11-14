@@ -26,7 +26,9 @@ import sdlc.check.JUnitXml.Status;
  * A name is reported as a script's string would give it: \' is a quote. A name with %i in it is
  * reported twice, with 1 and with 2 in its place (it.each, a parameterized method). A line
  * without ": " is not a case: it stands for the test's body. A name such as "check(int)[3]" is a
- * run of a parameterized test, as Surefire names it, except in a file named *.vitest.t.
+ * run of a parameterized test, as Surefire names it, except in a file named *.vitest.t. A name
+ * "demo.Outer$A::works" is the case "works" of the class demo.Outer$A, as Surefire reports a
+ * method of a nested class; any other case's suite is its file.
  * A changed shared.lock in a test's folder or above it is a setup both sides share. Like a build,
  * a run leaves something behind for each file it ran (.built/), until forgetBuilt removes it.
  */
@@ -126,8 +128,13 @@ final class SelfTestRunner implements Runner {
                         default -> Status.ERRORED;
                     };
                     String shown = name.replace("\\'", "'");
+                    String suite = f;
+                    if (shown.contains("::")) {
+                        suite = shown.substring(0, shown.indexOf("::"));
+                        shown = shown.substring(shown.indexOf("::") + 2);
+                    }
                     for (String one : shown.contains("%i") ? List.of(shown.replace("%i", "1"), shown.replace("%i", "2")) : List.of(shown)) {
-                        cases.add(new JUnitXml.Case(f, one, s, s == Status.ERRORED ? "java.lang.IllegalStateException" : s == Status.FAILED ? "AssertionError" : "", s == Status.FAILED ? "expected something else" : ""));
+                        cases.add(new JUnitXml.Case(suite, one, s, s == Status.ERRORED ? "java.lang.IllegalStateException" : s == Status.FAILED ? "AssertionError" : "", s == Status.FAILED ? "expected something else" : ""));
                     }
                 }
                 out.put(f, new FileRun(cases, null));

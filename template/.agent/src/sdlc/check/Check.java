@@ -54,14 +54,13 @@ public final class Check {
             failed |= section(out, w, Kind.PASSES_ON_BOTH, n -> n + (n == 1 ? " new test passes" : " new tests pass") + " before and after, so "
                     + (n == 1 ? "it does" : "they do") + " not test the change", false);
             failed |= section(out, w, Kind.SKIPPED_NOW, n -> n + " ran before the change and " + (n == 1 ? "is" : "are") + " skipped now", true);
-            failed |= section(out, w, Kind.REMOVED, n -> n + (n == 1 ? " test was" : " tests were") + " removed: the edited file had "
-                    + (n == 1 ? "it" : "them") + " before the change, and the change did not only rename " + (n == 1 ? "it" : "them"), false);
+            failed |= section(out, w, Kind.REMOVED, n -> n + (n == 1 ? " test was" : " tests were") + " removed: the edited file reports fewer tests than it had before the change", true);
             section(out, w, Kind.UNSTABLE, n -> n + " gave different results from run to run", true);
             if (section(out, w, Kind.UNKNOWN, n -> n + " could not be judged", true)) {
                 out.println("      A test of code that did not exist before the change cannot fail there for the right reason, so it is not counted either way.");
             }
             section(out, w, Kind.SKIPPED, n -> n + (n == 1 ? " is" : " are") + " skipped", false);
-            section(out, w, Kind.RENAMED, n -> "Note: tests renamed or moved (" + n + (n == 1 ? " note" : " notes") + ")", true);
+            section(out, w, Kind.RENAMED, n -> "Note: tests under another group or in another file (" + n + (n == 1 ? " note" : " notes") + ")", true);
             long old = w.count(Kind.EXISTING_PASSES_ON_BOTH);
             if (old > 0) out.println("  " + old + " test" + (old == 1 ? "" : "s") + " that " + (old == 1 ? "was" : "were") + " already in the edited files " + (old == 1 ? "passes" : "pass") + " before and after (not counted)");
             long off = w.count(Kind.EXISTING_SKIPPED);
@@ -123,6 +122,7 @@ public final class Check {
         out.println("sdlc check --since " + opt.get("since") + ": " + commits.size() + " commit" + (commits.size() == 1 ? "" : "s") + " on this branch since " + window
                 + (commits.size() > max ? ", the newest " + max + " checked (--max N for more)" : ""));
         long sensitive = 0, both = 0, unknown = 0, failing = 0, untested = 0, problems = 0, switchedOff = 0, removed = 0;
+        java.util.Set<Kind> least = java.util.EnumSet.noneOf(Kind.class); // kinds whose total is a least number
         int checked = 0;
         for (String line : commits) {
             if (checked++ >= max) break;
@@ -139,19 +139,21 @@ public final class Check {
                 untested++;
             } else {
                 List<String> parts = new ArrayList<>();
-                part(parts, w.count(Kind.SENSITIVE), "fail before and pass after");
-                part(parts, w.count(Kind.PASSES_ON_BOTH), "new, pass on both sides");
-                part(parts, w.count(Kind.FAILS_AFTER), "fail after");
-                part(parts, w.count(Kind.SKIPPED_NOW), "ran before, skipped after");
-                part(parts, w.count(Kind.REMOVED), "removed");
+                part(parts, w, Kind.SENSITIVE, "fail before and pass after");
+                part(parts, w, Kind.PASSES_ON_BOTH, "new, pass on both sides");
+                part(parts, w, Kind.FAILS_AFTER, "fail after");
+                part(parts, w, Kind.SKIPPED_NOW, "ran before, skipped after");
+                part(parts, w, Kind.REMOVED, "removed");
                 part(parts, w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE), "could not be judged");
-                part(parts, w.count(Kind.SKIPPED), "skipped");
+                part(parts, w, Kind.SKIPPED, "skipped");
                 out.println("    tests: " + (parts.isEmpty() ? onlyOld(w) : String.join("; ", parts)));
                 for (Verdict v : w.verdicts()) {
-                    if (v.kind() == Kind.PASSES_ON_BOTH) out.println("        does not test the change: " + v.file() + "  " + v.name());
-                    else if (v.kind() == Kind.SKIPPED_NOW) out.println("        ran before, skipped after: " + v.file() + "  " + v.name());
-                    else if (v.kind() == Kind.REMOVED) out.println("        removed: " + v.file() + "  " + v.name());
+                    String which = v.file() + "  " + (v.name().isEmpty() ? v.detail() : v.name());
+                    if (v.kind() == Kind.PASSES_ON_BOTH) out.println("        does not test the change: " + which);
+                    else if (v.kind() == Kind.SKIPPED_NOW) out.println("        ran before, skipped after: " + which);
+                    else if (v.kind() == Kind.REMOVED) out.println("        removed: " + which);
                 }
+                for (Kind k : List.of(Kind.PASSES_ON_BOTH, Kind.SKIPPED_NOW, Kind.REMOVED)) if (w.atLeast(k)) least.add(k);
                 sensitive += w.count(Kind.SENSITIVE);
                 both += w.count(Kind.PASSES_ON_BOTH);
                 failing += w.count(Kind.FAILS_AFTER);
@@ -170,10 +172,11 @@ public final class Check {
             out.println();
             out.println("Summary of " + n + " commit" + (n == 1 ? "" : "s"));
             out.println("  " + sensitive + (sensitive == 1 ? " new or edited test fails before its commit and passes after it" : " new or edited tests fail before their commit and pass after it"));
-            out.println("  " + both + (both == 1 ? " new test passes on both sides, so does not test its commit" : " new tests pass on both sides, so do not test their commit"));
+            out.println("  " + (least.contains(Kind.PASSES_ON_BOTH) ? "at least " : "") + both
+                    + (both == 1 ? " new test passes on both sides, so does not test its commit" : " new tests pass on both sides, so do not test their commit"));
             out.println("  " + unknown + " could not be judged; " + failing + " fail after their commit");
-            out.println("  " + switchedOff + (switchedOff == 1 ? " test ran" : " tests ran") + " before its commit and " + (switchedOff == 1 ? "is" : "are") + " skipped after it; "
-                    + removed + (removed == 1 ? " test was" : " tests were") + " removed");
+            out.println("  " + (least.contains(Kind.SKIPPED_NOW) ? "at least " : "") + switchedOff + (switchedOff == 1 ? " test ran" : " tests ran") + " before its commit and "
+                    + (switchedOff == 1 ? "is" : "are") + " skipped after it; " + (least.contains(Kind.REMOVED) ? "at least " : "") + removed + (removed == 1 ? " test was" : " tests were") + " removed");
             out.println("  " + untested + " commit" + (untested == 1 ? "" : "s") + " add or edit no test this version can run");
             out.println("  " + problems + " integrity problem" + (problems == 1 ? "" : "s"));
         }
@@ -204,10 +207,14 @@ public final class Check {
         List<String> reasons = new ArrayList<>();
         for (Verdict v : w.verdicts()) {
             String test = v.file() + (v.name().isEmpty() ? "" : " \u00bb " + v.name());
+            // a verdict about a file says in its detail which tests it means
+            String file = v.file() + " (" + v.detail() + ")";
+            boolean whole = v.name().isEmpty();
             if (v.kind() == Kind.FAILS_AFTER) reasons.add("fails: " + test + (v.detail().isBlank() ? "" : " (" + v.detail() + ")"));
-            else if (v.kind() == Kind.PASSES_ON_BOTH) reasons.add("passes with and without your change, so it does not test it: " + test);
-            else if (v.kind() == Kind.SKIPPED_NOW) reasons.add("ran before your change and is skipped now: " + test);
-            else if (v.kind() == Kind.REMOVED) reasons.add("removed: " + test + " (the file had it before your change)");
+            else if (v.kind() == Kind.PASSES_ON_BOTH) reasons.add(whole ? "new tests pass with and without your change, so they do not test it: " + file
+                    : "passes with and without your change, so it does not test it: " + test);
+            else if (v.kind() == Kind.SKIPPED_NOW) reasons.add(whole ? "tests that ran before your change do not run now: " + file : "ran before your change and is skipped now: " + test);
+            else if (v.kind() == Kind.REMOVED) reasons.add(whole ? "tests removed: " + file : "removed: " + test + " (the file had it before your change)");
         }
         for (Finding f : Integrity.scan(change)) if (f.level() == Finding.Level.PROBLEM) reasons.add(f.kind() + ": " + f.path() + (f.detail().isBlank() ? "" : " (" + f.detail().strip() + ")"));
         if (reasons.isEmpty()) return 0;
@@ -251,6 +258,12 @@ public final class Check {
         if (n > 0) parts.add(n + " " + what);
     }
 
+    /** A kind's count, with "at least" when it is a least number. */
+    private static void part(List<String> parts, Witness.Result w, Kind kind, String what) {
+        long n = w.count(kind);
+        if (n > 0) parts.add((w.atLeast(kind) ? "at least " : "") + n + " " + what);
+    }
+
     /** "30d" -> "30 days ago"; anything else goes to git as it is ("2026-11-01", "2 weeks ago"). */
     private static String window(String since) {
         if (since == null || since.isBlank() || since.equals("true") || since.startsWith("-")) throw new UsageException("--since takes a time span or a date: 30d, 2w, 12h, 2026-11-01");
@@ -265,18 +278,22 @@ public final class Check {
         return m.group(1) + " " + unit + " ago";
     }
 
-    /** Prints one kind of verdict as a count and its tests; true when there was at least one. */
+    /**
+     * Prints one kind of verdict as a count and its tests; true when there was at least one. The
+     * count is of tests; where a verdict about a file proves only a least number, it says "at
+     * least", and the file's own line, which always has its detail, says which tests it means.
+     */
     private static boolean section(PrintStream out, Witness.Result w, Kind kind, java.util.function.LongFunction<String> title, boolean withDetail) {
         List<Verdict> all = w.verdicts().stream().filter(v -> v.kind() == kind).toList();
         if (all.isEmpty()) return false;
-        out.println("  " + title.apply(all.size()));
+        out.println("  " + (w.atLeast(kind) ? "at least " : "") + title.apply(w.count(kind)));
         Map<String, List<Verdict>> byFile = new LinkedHashMap<>();
         for (Verdict v : all) byFile.computeIfAbsent(v.file(), k -> new ArrayList<>()).add(v);
         for (Map.Entry<String, List<Verdict>> e : byFile.entrySet()) {
             out.println("      " + e.getKey() + "  [" + e.getValue().get(0).runner() + "]");
             for (Verdict v : e.getValue()) {
                 String name = v.name().isEmpty() ? "" : v.name();
-                String detail = withDetail && !v.detail().isBlank() ? (name.isEmpty() ? "" : ": ") + v.detail() : "";
+                String detail = (withDetail || name.isEmpty()) && !v.detail().isBlank() ? (name.isEmpty() ? "" : ": ") + v.detail() : "";
                 if (!name.isEmpty() || !detail.isEmpty()) out.println("        " + name + detail);
             }
         }

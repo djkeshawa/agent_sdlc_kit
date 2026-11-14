@@ -23,7 +23,9 @@ import sdlc.check.Runner.FileRun;
  * A test that fails before and passes after is sensitive to the change; one that passes on both
  * sides does not test it. Which tests are new, which ran and are skipped now, and which are gone
  * is read from the reports of the old and the after run, not from the files' text: the test
- * framework knows which tests a file has.
+ * framework knows which tests a file has. A report does not say whether a gone test was renamed
+ * or deleted, so only what the reports prove is said: a file that reports fewer tests lost some,
+ * and a gone test of a file with as many new ones could not be judged.
  *
  * What this says is narrow. The tests and the code come from the same author, so a pass here is
  * not evidence that the change is correct, only that these tests would notice its absence.
@@ -34,7 +36,7 @@ final class Witness {
     enum Kind {
         /** Fails before by assertion, passes after, in every run. */
         SENSITIVE,
-        /** A new test that passes on both sides: it does not test the change. */
+        /** A new test that passes on both sides: it does not test the change. Said of a file (name ""): at least so many of the new tests it names (see passingNew). */
         PASSES_ON_BOTH,
         /** A test that was already in the file and passes on both sides: unchanged in effect, not counted against the change. */
         EXISTING_PASSES_ON_BOTH,
@@ -46,25 +48,47 @@ final class Witness {
         UNSTABLE,
         /** Skipped after the change: a new test, or one whose state before the change is not known. */
         SKIPPED,
-        /** Ran in the file as it was before the change, and is skipped after it: switched off. */
+        /**
+         * Ran in the file as it was before the change, and is skipped after it: switched off. Said
+         * of a file (name ""): at least so many tests that ran before do not run now (see leftover).
+         */
         SKIPPED_NOW,
         /** Skipped in the file as it was and after the change: unchanged, not counted. */
         EXISTING_SKIPPED,
-        /** The edited file had this test before the change and does not report it now, and it was not renamed or moved. */
-        REMOVED,
         /**
-         * A note about a file (name ""): tests found again under a renamed group, tests whose name
-         * alone the change rewrote (renamed), or tests another changed file now reports (moved).
+         * The edited file had this test before the change, and does not report it or any test it
+         * did not have. Said of a file (name ""): it reports fewer tests than it had, so at least
+         * so many were removed (see leftover).
          */
+        REMOVED,
+        /** A note about a file (name ""): tests found again under a renamed group, or tests another changed file now reports (moved). */
         RENAMED
     }
 
-    /** name is "" when the verdict is about the whole file. */
-    record Verdict(String file, String name, Kind kind, String detail, String runner) {}
+    /**
+     * name is "" when the verdict is about the whole file. tests is how many tests it counts: one
+     * for a test, and for some verdicts about a file the least number the reports prove (atLeast).
+     */
+    record Verdict(String file, String name, Kind kind, String detail, String runner, int tests) {
+        Verdict(String file, String name, Kind kind, String detail, String runner) {
+            this(file, name, kind, detail, runner, 1);
+        }
+
+        /** True when it counts at least so many of the tests it names, and which of them the reports do not say. */
+        boolean atLeast() {
+            return name.isEmpty() && (kind == Kind.PASSES_ON_BOTH || kind == Kind.REMOVED || kind == Kind.SKIPPED_NOW);
+        }
+    }
 
     record Result(List<Verdict> verdicts, List<String> unsupported, int runs) {
+        /** The tests of a kind: for a verdict about a file, the least number it proves. */
         long count(Kind k) {
-            return verdicts.stream().filter(v -> v.kind() == k).count();
+            return verdicts.stream().filter(v -> v.kind() == k).mapToLong(Verdict::tests).sum();
+        }
+
+        /** True when a count of this kind is a least number, not an exact one. */
+        boolean atLeast(Kind k) {
+            return verdicts.stream().anyMatch(v -> v.kind() == k && v.atLeast());
         }
     }
 
@@ -124,16 +148,15 @@ final class Witness {
      * How the tests of a file after the change line up with the tests of the file as it was.
      * was: for each test after the change (by identity), the test it was, when it was there.
      * regrouped: tests found again under a renamed group, as "old name is now new name".
-     * renamed: tests whose name alone the change rewrote, the same way.
      * gone and fresh: what is left over on each side.
      * existing: runs of a parameterized test the file as it was ran, at a place it did not report (see lineup).
      * fewer: parameterized tests that still run, fewer times than in the file as it was.
      */
-    private record Lineup(Map<String, JUnitXml.Case> was, List<String> regrouped, List<String> renamed, List<JUnitXml.Case> gone, List<JUnitXml.Case> fresh,
+    private record Lineup(Map<String, JUnitXml.Case> was, List<String> regrouped, List<JUnitXml.Case> gone, List<JUnitXml.Case> fresh,
             Set<String> existing, List<Fewer> fewer) {}
 
-    /** A parameterized test (its name, without the suite) that ran so many times in the file as it was, and runs so many times now. */
-    private record Fewer(String test, long before, long after) {}
+    /** A parameterized test of the file as it was (key: with its suite; test: without it) that ran so many times there, and runs so many times now. */
+    private record Fewer(String key, String test, long before, long after) {}
 
     /** The test, with its suite, of a case its runner names by its place among the runs of a parameterized test; null for any other case. */
     private static String test(Runner runner, JUnitXml.Case c) {
@@ -145,18 +168,20 @@ final class Witness {
      * A test of the same identity (suite and name) is the same test, one for one. Of the rest, a
      * test whose own title fits exactly one gone test and exactly one new test is that test under
      * a renamed group: renaming a describe block or a nested class renames every test in it, and
-     * that alone makes no test new. Last, a gone test and a new test of one suite are one test
-     * renamed when the file's text shows that nothing but the name changed (see swaps).
+     * that alone makes no test new. A title that fits more than one test on either side pairs
+     * nothing (an outer class renamed whose nested classes share a method name): those tests are
+     * left over, and only their counts are judged (see leftover). Nothing is read from the files'
+     * text: a report does not say whether a gone test was renamed or deleted.
      *
      * The runs of a parameterized test that the runner names by their place are not paired by
      * place across the two files: a row put in among the arguments moves every later run to
      * another place, and a row taken out moves them back. Whether such a run is new is said of its
      * test: when the file as it was ran that test (under its name now, or under the name it had
-     * where the change renamed it), every run of it is an existing test, and none of it is gone.
-     * A test that runs fewer times than before is said so (fewer): which of its runs went cannot
-     * be told.
+     * where it was found under a renamed group), every run of it is an existing test, and none of
+     * it is gone. A test that runs fewer times than before is said so (fewer): which of its runs
+     * went cannot be told.
      */
-    private static Lineup lineup(Earlier e, FileRun a, String oldText, String newText, Runner runner) {
+    private static Lineup lineup(Earlier e, FileRun a, Runner runner) {
         Map<String, JUnitXml.Case> was = new LinkedHashMap<>();
         List<JUnitXml.Case> left = new ArrayList<>(e.cases()), fresh = new ArrayList<>();
         for (JUnitXml.Case c : a.cases()) {
@@ -177,17 +202,6 @@ final class Witness {
             fresh.remove(c);
             was.putIfAbsent(key(c), o);
             regrouped.add(shown(o, c) + " is now " + shown(c, o));
-        }
-        List<String> renamed = new ArrayList<>();
-        Set<Swap> swaps = left.isEmpty() || fresh.isEmpty() ? Set.of() : nameSwaps(left, fresh, oldText, newText);
-        for (JUnitXml.Case g : new ArrayList<>(left)) {
-            List<JUnitXml.Case> fits = fresh.stream().filter(n -> n.suite().equals(g.suite()) && swaps.contains(swap(g.name(), n.name()))).toList();
-            if (fits.size() != 1) continue; // none, or more than one: which one cannot be told
-            JUnitXml.Case n = fits.get(0);
-            left.remove(g);
-            fresh.remove(n);
-            was.putIfAbsent(key(n), g);
-            renamed.add(g.name() + " is now " + n.name());
         }
         Set<String> oldTests = new LinkedHashSet<>();
         for (JUnitXml.Case o : e.cases()) if (test(runner, o) != null) oldTests.add(test(runner, o));
@@ -220,54 +234,52 @@ final class Witness {
         for (String t : shrunk) {
             long before = e.cases().stream().filter(o -> t.equals(test(runner, o))).count();
             long now = a.cases().stream().filter(c -> test(runner, c) != null && wasTest.get(test(runner, c)).contains(t)).count();
-            if (now < before) fewer.add(new Fewer(t.substring(t.indexOf('#') + 1), before, now));
+            if (now < before) fewer.add(new Fewer(t, t.substring(t.indexOf('#') + 1), before, now));
         }
-        return new Lineup(was, regrouped, renamed, left, fresh, existing, fewer);
-    }
-
-    /** What a change put in place of what in a line: the two versions with their common start and common end cut off. */
-    private record Swap(String from, String to) {}
-
-    private static Swap swap(String a, String b) {
-        int start = 0;
-        while (start < a.length() && start < b.length() && a.charAt(start) == b.charAt(start)) start++;
-        int endA = a.length(), endB = b.length();
-        while (endA > start && endB > start && a.charAt(endA - 1) == b.charAt(endB - 1)) {
-            endA--;
-            endB--;
-        }
-        return new Swap(a.substring(start, endA), b.substring(start, endB));
+        return new Lineup(was, regrouped, left, fresh, existing, fewer);
     }
 
     /**
-     * The swaps by which the change renamed tests and did nothing else to them, read from the
-     * file's text line by line, without knowing the language. A place the change rewrote counts
-     * when every line it took out comes back there, in order, as it was or with only the swap of a
-     * gone test's name into a new test's name of the same suite; lines may be added around them
-     * (a new test written next to the renamed one). A test whose title or method name alone was
-     * rewritten leaves its swap here. A test deleted in one place and another added elsewhere does
-     * not, nor does a title rewritten in the place where the test's body changed too: a line taken
-     * out does not come back.
+     * What is left of a file's lineup once the tests that moved between changed files are taken
+     * out: the notes on them (moved), the gone tests no move accounts for (lost), and the new tests
+     * no move accounts for (fresh). A gone test whose own title another changed file now reports
+     * as a new test has moved there, and that new test is then not free to be another gone test
+     * under a new name.
      */
-    private static Set<Swap> nameSwaps(List<JUnitXml.Case> gone, List<JUnitXml.Case> fresh, String oldText, String newText) {
-        Set<Swap> names = new LinkedHashSet<>();
-        for (JUnitXml.Case g : gone) for (JUnitXml.Case n : fresh) if (g.suite().equals(n.suite())) names.add(swap(g.name(), n.name()));
-        Set<Swap> out = new LinkedHashSet<>();
-        String[] a = Lines.of(oldText), b = Lines.of(newText);
-        for (Lines.Hunk h : Lines.changed(a, b)) {
-            Set<Swap> here = new LinkedHashSet<>();
-            int next = h.fromB();
-            boolean kept = true;
-            for (int i = h.fromA(); i < h.toA() && kept; i++) {
-                int at = next;
-                while (at < h.toB() && !a[i].equals(b[at]) && !names.contains(swap(a[i], b[at]))) at++;
-                kept = at < h.toB();
-                if (kept && !a[i].equals(b[at])) here.add(swap(a[i], b[at]));
-                next = at + 1;
+    private record Leftover(List<String> moved, List<JUnitXml.Case> lost, List<JUnitXml.Case> fresh) {}
+
+    private static Map<String, Leftover> leftovers(List<String> files, Map<String, Lineup> lineups) {
+        Map<String, List<JUnitXml.Case>> arrived = new LinkedHashMap<>(); // per file: its new tests, each of which can account for one move
+        for (Map.Entry<String, Lineup> l : lineups.entrySet()) arrived.put(l.getKey(), new ArrayList<>(l.getValue().fresh()));
+        Map<String, List<String>> moved = new LinkedHashMap<>();
+        Map<String, List<JUnitXml.Case>> lost = new LinkedHashMap<>();
+        for (String f : files) {
+            Lineup l = lineups.get(f);
+            if (l == null) continue;
+            moved.put(f, new ArrayList<>());
+            lost.put(f, new ArrayList<>());
+            for (JUnitXml.Case c : l.gone()) {
+                String to = null;
+                for (String o : files) {
+                    if (o.equals(f) || !arrived.containsKey(o)) continue;
+                    JUnitXml.Case n = arrived.get(o).stream().filter(x -> title(x).equals(title(c))).findFirst().orElse(null);
+                    if (n == null) continue;
+                    arrived.get(o).remove(n);
+                    to = o;
+                    break;
+                }
+                if (to != null) moved.get(f).add(c.name() + " (now in " + to + ")");
+                else lost.get(f).add(c);
             }
-            if (kept) out.addAll(here);
         }
+        Map<String, Leftover> out = new LinkedHashMap<>();
+        for (String f : moved.keySet()) out.put(f, new Leftover(moved.get(f), lost.get(f), arrived.get(f)));
         return out;
+    }
+
+    /** True when c is a new test of a file that no longer reports some of the tests it had: it may be one of them under a new name. */
+    private static boolean mayBeRenamed(Leftover r, JUnitXml.Case c) {
+        return r != null && !r.lost().isEmpty() && r.fresh().stream().anyMatch(x -> key(x).equals(key(c)));
     }
 
     /** A test's own title, without the groups a report puts before it ("adds" of "refunds > partial > adds"). */
@@ -299,8 +311,10 @@ final class Witness {
         Map<String, Lineup> lineups = new LinkedHashMap<>(); // files whose run after the change and run as they were both gave results
         for (String f : files) {
             FileRun a = after.get(f);
-            if (a != null && a.problem() == null && earlier.get(f).problem() == null) lineups.put(f, lineup(earlier.get(f), a, change.before(f), change.after(f), runner));
+            if (a != null && a.problem() == null && earlier.get(f).problem() == null) lineups.put(f, lineup(earlier.get(f), a, runner));
         }
+        Map<String, Leftover> left = leftovers(files, lineups);
+        Map<String, List<JUnitXml.Case>> passBoth = new LinkedHashMap<>(); // new tests that pass on both sides, in a file whose gone tests they may be (see passingNew)
         for (String f : files) {
             String shared = runner.sharedBySides(change, head.dir, f);
             FileRun a = after.get(f), b = before.get(f);
@@ -340,6 +354,7 @@ final class Witness {
                 else if (p.status() == Status.PASSED && shared != null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after, but " + shared, runner.name()));
                 else if (p.status() == Status.PASSED && isNew == null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after, but run as it was before the change, the file "
                         + e.problem() + ", so it cannot be told whether this test is new", runner.name()));
+                else if (p.status() == Status.PASSED && isNew && mayBeRenamed(left.get(f), c)) passBoth.computeIfAbsent(f, k -> new ArrayList<>()).add(c);
                 else if (p.status() == Status.PASSED) out.add(new Verdict(f, c.name(), isNew ? Kind.PASSES_ON_BOTH : Kind.EXISTING_PASSES_ON_BOTH, "", runner.name()));
                 else if (p.status() == Status.SKIPPED) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "was skipped before the change", runner.name()));
                 else if (p.status() == Status.FLAKY) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "before the change the build ran it again and got another result", runner.name()));
@@ -351,7 +366,8 @@ final class Witness {
             // a file that ran and has no test, and had none: nothing to judge, and it is said so (a file that had tests has lost them: see gone)
             else if (a.cases().isEmpty() && e.cases().isEmpty()) out.add(new Verdict(f, "", Kind.UNKNOWN, "the file ran after the change and reports no tests", runner.name()));
         }
-        out.addAll(gone(files, lineups, runner.name()));
+        out.addAll(passingNew(passBoth, left, runner));
+        out.addAll(leftover(files, lineups, left, runner));
         // A test that was run alone before the change may have failed there for want of another changed test file,
         // not for want of the change. It is run alone after the change too, and must pass there as well.
         for (String f : new ArrayList<>(candidates.keySet())) {
@@ -482,7 +498,7 @@ final class Witness {
         Set<String> afterKeys = new LinkedHashSet<>(), oldKeys = new LinkedHashSet<>();
         for (JUnitXml.Case x : mine) afterKeys.add(key(x));
         if (l != null) {
-            // the test as it was: under its name now, and under the name it had where the change renamed it
+            // the test as it was: under its name now, and under the name it had where it was found under a renamed group
             Set<String> was = new LinkedHashSet<>(List.of(g));
             for (JUnitXml.Case x : mine) if (l.was().get(key(x)) != null) was.add(group(runner, l.was().get(key(x))));
             for (JUnitXml.Case o : e.cases()) if (was.contains(group(runner, o))) oldKeys.add(key(o));
@@ -559,39 +575,103 @@ final class Witness {
     }
 
     /**
-     * The tests an edited file had before the change and does not report now, after the renamed
-     * groups, the renamed tests and the runs of parameterized tests that still run (see lineup)
-     * are taken out. A gone test whose title another
-     * changed file now reports as new has moved there. Every other one was removed, however many
-     * new tests came: deleting a test and writing another is not a rename.
+     * The new tests of a file that pass on both sides, where the file no longer reports some of the
+     * tests it had (G of them, see leftovers). Each may be one of those under a new name, and an
+     * old test renamed is not a new test that proves nothing: none of them is accused on its own,
+     * and each could not be judged. But at most G of them can be gone tests renamed. When more
+     * pass on both sides, at least that many more are new tests that do not test the change, and
+     * the file is said to have them.
      */
-    private static List<Verdict> gone(List<String> files, Map<String, Lineup> lineups, String runner) {
+    private static List<Verdict> passingNew(Map<String, List<JUnitXml.Case>> passBoth, Map<String, Leftover> left, Runner runner) {
         List<Verdict> out = new ArrayList<>();
-        Map<String, List<String>> arrived = new LinkedHashMap<>(); // per file: the titles of its new tests, each of which can account for one move
-        for (Map.Entry<String, Lineup> l : lineups.entrySet()) arrived.put(l.getKey(), new ArrayList<>(l.getValue().fresh().stream().map(Witness::title).toList()));
+        for (Map.Entry<String, List<JUnitXml.Case>> e : passBoth.entrySet()) {
+            String f = e.getKey();
+            List<String> lost = units(runner, left.get(f).lost()), passing = units(runner, e.getValue());
+            int g = lost.size(), p = passing.size();
+            if (p > g) {
+                out.add(new Verdict(f, "", Kind.PASSES_ON_BOTH, "the file has " + p + " tests it did not have that pass before and after (" + shortList(passing)
+                        + "). It does not report " + tests(g) + " it had (" + shortList(lost) + "), and at most " + (g == 1 ? "that one" : "those " + g)
+                        + " can be among them under a new name: at least " + (p - g) + (p - g == 1 ? " is a new test that does" : " are new tests that do") + " not test the change",
+                        runner.name(), p - g));
+                continue;
+            }
+            for (JUnitXml.Case c : e.getValue()) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after, but the file does not report " + tests(g)
+                    + " it had, and this may be " + (g == 1 ? "that one" : "one of them") + " under a new name", runner.name()));
+        }
+        return out;
+    }
+
+    /**
+     * What the reports say of the tests an edited file had and does not report now, once the
+     * pairings the reports themselves allow are made (lineup, leftovers). A report says which
+     * tests a file has, not whether a gone test was deleted or renamed, so a test is not called
+     * removed for being gone; only counts prove a removal. The runs of a parameterized test that
+     * the runner names by their place count as one test, as in lineup. With G tests gone and F new:
+     *
+     *   F = 0       each gone test was removed
+     *   G > F       the file lost tests: at least G - F were removed, and which cannot be told
+     *   G <= F      when fewer of the new tests run than of the gone ones ran, at least that many
+     *               tests that ran before do not run now: switched off under a new name, or
+     *               removed while skipped tests were added. Otherwise it could not be judged: a
+     *               rename looks exactly like a test deleted and another written.
+     */
+    private static List<Verdict> leftover(List<String> files, Map<String, Lineup> lineups, Map<String, Leftover> left, Runner runner) {
+        List<Verdict> out = new ArrayList<>();
+        String by = runner.name();
         for (String f : files) {
             Lineup l = lineups.get(f);
             if (l == null) continue;
+            Leftover r = left.get(f);
             int n = l.regrouped().size();
             if (n > 0) out.add(new Verdict(f, "", Kind.RENAMED, n + (n == 1 ? " test is" : " tests are") + " reported under another group, with "
-                    + (n == 1 ? "its own title unchanged, and counts as the same test" : "their own titles unchanged, and count as the same tests") + ": " + shortList(l.regrouped()), runner));
-            int r = l.renamed().size();
-            if (r > 0) out.add(new Verdict(f, "", Kind.RENAMED, r + (r == 1 ? " test was" : " tests were") + " renamed (only the name changed in the file), and "
-                    + (r == 1 ? "counts as the same test" : "count as the same tests") + ": " + shortList(l.renamed()), runner));
-            List<String> moved = new ArrayList<>();
-            List<JUnitXml.Case> lost = new ArrayList<>();
-            for (JUnitXml.Case c : l.gone()) {
-                String to = files.stream().filter(o -> !o.equals(f) && arrived.containsKey(o) && arrived.get(o).remove(title(c))).findFirst().orElse(null);
-                if (to != null) moved.add(c.name() + " (now in " + to + ")");
-                else lost.add(c);
+                    + (n == 1 ? "its own title unchanged, and counts as the same test" : "their own titles unchanged, and count as the same tests") + ": " + shortList(l.regrouped()), by));
+            if (!r.moved().isEmpty()) out.add(new Verdict(f, "", Kind.RENAMED, r.moved().size() + (r.moved().size() == 1 ? " test moved" : " tests moved") + " to another changed file: "
+                    + shortList(r.moved()), by));
+            List<String> gone = units(runner, r.lost()), fresh = units(runner, r.fresh());
+            int g = gone.size(), nf = fresh.size();
+            if (g > 0 && nf == 0) {
+                for (String t : gone) out.add(new Verdict(f, t, Kind.REMOVED, "", by));
+            } else if (g > nf) {
+                out.add(new Verdict(f, "", Kind.REMOVED, had(gone, fresh) + ": at least " + (g - nf) + (g - nf == 1 ? " was" : " were") + " removed, and which cannot be told", by, g - nf));
+            } else if (g > 0) {
+                int ran = units(runner, r.lost().stream().filter(c -> c.status() != Status.SKIPPED).toList()).size();
+                int runs = units(runner, r.fresh().stream().filter(c -> c.status() != Status.SKIPPED).toList()).size();
+                if (ran > runs) out.add(new Verdict(f, "", Kind.SKIPPED_NOW, had(gone, fresh) + ". " + ran + " of the tests it does not report now ran before the change, and " + runs
+                        + " of the new ones run: at least " + (ran - runs) + (ran - runs == 1 ? " test that ran does" : " tests that ran do")
+                        + " not run now, switched off under a new name or removed while skipped tests were added", by, ran - runs));
+                else out.add(new Verdict(f, "", Kind.UNKNOWN, had(gone, fresh) + ". The reports cannot tell a test renamed from a test deleted and another written", by));
             }
-            if (!moved.isEmpty()) out.add(new Verdict(f, "", Kind.RENAMED, moved.size() + (moved.size() == 1 ? " test moved" : " tests moved") + " to another changed file: " + shortList(moved), runner));
-            for (JUnitXml.Case c : lost) out.add(new Verdict(f, c.name(), Kind.REMOVED, "", runner));
             // a parameterized test that still runs is not removed; that fewer of its runs run cannot be judged either way
             for (Fewer x : l.fewer()) out.add(new Verdict(f, x.test(), Kind.UNKNOWN, "ran " + x.before() + " times in the file as it was and runs " + x.after()
-                    + " times now. The report names its runs only by their place, so it cannot be told which arguments were taken out", runner));
+                    + " times now. The report names its runs only by their place, so it cannot be told which arguments were taken out", by));
         }
         return out;
+    }
+
+    /** "the file had 2 tests that it does not report now (a, b), and reports 1 that it did not have (c)". */
+    private static String had(List<String> gone, List<String> fresh) {
+        return "the file had " + tests(gone.size()) + " that it does not report now (" + shortList(gone) + "), and reports "
+                + fresh.size() + " that it did not have (" + shortList(fresh) + ")";
+    }
+
+    private static String tests(int n) {
+        return n + (n == 1 ? " test" : " tests");
+    }
+
+    /**
+     * The tests of these cases, each once: the runs of a parameterized test that the runner names
+     * by their place are one test (see group). Named without their suite, except where two of
+     * them share a name (nested classes with a method of one name): "suite.name".
+     */
+    private static List<String> units(Runner runner, List<JUnitXml.Case> cases) {
+        Set<String> all = new LinkedHashSet<>();
+        for (JUnitXml.Case c : cases) all.add(group(runner, c));
+        Map<String, Long> named = new LinkedHashMap<>();
+        for (String u : all) named.merge(u.substring(u.indexOf('#') + 1), 1L, Long::sum);
+        return all.stream().map(u -> {
+            String name = u.substring(u.indexOf('#') + 1);
+            return named.get(name) > 1 ? u.substring(0, u.indexOf('#')) + "." + name : name;
+        }).toList();
     }
 
     /** Up to ten names, and how many more. */

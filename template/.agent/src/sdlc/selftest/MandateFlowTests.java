@@ -174,16 +174,15 @@ final class MandateFlowTests {
         check("mandate: a test that ran before the change and is skipped now violates the witness",
                 weakened.contains("violated  the change's own tests: 1 fails before it and passes after it") && weakened.contains("tests/other.t  on: ran before the change and is skipped now") && code == 1);
         check("mandate: and so does a test that is gone", weakened.contains("tests/other.t  goes: the file had it before the change, and it is gone"));
+        // one test gone and one new: a rename and a test deleted and another written look alike in the reports
         write(repo, "tests/other.t", "on: pass\nreturns: pass\n");
         String renamed = verdict();
-        check("mandate: a test whose name alone changed is a note, not a violation",
-                renamed.contains("tests/other.t: 1 test was renamed (only the name changed in the file), and counts as the same test: goes is now returns")
-                && renamed.contains("satisfied the change's own tests") && code == 0);
+        check("mandate: a test renamed leaves the witness unknown, not violated", renamed.contains("unknown   the change's own tests: 1 fails before it and passes after it")
+                && renamed.contains("2 of the change's tests could not be judged") && !renamed.contains("it is gone") && code == 0);
         write(repo, "tests/other.t", "arrives: pass\non: pass\n");
         String replaced = verdict();
-        check("mandate: a test deleted and another written in its stead violates the witness",
-                replaced.contains("tests/other.t  goes: the file had it before the change, and it is gone")
-                && replaced.contains("tests/other.t  arrives: passes before and after, so it does not test the change") && code == 1);
+        check("mandate: and so does a test deleted and another written in its stead", replaced.contains("unknown   the change's own tests: 1 fails before it and passes after it")
+                && replaced.contains("2 of the change's tests could not be judged") && !replaced.contains("does not test the change") && code == 0);
         write(repo, "tests/other.t", "on: pass\ngoes: pass\n");
 
         // what must stay true breaks
