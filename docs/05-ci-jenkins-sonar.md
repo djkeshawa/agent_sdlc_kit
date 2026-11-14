@@ -26,7 +26,10 @@ Status links like `.../job/payments/job/PR-12/5/display/redirect` are understood
    (`junit 'target/surefire-reports/*.xml'`), so the kit can list failed tests by name.
 3. Run the SonarQube analysis **as a PR analysis** and fail the build when the gate fails.
 4. Optional but recommended: run the kit's PR policy, so the branch, commit, secret and
-   disabled-test rules hold even for someone who skipped the git hooks.
+   disabled-test rules hold even for someone who skipped the git hooks. The disabled-test rule
+   reads the lines a pull request adds for the usual ways of switching a test off: it catches
+   mistakes and plain attempts, not an author set on hiding one. The guard is a test run:
+   `sdlc check` reports every test that ran before the change and does not run now.
 
 A minimal `Jenkinsfile` with these stages (adapt it to yours; the kit does not ship one):
 

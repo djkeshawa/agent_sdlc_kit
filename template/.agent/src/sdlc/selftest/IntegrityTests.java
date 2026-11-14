@@ -191,15 +191,33 @@ final class IntegrityTests {
 
         // a script file under a test folder, named like no test: whether it held tests is linted from its lines
         write(repo, "web/__tests__/cases.ts", "describe('sum', () => {\n  it('adds', () => { expect(1 + 1).toBe(2) })\n})\n");
-        write(repo, "web/__tests__/helpers.ts", "export const two = () => 2;\n// not it('x')\n");
+        write(repo, "web/__tests__/helpers.ts", "export const two = () => 2; // not it('x')\n");
+        write(repo, "web/__tests__/util.ts", "export const three = () => 3;\n");
+        write(repo, "src/test/resources/Sample.java.txt", "class Sample {\n    @Test void x() {}\n}\n");
+        write(repo, "specs/cases.ts", "it('a', () => { expect(1).toBe(1) })\n");
         git(repo, "add", "-A");
         git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "script files in a test folder");
         Files.delete(repo.resolve("web/__tests__/cases.ts"));
         Files.delete(repo.resolve("web/__tests__/helpers.ts"));
+        Files.delete(repo.resolve("web/__tests__/util.ts"));
+        Files.delete(repo.resolve("src/test/resources/Sample.java.txt"));
+        Files.delete(repo.resolve("specs/cases.ts"));
         List<Finding> goneScripts = scan(repo);
-        check("integrity: a deleted script file that calls describe or it is a test file deleted; one that does not is a support file",
+        check("integrity: a deleted script file whose code calls describe or it is a test file deleted; one that does not is a support file",
                 only(goneScripts, Level.PROBLEM, "test file deleted", "web/__tests__/cases.ts", "the file is gone")
-                && only(goneScripts, Level.NOTE, "test support file deleted", "web/__tests__/helpers.ts", "no test cases"));
+                && only(goneScripts, Level.NOTE, "test support file deleted", "web/__tests__/util.ts", "no test cases"));
+        check("integrity: a deleted helper whose only test call is in a comment is a note, and so is a fixture that holds sample source",
+                only(goneScripts, Level.NOTE, "test support file deleted", "web/__tests__/helpers.ts", "only a comment or a string in it mentions a test")
+                && only(goneScripts, Level.NOTE, "test support file deleted", "src/test/resources/Sample.java.txt", "no test cases"));
+        check("integrity: outside the configured test paths a deleted file is not a test file", goneScripts.stream().noneMatch(f -> f.path().equals("specs/cases.ts")));
+        Config plain = Ctx.cfg;
+        Ctx.cfg = Config.parse("stack: node\npaths:\n  test: [\"specs/**\"]\n");
+        try {
+            check("integrity: a deleted test file in a folder the repository names as tests (paths.test) is a test file deleted",
+                    only(scan(repo), Level.PROBLEM, "test file deleted", "specs/cases.ts", "the file is gone"));
+        } finally {
+            Ctx.cfg = plain;
+        }
         git(repo, "reset", "-q", "--hard", "HEAD~1");
 
         // a move is a deletion plus an addition: a note when the file, or every test case it had, is found again
@@ -209,8 +227,16 @@ final class IntegrityTests {
         reset(repo);
         Files.delete(repo.resolve("src/test/java/demo/CalcTest.java"));
         write(repo, "src/test/java/demo/calc/CalcTest.java", CALC_TEST.replace("package demo;", "package demo.calc;"));
-        List<Finding> movedEdited = scan(repo);
-        check("integrity: a Java test file moved and edited on the way is a test file deleted", only(movedEdited, Level.PROBLEM, "test file deleted", "src/test/java/demo/CalcTest.java", "the file is gone"));
+        List<Finding> repackaged = scan(repo);
+        check("integrity: a Java test class moved to another package, only its package line changed, is a move: a note",
+                problems(repackaged) == 0 && only(repackaged, Level.NOTE, "test file moved", "src/test/java/demo/CalcTest.java", "src/test/java/demo/calc/CalcTest.java, in another package"));
+        write(repo, "src/test/java/demo/calc/CalcTest.java", CALC_TEST.replace("package demo;", "package demo.calc;").replace("import org.junit.jupiter.api.Test;", "import org.junit.jupiter.api.Test;\nimport demo.Calc;"));
+        List<Finding> reimported = scan(repo);
+        check("integrity: moved with its imports changed is a note too: its run judges it",
+                problems(reimported) == 0 && only(reimported, Level.NOTE, "test file moved and its imports changed", "src/test/java/demo/CalcTest.java", "its run judges it"));
+        write(repo, "src/test/java/demo/calc/CalcTest.java", CALC_TEST.replace("package demo;", "package demo.calc;").replace("assertEquals(0, 1 - 1);", "assertEquals(0, 0);"));
+        check("integrity: a Java test file moved and edited in its body on the way is a test file deleted",
+                only(scan(repo), Level.PROBLEM, "test file deleted", "src/test/java/demo/CalcTest.java", "the file is gone"));
         reset(repo);
 
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("void subtracts()", "void minus()"));
@@ -356,11 +382,38 @@ final class IntegrityTests {
                 && Integrity.lintedSwitch("  * @Disabled until PAY-12") && Integrity.lintedSwitch("assertTrue(ok); // it.skip later"));
         check("integrity: a switch over two lines, with a quote in a regular expression on one and a comment between its words on the other, is found",
                 Integrity.lintedSwitches(List.of("const r = /'/; it", "/**/.skip('a', () => {})")).equals(List.of("const r = /'/; it /**/.skip('a', () => {})")));
-        check("integrity: a comment between the words of a switch does not hide it on a line whose quotes cannot be told",
+        check("integrity: a block comment between the words of a switch does not hide it on a line whose quotes cannot be told",
                 Integrity.lintedSwitch("const r = /'/; it /* ' */ .skip('a', () => {})")
-                && Integrity.lintedSwitches(List.of("const r = /'\\//; it //'", ".skip('a', () => {})")).size() == 1
-                && Integrity.lintedSwitches(List.of("const r = /'/; it /* a */ // b", "  .skip('a', () => {})")).size() == 1
                 && !Integrity.lintedSwitch("const url = 'http://example.com/it'; expect(skip).toBe(1)"));
+        // the lint is a helper, not a guard: a quote in a regular expression before a trailing comment between a switch's words, over two
+        // lines, is not seen (the guide lists it); the run of the file is the guard
+        check("integrity: what the lint does not see is not seen: a regular expression's quote before a comment between a switch's words",
+                Integrity.lintedSwitches(List.of("const r = /'\\//; it //'", ".skip('a', () => {})")).isEmpty());
+        // the honest user's forms (audit, findings 8 and 2)
+        check("integrity: a declared abort, and another object's abort however spaced, is not a switch; abort called alone is",
+                !Integrity.lintedSwitch("function abort() { return 1; }") && !Integrity.lintedSwitch("    @Override public void abort() {}")
+                && !Integrity.lintedSwitch("    controller . abort();") && !Integrity.lintedSwitch("    signal?.abort();") && !Integrity.lintedSwitch("  abort() { this.done = true; }")
+                && !Integrity.lintedSwitch("    def abort(self):") && !Integrity.lintedSwitch("    this.#abort();")
+                && Integrity.lintedSwitch("    abort(\"later\");") && Integrity.lintedSwitch("    if (late) abort();") && Integrity.lintedSwitch("    return abort(\"later\");"));
+        check("integrity: an assumption with a plain false and a computed message is a switch; one whose condition is computed is not",
+                Integrity.lintedSwitch("    Assumptions.assumeTrue(false, () -> \"later\");") && Integrity.lintedSwitch("    Assume.assumeTrue(String.format(\"later %s\", reason), false);")
+                && Integrity.lintedSwitch("    assumeFalse(true, () -> String.valueOf(x));") && !Integrity.lintedSwitch("    assumeTrue(x == false);")
+                && !Integrity.lintedSwitch("    assumeTrue(ready(false), \"x\");") && !Integrity.lintedSwitch("    assumeTrue(isOn(), () -> \"false\");"));
+        // the direct spellings an honest author writes (audit, findings 5, 4 and 1)
+        check("integrity: it?.skip, a parenthesised decorator and white space of other kinds are the same switches",
+                Integrity.lintedSwitch("it?.skip('x', () => {});") && Integrity.lintedSwitch("@(pytest.mark.skip(reason='later'))")
+                && Integrity.lintedSwitch("it\u00A0.\u00A0skip('x', () => {});") && Integrity.lintedSwitch("it\uFEFF.skip('x', () => {});")
+                && Integrity.lintedSwitch("describe?.only('x', () => {});"));
+        check("integrity: a block comment that opens on one added line and closes on the next does not hide a switch over the two",
+                Integrity.lintedSwitches(List.of("it /* explanation", "continued */ .skip('x', () => {});")).size() == 1);
+        check("integrity: nor does a Python backslash continuation",
+                Integrity.lintedSwitches(List.of("@pytest.mark \\", "    .skip(reason='later')", "def test_later():")).size() == 1);
+        check("integrity: Unicode escapes are read as the compiler reads them",
+                Integrity.lintedSwitch("\\u0040Disabled") && Integrity.lintedSwitch("@Dis\\u0061bled") && Integrity.lintedSwitch("@Dis\\uuu0061bled")
+                && Integrity.lintedSwitch("// comment \\u000a @Disabled") && Integrity.lintedSwitch("it.sk\\u0069p('a', () => {});")
+                && Integrity.lintedSwitch("it.sk\\u{69}p('a', () => {});"));
+        check("integrity: a line terminator inside a line ends a comment there, as JavaScript reads it",
+                Integrity.lintedSwitch("// comment\u2028it.skip('a', () => {});") && !Integrity.lintedSwitch("// comment it.skip('a', () => {});"));
         check("integrity: an assumption with a matcher or a computed condition is not a switch",
                 Integrity.lintedSwitches(List.of("    Assume.assumeThat(false, is(false));", "    assumeTrue(ready(false));", "    @DisplayName(\"x\")")).isEmpty());
         // L1-1: an unconditional assumption put beside a conditional one is a line the change adds
@@ -400,6 +453,32 @@ final class IntegrityTests {
             Ctx.cfg = own;
         }
         git(repo, "reset", "-q", "--hard", "HEAD~2");
+        reset(repo);
+        // one long added line is linted as it was written: a switch whose words stand far apart in white space is still one line
+        write(repo, "src/test/java/demo/LongTest.java", "@" + " ".repeat(10_000) + "Disabled class LongTest {}\n");
+        check("integrity: a switch on one long added line is found, its white space whatever it is", count(scan(repo), "test switched off") == 1);
+        write(repo, "src/test/java/demo/LongTest.java", "class LongTest { String s = \"" + "x".repeat(50_000) + "\"; }\n@Disabled class Other {}\n");
+        check("integrity: a long line beside a switch does not count as lines of its own", only(scan(repo), Level.PROBLEM, "test switched off", "src/test/java/demo/LongTest.java", "@Disabled class Other {}"));
+        Files.delete(repo.resolve("src/test/java/demo/LongTest.java"));
+        write(repo, "web/long.test.ts", "it.".repeat(300_000) + "x;\nit\n" + "it.".repeat(300_000) + "x;\n");
+        long linted = System.nanoTime();
+        List<Finding> chain = scan(repo);
+        check("integrity: a very long added line of a test file does not keep the lint busy", (System.nanoTime() - linted) / 1_000_000 < 5000 && count(chain, "test switched off") == 0);
+        reset(repo);
+        // a test file is never read whole by the scan, whatever it does: each whole read is seen
+        java.util.Set<String> wholly = new java.util.TreeSet<>();
+        Change.wholeRead = wholly::add;
+        try {
+            write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("    private int helper", "    @Disabled @Test void off() {}\n    private int helper"));
+            write(repo, "web/new.test.ts", "it.skip('later', () => {})\n");
+            Files.delete(repo.resolve("web/sum.test.ts"));
+            write(repo, "pom.xml", POM.replace("<version>32.0</version>", "<version>33.0</version>"));
+            scan(repo);
+        } finally {
+            Change.wholeRead = path -> {};
+        }
+        check("integrity: no test file is read whole, only build and configuration files",
+                wholly.contains("pom.xml") && wholly.stream().noneMatch(f -> f.endsWith("CalcTest.java") || f.endsWith(".test.ts")));
         reset(repo);
         write(repo, "package.json", "{\"scripts\": {\"test\": \"vitest run" + " ".repeat(20000) + "|| true\"}}\n");
         long started = System.nanoTime();

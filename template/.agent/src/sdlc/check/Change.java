@@ -230,13 +230,18 @@ public final class Change {
         return files.stream().filter(f -> statuses.contains(f.status())).map(File::path).toList();
     }
 
+    /** Told of each file whose whole text is read (before or after), for the self test: a test file is never read whole by the scan. */
+    public static java.util.function.Consumer<String> wholeRead = path -> {};
+
     /** A file's text before the change, or null when it did not exist. */
     public String before(String path) {
+        wholeRead.accept(path);
         return Trusted.read(base, path);
     }
 
     /** A file's text after the change, or null when it is gone. */
     public String after(String path) {
+        wholeRead.accept(path);
         return Trusted.read(head, path);
     }
 
