@@ -917,8 +917,9 @@ final class Witness {
      * of which a run gave no result, is unstable: whether the change took it out of the way is not
      * the same in every run.
      *
-     * An old test whose name is gone or skipped, of which the runs disagree, is unstable (unless
-     * the counts say on their own that it was removed: no new name). How many old tests are said
+     * An old test of which the runs of the file as it was disagree, passing before and failing on
+     * the change in some runs only, is unstable, whatever became of its name: gone, skipped or
+     * still running (else a test whose name still runs would be said nowhere). How many old tests are said
      * to be taken out of the way goes into said, so that the counts of tests removed and switched
      * off are not said of them again (see budget); the names said broken, and the unstable ones,
      * into judged.
@@ -955,8 +956,7 @@ final class Witness {
             judged.add(f + "\n" + k);
         }
         for (String k : fourth.wavering.getOrDefault(f, Set.of())) {
-            // a gone test of a file with no new one was removed all the same, and one switched off by name is so all the same
-            if (now.containsKey(k) ? !now.get(k).stream().allMatch(c -> c.status() == Status.SKIPPED) : n.fresh().isEmpty()) continue;
+            // whatever became of it: a run that did not say what the others said is said, gone, skipped or running
             out.add(new Verdict(f, shown(n.shown(), k), Kind.UNSTABLE, WAVERED, by));
             judged.add(f + "\n" + k);
         }

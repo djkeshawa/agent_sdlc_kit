@@ -918,6 +918,8 @@ final class CheckTests {
                 renamed.contains("\n        fragile, rows(int)[1] passed before the change and fail on the code after it as the file was. A test of each name still runs after the change, "
                         + "so it cannot be told whether each was edited for the changed behaviour, or taken out and its name given to another case, as a row taken out does to "
                         + "the rows after it where cases are named by their place\n") && !renamed.contains("wobbly passed") && !renamed.contains("steady")
+                && renamed.contains("1 gave different results from run to run\n      checks/broken.t  [self test]\n        wobbly: passed before the change, and as the test was, failed on the "
+                        + "code after the change in one run and not in another\n")
                 && !renamed.contains("The reports cannot tell"));
         check("check: the fourth run is made then, in a checkout of its own, and the checkout after the change is left as the change has it",
                 Check.fourthCheckout(sdlc.check.Change.of(null)).equals("made, head intact"));
