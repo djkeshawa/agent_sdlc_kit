@@ -228,22 +228,23 @@ final class TrustTests {
 
         // a script test file is linted by the lines the change adds; its run is the judge
         git(repo, "switch", "-q", "-c", "feature/PROJ-17-script", "origin/main");
-        write(repo, "src/test/java/web.test.ts", "it.skip('later', () => {})\nit\n  .skip('sooner', () => {})\n");
+        write(repo, "src/test/java/web.test.ts", "it.skip('later', () => {})\nit\n  .skip('sooner', () => {})\nconst r = /'/; it.skip('a', () => { expect(false).toBe(true); }); const x = 'ok';\n");
         write(repo, "src/main/java/A.java", "class A { int e; }\n");
         commit(repo, "feat(PROJ-17): switch script tests off");
         Ctx.init(repo);
         check("trust: a script test switched off on an added line fails, and so does one written over two lines",
-                Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No test was disabled or focused") && f.contains("web.test.ts: it.skip('later'") && f.contains("web.test.ts: it .skip('sooner'")));
+                Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No test was disabled or focused") && f.contains("web.test.ts: it.skip('later'") && f.contains("web.test.ts: it .skip('sooner'")
+                        && f.contains("web.test.ts: const r = /'/; it.skip('a'")));
 
         // a Java test file is linted by the lines the change adds, as a script test file is
         git(repo, "switch", "-q", "-c", "feature/PROJ-18-java", "origin/main");
-        write(repo, "src/test/java/OffTest.java", "class OffTest {\n  @Disabled(\"later\")\n  @Test void later() {}\n  @Test void sooner() { assumeTrue(false); }\n}\n");
+        write(repo, "src/test/java/OffTest.java", "class OffTest {\n  @Disabled(\"later\")\n  @Test void later() {}\n  @Test void sooner() { assumeTrue(false); }\n  @Test void never() { Assumptions.<Void>abort(\"later\"); }\n}\n");
         write(repo, "src/main/java/A.java", "class A { int f; }\n");
         commit(repo, "feat(PROJ-18): switch Java tests off");
         Ctx.init(repo);
         check("trust: a Java test switched off on an added line fails, by the line",
                 Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No test was disabled or focused") && f.contains("OffTest.java: @Disabled(\"later\")")
-                        && f.contains("OffTest.java: @Test void sooner() { assumeTrue(false); }")));
+                        && f.contains("OffTest.java: @Test void sooner() { assumeTrue(false); }") && f.contains("OffTest.java: @Test void never() { Assumptions.<Void>abort(")));
 
         // text that looks like a skipped test, inside a text block over several lines: the lint reads lines, so it fails (on the safe side)
         git(repo, "switch", "-q", "-c", "feature/PROJ-16-example", "origin/main");

@@ -191,7 +191,7 @@ final class IntegrityTests {
 
         // a script file under a test folder, named like no test: whether it held tests is linted from its lines
         write(repo, "web/__tests__/cases.ts", "describe('sum', () => {\n  it('adds', () => { expect(1 + 1).toBe(2) })\n})\n");
-        write(repo, "web/__tests__/helpers.ts", "export const two = () => 2; // not it('x')\n");
+        write(repo, "web/__tests__/helpers.ts", "export const two = () => 2;\n// not it('x')\n");
         git(repo, "add", "-A");
         git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "script files in a test folder");
         Files.delete(repo.resolve("web/__tests__/cases.ts"));
@@ -227,8 +227,11 @@ final class IntegrityTests {
         check("integrity: it.skip( inside the ${...} of a template string is code", count(scan(repo), "test switched off") == 1);
         Files.delete(repo.resolve("src/app.test.ts"));
         reset(repo);
-        write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("    private int helper", "    // a note about @Disabled and it.skip( in a comment\n    String s = \"@Disabled\";\n    private int helper"));
-        check("integrity: @Disabled in a comment or a string switches nothing off", problems(scan(repo)) == 0);
+        write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("    private int helper", "    // a note about @Disabled and it.skip( in a comment\n    private int helper"));
+        check("integrity: @Disabled on a line that is wholly a comment switches nothing off", problems(scan(repo)) == 0);
+        write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("    private int helper", "    String s = \"@Disabled\"; // it.skip(\n    private int helper"));
+        check("integrity: inside a string or a trailing comment on a line of code it is reported: the lint errs on the safe side",
+                only(scan(repo), Level.PROBLEM, "test switched off", "src/test/java/demo/CalcTest.java", "String s = \"@Disabled\"; // it.skip("));
         reset(repo);
         write(repo, "pom.xml", POM.replace("</project>", "<build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId><configuration><skip>true</skip></configuration></plugin></plugins></build>\n<properties><skipTests>\n  true\n</skipTests></properties></project>"));
         List<Finding> compact = scan(repo);
@@ -263,7 +266,7 @@ final class IntegrityTests {
         write(repo, "src/app.test.ts", "it('a', () => { expect(1).toBe(1) })\nconst s = `${fn(\"}\", it.skip('b', () => {}))}`\n");
         check("integrity: a closing brace inside a string does not end the ${...}", count(scan(repo), "test switched off") == 1);
         write(repo, "src/app.test.ts", "it('a', () => { expect(1).toBe(1) })\nconst s = `${\"it.skip(\"}`\n");
-        check("integrity: the text it.skip( inside a string inside ${...} switches nothing off", problems(scan(repo)) == 0);
+        check("integrity: the text it.skip( inside a string inside ${...} is reported: the lint errs on the safe side", count(scan(repo), "test switched off") == 1);
         write(repo, "src/app.test.ts", "it('old name', () => {\n  expect(1 + 1).toBe(2)\n})\n");
         git(repo, "add", "-A");
         git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a script test");
@@ -277,8 +280,8 @@ final class IntegrityTests {
         check("integrity: a script switch written over two added lines is found by the line lint", count(scan(repo), "test switched off") == 1);
         write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\nit.concurrent.skip('later', () => {\n  expect(1).toBe(1)\n})\n");
         check("integrity: it.concurrent.skip is a test switched off", count(scan(repo), "test switched off") == 1);
-        write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\n// it\n//   .skip('in a comment')\nconst s = 'it .skip(';\n");
-        check("integrity: the same words in a comment or a string switch nothing off", problems(scan(repo)) == 0);
+        write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\n// it\n//   .skip('in a comment')\n# it.skip('nor a comment of a script')\n");
+        check("integrity: the same words on lines that are wholly comments switch nothing off", problems(scan(repo)) == 0);
         write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\nconst example = `\nit\n  .skip('documentation example')\n`;\n");
         check("integrity: the line lint does not know a template string that runs over lines: a switch over two of its lines is reported (it errs on the safe side)", count(scan(repo), "test switched off") == 1);
         // the line lint of scripts: a skip on a line the change adds is reported as that line, whatever the change did with the test
@@ -335,6 +338,24 @@ final class IntegrityTests {
                                 "@ org.junit.jupiter.api . Disabled", "assumeFalse(true);", "Assumptions.abort(\"later\");")));
         check("integrity: an annotation written over two added lines is found, joined",
                 Integrity.lintedSwitches(List.of("  @", "  Disabled", "  @Test void later() {}")).equals(List.of("@ Disabled")));
+        check("integrity: an abort with type arguments, imported, or called alone is found; another object's abort is not",
+                Integrity.lintedSwitches(List.of("    Assumptions.<Void>abort(\"later\");", "    Assumptions . <Void> abort(\"later\");", "import static org.junit.jupiter.api.Assumptions.abort;",
+                        "    abort(\"later\");", "    Assumptions.abort<Unit>(\"later\")", "    controller.abort();", "    new AbortController().abort();")).size() == 5
+                && !Integrity.lintedSwitch("    controller.abort();") && Integrity.lintedSwitch("    Assumptions.<Void>abort(\"later\");"));
+        // L1-2: a line cannot tell its quotes for certain; what it shows as written is never hidden by the masking
+        check("integrity: a quote inside a regular expression does not hide a switch on the same line",
+                Integrity.lintedSwitch("const r = /'/; it.skip('a', () => { expect(false).toBe(true); }); const x = 'ok';")
+                && Integrity.lintedSwitch("const r = /x\\//; it.skip('b', () => {})")
+                && Integrity.lintedSwitch("* 2; it.skip('c', () => {})")
+                && Integrity.lintedSwitch("`; it.skip('d', () => {}); const y = `")
+                && Integrity.lintedSwitch("#f = it.skip('e', () => {})")
+                && Integrity.lintedSwitch("    String t = \"\"\"; @Disabled class X {} //\"")
+                && Integrity.lintedSwitch("@/* a */Disabled"));
+        check("integrity: lines wholly comments are not read as written; others are",
+                !Integrity.lintedSwitch("  // @Disabled until PAY-12") && !Integrity.lintedSwitch("# @pytest.mark.skip(reason=\"x\")")
+                && Integrity.lintedSwitch("  * @Disabled until PAY-12") && Integrity.lintedSwitch("assertTrue(ok); // it.skip later"));
+        check("integrity: a switch over two lines, with a quote in a regular expression on one and a comment between its words on the other, is found",
+                Integrity.lintedSwitches(List.of("const r = /'/; it", "/**/.skip('a', () => {})")).equals(List.of("const r = /'/; it /**/.skip('a', () => {})")));
         check("integrity: an assumption with a matcher or a computed condition is not a switch",
                 Integrity.lintedSwitches(List.of("    Assume.assumeThat(false, is(false));", "    assumeTrue(ready(false));", "    @DisplayName(\"x\")")).isEmpty());
         // L1-1: an unconditional assumption put beside a conditional one is a line the change adds

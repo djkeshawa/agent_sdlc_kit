@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -85,21 +86,52 @@ public final class Integrity {
 
     // ---------------- tests switched off, assertions ----------------
 
-    // Switches as a line shows them. White space may stand around each dot and after the @ of an annotation, and other
-    // members may stand between (it.concurrent.skip, test.skip.each).
+    // Switches as a line shows them. White space may stand around each dot and after the @ of an annotation, other members
+    // may stand between (it.concurrent.skip, test.skip.each), a qualifier before (@org.junit.jupiter.api.Disabled), and
+    // type arguments before or after a method's name (Assumptions.<Void>abort, Kotlin's abort<Unit>). abort is a switch
+    // as Assumptions.abort, on the line that imports it, and called alone (statically imported); a call of another
+    // object's abort (controller.abort()) is not.
     private static final Pattern SCRIPT_SWITCH = Pattern.compile(
             "\\b(?:it|test|describe|context|suite)(?:\\s*\\.\\s*\\w+)*?\\s*\\.\\s*(?:skip|todo|only|fixme)\\b|\\bx(?:it|test|describe|context)(?=\\s*\\()|\\bf(?:it|describe)(?=\\s*\\()");
-    private static final Pattern OTHER_SWITCH = Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*)*(?:Disabled|DisabledIf\\w*|Ignore)\\b|\\bassumeTrue\\s*\\([^()]*\\bfalse\\b[^()]*\\)"
-            + "|\\bassumeFalse\\s*\\([^()]*\\btrue\\b[^()]*\\)|\\bAssumptions\\s*\\.\\s*abort\\s*\\(|@pytest\\.mark\\.skip|@unittest\\.skip|\\bt\\.Skip(?:Now)?(?=\\s*\\()");
+    private static final String TYPE_ARGUMENTS = "(?:<[^()]*?>\\s*)?";
+    private static final Pattern OTHER_SWITCH = Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*)*(?:Disabled|DisabledIf\\w*|Ignore)\\b"
+            + "|\\bassumeTrue\\s*\\([^()]*\\bfalse\\b[^()]*\\)|\\bassumeFalse\\s*\\([^()]*\\btrue\\b[^()]*\\)"
+            + "|\\bAssumptions\\s*\\.\\s*" + TYPE_ARGUMENTS + "abort\\b|(?<![\\w$.])abort\\s*" + TYPE_ARGUMENTS + "\\("
+            + "|@\\s*pytest\\s*\\.\\s*mark\\s*\\.\\s*skip|@\\s*unittest\\s*\\.\\s*skip|\\bt\\s*\\.\\s*Skip(?:Now)?(?=\\s*\\()");
 
     /**
-     * The line lint: true when the code of a line (its comments dropped and the insides of its
-     * strings emptied) holds a switch that skips a test, marks it as to do, or focuses on one. A
-     * skipped test that a change moves or gives another title is reported like any other skip on
-     * a line the change wrote.
+     * The line lint: true when a line holds a switch that skips a test, marks it as to do, or
+     * focuses on one (seen). A skipped test that a change moves or gives another title is reported
+     * like any other skip on a line the change wrote.
      */
     public static boolean lintedSwitch(String line) {
-        return lintedCode(code(line));
+        return seen(line, Integrity::lintedCode);
+    }
+
+    /**
+     * True when a line shows what the test finds: in its code (its comments dropped and the
+     * insides of its strings emptied), or in the line as it is written, unless the whole line is
+     * a comment. The code alone would be read wrong where one line cannot tell its quotes: a
+     * regular expression with a quote in it, a string or a comment that began on a line above. So
+     * the masking may only add what it finds (a switch with a comment between its words); it never
+     * hides what the line shows. The cost: a switch's words inside a string, a trailing comment or
+     * a block comment's line are reported too. A line wholly a comment starts with // or with a #
+     * that no name follows (in JavaScript #name is code).
+     */
+    static boolean seen(String line, Predicate<String> test) {
+        return test.test(code(line)) || !commentLine(line) && test.test(line);
+    }
+
+    static boolean commentLine(String line) {
+        String t = line.stripLeading();
+        if (t.startsWith("//")) return true;
+        return t.startsWith("#") && (t.length() == 1 || !Character.isJavaIdentifierPart(t.charAt(1)));
+    }
+
+    /** The ways a line is read: its code, and the line as it is written unless that is a comment or the same. */
+    private static List<String> readings(String line) {
+        String code = code(line);
+        return commentLine(line) || code.equals(line) ? List.of(code) : List.of(code, line);
     }
 
     private static boolean lintedCode(String code) {
@@ -108,39 +140,47 @@ public final class Integrity {
 
     /**
      * The line lint over the lines a change adds to one file, in their order: each line that holds
-     * a switch, as it is written, and each run of two or three added lines that hold one only
-     * together (it, a line break, .skip), joined by a space. Without the second part, breaking a
-     * switch over two lines would hide it from a command that runs no test (check-pr). The lines
-     * are taken as neighbours as the diff lists them; lines of two places of the file that only
-     * together read as a switch are reported too, which errs on the safe side. Still not seen: a
-     * switch of which the change wrote only a part (the line of ".skip(" under an "it" that was
-     * there); the run of the file reports that test as skipped.
+     * a switch (lintedSwitch), as it is written, and each run of two or three added lines that
+     * hold one only together (it, a line break, .skip; @, a line break, Disabled), joined by a
+     * space, each line read both ways (seen) and every way of joining them tried. Without the
+     * second part, breaking a switch over two lines would hide it from a command that runs no test
+     * (check-pr). The lines are taken as neighbours as the diff lists them; lines of two places of
+     * the file that only together read as a switch are reported too, which errs on the safe side.
+     * Still not seen: a switch of which the change wrote only a part (the line of ".skip(" under an
+     * "it" that was there), and one written over more than three lines; the run of the file
+     * reports that test as skipped.
      */
     public static List<String> lintedSwitches(List<String> addedLines) {
         List<String> out = new ArrayList<>();
-        String[] code = new String[addedLines.size()];
-        boolean[] told = new boolean[code.length];
-        for (int i = 0; i < code.length; i++) {
-            code[i] = code(addedLines.get(i));
-            if (!lintedCode(code[i])) continue;
+        List<List<String>> read = new ArrayList<>();
+        boolean[] told = new boolean[addedLines.size()];
+        for (int i = 0; i < told.length; i++) {
+            read.add(readings(addedLines.get(i)));
+            if (read.get(i).stream().noneMatch(Integrity::lintedCode)) continue;
             told[i] = true;
             out.add(addedLines.get(i).trim());
         }
         for (int width = 2; width <= 3; width++) {
-            for (int i = 0; i + width <= code.length; i++) {
+            for (int i = 0; i + width <= told.length; i++) {
                 boolean fresh = true;
-                StringBuilder joined = new StringBuilder(), shown = new StringBuilder();
+                StringBuilder shown = new StringBuilder();
                 for (int k = i; k < i + width; k++) {
                     fresh &= !told[k];
-                    joined.append(k == i ? "" : " ").append(code[k]);
                     shown.append(k == i ? "" : " ").append(addedLines.get(k).trim());
                 }
-                if (!fresh || !lintedCode(joined.toString())) continue;
+                if (!fresh || !joinedHit(read.subList(i, i + width), "")) continue;
                 for (int k = i; k < i + width; k++) told[k] = true;
                 out.add(shown.toString());
             }
         }
         return out;
+    }
+
+    /** True when some way of joining the readings of these lines, one of each after what is joined so far, holds a switch. */
+    private static boolean joinedHit(List<List<String>> lines, String so) {
+        if (lines.isEmpty()) return lintedCode(so);
+        for (String r : lines.get(0)) if (joinedHit(lines.subList(1, lines.size()), so.isEmpty() ? r : so + " " + r)) return true;
+        return false;
     }
 
     /**
@@ -258,19 +298,19 @@ public final class Integrity {
             if (!anyTestFile(path)) continue;
             for (String hit : lintedSwitches(added.getOrDefault(path, List.of()))) switchedOff(path, hit);
         }
-        // the repository's own patterns may name more than the built-in lint knows
+        // the repository's own patterns may name more than the built-in lint knows; a line is read as the lint reads it
         for (String hit : Checks.disabledTests(added)) {
-            if (!Checks.containsDisabled(code(hitLine(hit)))) continue;
+            if (!seen(hitLine(hit), Checks::containsDisabled)) continue;
             switchedOff(hitPath(hit), hitLine(hit));
         }
     }
 
     /**
-     * A line with what is not code taken out: comments are dropped and the inside of each string is
-     * emptied, so "@Disabled" in a test's expected text or it.skip( in a comment switches nothing
-     * off. Code that follows a comment on the same line stays, and so does code inside ${...} of a
-     * template string. Where the line cannot be read with confidence (a quote that never closes),
-     * the rest is kept as it is: a doubtful line is scanned, not skipped.
+     * A line with what looks like no code taken out: comments are dropped (a block comment becomes a
+     * space, so "@", a block comment and "Disabled" read as "@ Disabled") and the inside of each string is
+     * emptied. Code that follows a comment on the same line stays, and so does code inside ${...}
+     * of a template string. Where a quote never closes, the rest is kept as it is. One line cannot
+     * tell its quotes for certain, so this is never the only reading of a line (see seen).
      */
     static String code(String line) {
         return code(line, 0);
@@ -397,7 +437,7 @@ public final class Integrity {
      */
     private static boolean declaresTests(String text) {
         if (text == null) return false;
-        for (String line : text.split("\\R")) if (TEST_CALL.matcher(code(line)).find()) return true;
+        for (String line : text.split("\\R")) if (seen(line, l -> TEST_CALL.matcher(l).find())) return true;
         return false;
     }
 
