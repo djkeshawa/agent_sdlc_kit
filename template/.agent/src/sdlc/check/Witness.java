@@ -229,6 +229,26 @@ final class Witness {
     }
 
     /**
+     * One order for the cases of every report: by suite, by name, then by what each says. A report
+     * lists its cases in the order the build wrote them, and Surefire writes them in the order they
+     * finish, which differs from run to run where tests run concurrently. So the order of a report
+     * is never read: every report is put in this order as it comes in, and every comparison
+     * between runs, every count and every list of names printed is of the cases in this order.
+     */
+    private static final java.util.Comparator<JUnitXml.Case> ORDER = java.util.Comparator.comparing(JUnitXml.Case::suite).thenComparing(JUnitXml.Case::name)
+            .thenComparing(JUnitXml.Case::status).thenComparing(JUnitXml.Case::retried).thenComparing(JUnitXml.Case::type).thenComparing(JUnitXml.Case::message);
+
+    /** Runs these files, each report's cases in one order (see ORDER). */
+    private static Map<String, FileRun> run(Runner runner, java.nio.file.Path dir, List<String> files, int timeout) {
+        Map<String, FileRun> out = new LinkedHashMap<>();
+        for (Map.Entry<String, FileRun> e : runner.run(dir, files, timeout).entrySet()) {
+            FileRun r = e.getValue();
+            out.put(e.getKey(), r == null ? null : new FileRun(r.cases().stream().sorted(ORDER).toList(), r.problem(), r.broken()));
+        }
+        return out;
+    }
+
+    /**
      * What one case says. A case the build ran again after it failed (Surefire's
      * rerunFailingTestsCount) is RETRIED where a rerun passed: it is not one result, and it need
      * not be a test either, as a set-up that failed and passed when run again may be reported so.
@@ -292,7 +312,7 @@ final class Witness {
     /** Runs the edited files as they were, on the code as it was: the third run. Added files need none. */
     private static void earlier(Runner runner, List<String> files, Set<String> edited, Sides sides, int timeout, Seen seen) {
         List<String> had = files.stream().filter(edited::contains).toList();
-        Map<String, FileRun> runs = had.isEmpty() ? Map.of() : runner.run(sides.old().dir, had, timeout);
+        Map<String, FileRun> runs = had.isEmpty() ? Map.of() : run(runner, sides.old().dir, had, timeout);
         seen.saw(Side.OLD, had, runs);
     }
 
@@ -303,8 +323,8 @@ final class Witness {
     private static List<Verdict> judge(Change change, Runner runner, List<String> files, Set<String> edited, Sides sides, int runs, int timeout) {
         String by = runner.name();
         Scratch head = sides.head(), base = sides.base();
-        Map<String, FileRun> after = runner.run(head.dir, files, timeout);
-        Map<String, FileRun> before = new LinkedHashMap<>(runner.run(base.dir, files, timeout));
+        Map<String, FileRun> after = run(runner, head.dir, files, timeout);
+        Map<String, FileRun> before = new LinkedHashMap<>(run(runner, base.dir, files, timeout));
         Seen seen = new Seen(); // every report made from here on (see Seen)
         earlier(runner, files, edited, sides, timeout, seen);
         // One test of new code stops every test of its module from compiling before the change. Those files are
@@ -376,16 +396,16 @@ final class Witness {
         Set<String> again = new LinkedHashSet<>(sensitive);
         again.addAll(switched);
         for (int i = 1; i < runs && !again.isEmpty(); i++) {
-            seen.saw(Side.AFTER, again, runner.run(head.dir, new ArrayList<>(again), timeout));
+            seen.saw(Side.AFTER, again, run(runner, head.dir, new ArrayList<>(again), timeout));
             if (!sensitive.isEmpty()) {
                 List<String> together = sensitive.stream().filter(f -> !alone.contains(f)).toList();
                 Map<String, FileRun> b = new LinkedHashMap<>();
                 if (!alone.isEmpty()) restore(change, runner, base, files);
-                if (!together.isEmpty()) b.putAll(runner.run(base.dir, together, timeout));
+                if (!together.isEmpty()) b.putAll(run(runner, base.dir, together, timeout));
                 for (String f : sensitive) if (alone.contains(f)) b.put(f, runAlone(change, runner, files, f, base, timeout));
                 seen.saw(Side.BEFORE, sensitive, b);
             }
-            if (!switched.isEmpty()) seen.saw(Side.OLD, switched, runner.run(sides.old().dir, switched, timeout));
+            if (!switched.isEmpty()) seen.saw(Side.OLD, switched, run(runner, sides.old().dir, switched, timeout));
         }
         // the fourth run, for each edited file whose list of tests changed, and each that runs fewer tests than passed as it was (which a changed
         // list always is, said here so that it cannot be lost): every old test of such a file that passed as it was, at the first try
@@ -449,7 +469,7 @@ final class Witness {
                     }
                 }
             }
-            Set<String> keys = new LinkedHashSet<>();
+            Set<String> keys = new java.util.TreeSet<>();
             for (Map<String, Object> r : reads) keys.addAll(r.keySet());
             Set<String> passing = new LinkedHashSet<>(), freshEvery = new LinkedHashSet<>();
             List<Verdict> mine = new ArrayList<>();
@@ -497,7 +517,7 @@ final class Witness {
             // the whole decision is made again from the complete reports of each run, on both sides: each report as it was against each after the change
             Names n1 = named.get(f);
             Skips s1 = skipsIn.get(f);
-            List<String> first = signature(s1.answer(), s1.fewer(), n1);
+            List<String> first = signature(s1, n1);
             for (FileRun o : seen.of(Side.OLD, f)) {
                 for (FileRun a : seen.of(Side.AFTER, f)) {
                     List<String> now = said(o, a, f, by);
@@ -784,7 +804,7 @@ final class Witness {
             }
             return new Fourth(first, Map.of(), Map.of(), unclear);
         }
-        Map<String, FileRun> ran = runner.run(mixed.dir, files, timeout);
+        Map<String, FileRun> ran = run(runner, mixed.dir, files, timeout);
         seen.saw(Side.OLD_TESTS, files, ran);
         for (String f : files) first.put(f, ran.get(f));
         Map<String, Set<String>> failing = new LinkedHashMap<>(), broke = new LinkedHashMap<>(), wavering = new LinkedHashMap<>();
@@ -803,11 +823,11 @@ final class Witness {
         List<String> counts = files.stream().filter(f -> fewer.contains(f) && !failing.containsKey(f)).toList();
         for (int i = 1; i < runs && !(again.isEmpty() && counts.isEmpty()); i++) {
             if (!again.isEmpty()) {
-                seen.saw(Side.OLD, again, runner.run(sides.old().dir, again, timeout));
-                seen.saw(Side.OLD_TESTS, again, runner.run(mixed.dir, again, timeout));
-                seen.saw(Side.AFTER, again, runner.run(sides.head().dir, again, timeout));
+                seen.saw(Side.OLD, again, run(runner, sides.old().dir, again, timeout));
+                seen.saw(Side.OLD_TESTS, again, run(runner, mixed.dir, again, timeout));
+                seen.saw(Side.AFTER, again, run(runner, sides.head().dir, again, timeout));
             }
-            if (!counts.isEmpty()) seen.saw(Side.OLD_TESTS, counts, runner.run(mixed.dir, counts, timeout));
+            if (!counts.isEmpty()) seen.saw(Side.OLD_TESTS, counts, run(runner, mixed.dir, counts, timeout));
         }
         // broken: passed in every run of the file as it was and failed or threw in every run of it on the change, of all the runs seen
         for (String f : again) {
@@ -838,7 +858,7 @@ final class Witness {
             }
             base.write(change.head, List.of(file));
             runner.forgetBuilt(base.dir, files); // a test file that was just taken away must not stay behind as a compiled class
-            FileRun run = runner.run(base.dir, List.of(file), timeout).get(file);
+            FileRun run = run(runner, base.dir, List.of(file), timeout).get(file);
             return run == null ? FileRun.failed("gave no result") : run;
         } catch (java.io.IOException e) {
             return FileRun.failed("could not be set up alone (" + e.getMessage() + ")");
@@ -902,7 +922,7 @@ final class Witness {
     private static Names names(List<JUnitXml.Case> old, List<JUnitXml.Case> now) {
         Map<String, String> shown = shown(old, now);
         Map<String, List<JUnitXml.Case>> was = byKey(old), is = byKey(now);
-        Set<String> keys = new LinkedHashSet<>(was.keySet());
+        Set<String> keys = new java.util.TreeSet<>(was.keySet());
         keys.addAll(is.keySet());
         List<JUnitXml.Case> gone = new ArrayList<>(), fresh = new ArrayList<>();
         List<Flip> off = new ArrayList<>(), asBefore = new ArrayList<>();
@@ -939,8 +959,10 @@ final class Witness {
      * ran before and may not run now, to be run again before it is said; listed: the rest. fewer:
      * fewer cases run and more are skipped, and no report holds a failure: what the rule for tests
      * that ran and do not run now decides (see lost), so the skips say nothing of it themselves.
+     * said: what each answer rests on, by kind, count and the counts and story it tells, never by
+     * its words, so that two runs are compared by what their reports hold (see signature).
      */
-    private record Skips(List<Verdict> answer, List<Verdict> listed, boolean fewer) {}
+    private record Skips(List<Verdict> answer, List<Verdict> listed, boolean fewer, List<String> said) {}
 
     /**
      * The skips of an edited file, from its old run and its run after the change (n):
@@ -976,7 +998,7 @@ final class Witness {
         if (n.off().isEmpty() && (freshOff.isEmpty() || n.r0() == 0)) {
             for (JUnitXml.Case c : freshOff) listed.add(new Verdict(f, shown(n.shown(), key(c)), Kind.SKIPPED, "skipped after the change; no test of the file ran before it", by,
                     Cover.of(List.of(key(c)), Side.OLD, Side.AFTER)));
-            return new Skips(answer, listed, false);
+            return new Skips(answer, listed, false, List.of());
         }
         Set<String> shows = new LinkedHashSet<>();
         for (Flip s : n.off()) shows.add(s.key());
@@ -986,11 +1008,15 @@ final class Witness {
         if (n.r1() < n.r0() && n.s1() > n.s0()) {
             long least = Math.min(n.r0() - n.r1(), n.s1() - n.s0());
             // a case that failed or threw, under any name, need not be a test that ran, nor say why tests after it are skipped (see listing)
-            if (n.listing().failures() != null) answer.add(new Verdict(f, "", Kind.UNKNOWN, counts + skippedNow(n) + ". But " + n.listing().failures()
-                    + ": whether a test that ran does not run now is not known", by, (int) least, cover));
-            return new Skips(answer, listed, n.listing().failures() == null);
+            if (n.listing().failures() == null) return new Skips(answer, listed, true, List.of());
+            answer.add(new Verdict(f, "", Kind.UNKNOWN, counts + skippedNow(n) + ". But " + n.listing().failures() + ": whether a test that ran does not run now is not known", by,
+                    (int) least, cover));
+            return new Skips(answer, listed, false, List.of(Kind.UNKNOWN + " " + least + " failures " + n.listing().failedBefore() + " " + n.listing().failedAfter() + " " + tally(n)));
         }
-        String story;
+        String story, why;
+        if (n.s1() > n.s0()) why = "more skipped";
+        else if (!n.off().isEmpty()) why = "off, and " + n.fresh().size() + " fresh, " + n.gone().size() + " gone, " + n.on() + " on";
+        else why = "skipped under new names";
         if (n.s1() > n.s0()) story = ". So more are skipped while as many or more run: it cannot be told whether skipped tests were added, or a test that ran was switched off and another added";
         else if (!n.off().isEmpty()) story = ", and its list of cases changed as well (" + n.fresh().size() + " names it did not report, " + n.gone().size() + " it no longer reports, "
                 + n.on() + " skipped before and run now). It cannot be told whether a test that ran was switched off, or cases changed names, as cases named by their place "
@@ -999,7 +1025,12 @@ final class Witness {
                 + " that ran before under another name and " + (freshOff.size() == 1 ? "is" : "are") + " switched off";
         long candidates = n.off().stream().mapToLong(Flip::tests).sum() + freshOff.size();
         answer.add(new Verdict(f, "", Kind.UNKNOWN, counts + skippedNow(n) + story, by, (int) candidates, cover));
-        return new Skips(answer, listed, false);
+        return new Skips(answer, listed, false, List.of(Kind.UNKNOWN + " " + candidates + " " + why + " " + tally(n)));
+    }
+
+    /** "ran 4, skipped 1; runs 3, skips 2": the counts of a file as it was and after the change, as a signature holds them. */
+    private static String tally(Names n) {
+        return "ran " + n.r0() + ", skipped " + n.s0() + "; runs " + n.r1() + ", skips " + n.s1();
     }
 
     /** "the file runs 3 of its tests where it ran 4 before the change, and skips 2 where it skipped 1". */
@@ -1021,21 +1052,24 @@ final class Witness {
         if (!gave(old) || !gave(after)) return null;
         Names n = names(old.cases(), after.cases());
         Skips s = skips(f, n, by);
-        return signature(s.answer(), s.fewer(), n);
+        return signature(s, n);
     }
 
     /**
-     * What a repeat run must say again: each verdict of the skips (kind, count and words), each
-     * name that ran before and is skipped now and each case skipped under a name the file did not
-     * report, by its identity (suite and name: two nested classes may each have a test of one
-     * name), and last, how many cases are gone and fresh (see gone). So a run in which another
-     * test is skipped is another answer, though the counts be the same.
+     * What a repeat run must say again: what each verdict of the skips rests on (kind, count, and
+     * the counts and the story it tells: see Skips.said), each name that ran before and is skipped
+     * now with how many of its cases, and each case skipped under a name the file did not report,
+     * by its identity (suite and name: two nested classes may each have a test of one name), and
+     * last, how many cases are gone and fresh (see gone). So a run in which another test is
+     * skipped is another answer, though the counts be the same. It is made of counts and sorted
+     * identities only, never of words in the order of a report: the same cases, reported in
+     * another order, are the same answer.
      */
-    private static List<String> signature(List<Verdict> answer, boolean fewer, Names n) {
-        List<String> out = new ArrayList<>(answer.stream().map(v -> v.kind() + "\n" + v.tests() + "\n" + v.detail()).toList());
-        if (fewer) out.add("fewer run, more skipped\n" + counts(n));
-        for (Flip s : n.off()) out.add("off\n" + s.key() + "\n" + s.tests());
-        for (JUnitXml.Case c : n.freshSkipped()) out.add("skipped under a new name\n" + key(c));
+    private static List<String> signature(Skips s, Names n) {
+        List<String> out = new ArrayList<>(s.said());
+        if (s.fewer()) out.add("fewer run, more skipped: " + tally(n));
+        for (Flip f : n.off().stream().sorted(java.util.Comparator.comparing(Flip::key)).toList()) out.add("off " + f.key() + " " + f.tests());
+        for (String k : n.freshSkipped().stream().map(Witness::key).sorted().toList()) out.add("skipped under a new name " + k);
         out.add(n.gone().size() + " gone, " + n.fresh().size() + " fresh");
         return out;
     }
@@ -1643,7 +1677,7 @@ final class Witness {
         if (is.isEmpty()) now.add("after the change the file reports no tests" + NONE);
         if (failedAfter) now.add("after the change the file reports failures" + FAILURES);
         if (!againAfter.isEmpty()) now.add("after the change the file reports " + (againAfter.size() == 1 ? "a case" : "cases") + " the build ran again (" + shortList(againAfter) + ")" + AGAIN);
-        Set<String> keys = new LinkedHashSet<>(was.keySet());
+        Set<String> keys = new java.util.TreeSet<>(was.keySet());
         keys.addAll(is.keySet());
         List<String> fewer = new ArrayList<>(), more = new ArrayList<>(); // names skipped fewer times after the change than as it was, and more times
         for (String k : keys) {
@@ -1698,14 +1732,14 @@ final class Witness {
     }
 
     private static Ledger ledger(String f, boolean edited, Seen seen, Map<String, String> sh) {
-        Map<String, String> change = new LinkedHashMap<>();
+        Map<String, String> change = new java.util.TreeMap<>(); // by identity, so that what is printed is in one order
         if (edited) {
             for (FileRun o : seen.of(Side.OLD, f)) {
                 if (!gave(o)) continue;
                 for (FileRun a : seen.of(Side.AFTER, f)) {
                     if (!gave(a)) continue;
                     Map<String, List<Out>> was = outs(o), is = outs(a);
-                    Set<String> keys = new LinkedHashSet<>(was.keySet());
+                    Set<String> keys = new java.util.TreeSet<>(was.keySet());
                     keys.addAll(is.keySet());
                     for (String k : keys) {
                         if (was.getOrDefault(k, List.of()).equals(is.getOrDefault(k, List.of()))) continue;
@@ -1718,11 +1752,11 @@ final class Witness {
         for (Side side : Side.values()) {
             List<FileRun> all = seen.of(side, f);
             if (all.size() < 2) continue;
-            Map<String, String> here = new LinkedHashMap<>();
+            Map<String, String> here = new java.util.TreeMap<>();
             List<FileRun> ok = all.stream().filter(Witness::gave).toList();
             if (!ok.isEmpty() && ok.size() < all.size()) here.put("", "the file " + side.words + " (one run gave no result and another gave one)");
             List<Map<String, List<Out>>> each = ok.stream().map(Witness::outs).toList();
-            Set<String> keys = new LinkedHashSet<>();
+            Set<String> keys = new java.util.TreeSet<>();
             for (Map<String, List<Out>> m : each) keys.addAll(m.keySet());
             for (String k : keys) {
                 List<List<Out>> seq = each.stream().map(m -> m.getOrDefault(k, List.of())).toList();

@@ -49,6 +49,12 @@ import sdlc.check.JUnitXml.Status;
 final class SelfTestRunner implements Runner {
     /** Runs so far in each checkout: a flaky test's result depends on it, not on the order in which the checkouts are run. */
     private final Map<Path, Integer> calls = new java.util.HashMap<>();
+    /**
+     * For the self test (see Check.order): 0 reports each file's cases in the order it lists them;
+     * 1 reverses them in the second, fourth, ... run in a checkout; 2 in the first, third, ... run.
+     * So the order of a report differs from run to run, as where a build runs tests concurrently.
+     */
+    static int order;
     /** The folder whose files this runner owns ("folder/"), or "" for every ".t" file. */
     private final String under;
 
@@ -171,6 +177,7 @@ final class SelfTestRunner implements Runner {
                                 s == Status.FAILED ? "expected something else" : "", retried));
                     }
                 }
+                if (order == 1 && call % 2 == 0 || order == 2 && call % 2 == 1) java.util.Collections.reverse(cases);
                 out.put(f, new FileRun(cases, null));
             } catch (IOException e) {
                 out.put(f, FileRun.failed("cannot be read"));

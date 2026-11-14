@@ -641,8 +641,8 @@ final class CheckTests {
         write(repo, "checks/nested.t", NESTED.replace("Outer", "Renamed"));
         String nested = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: an outer class renamed whose nested classes share a method name could not be judged, and is not a removal", code == 0 && !nested.contains("removed")
-                && nested.contains("        the file no longer reports 3 tests under the names it had (demo.Outer$A.works, demo.Outer$B.works, demo.Outer.top), and reports 3 under names it did not have "
-                        + "(demo.Renamed$A.works, demo.Renamed$B.works, demo.Renamed.top). The reports cannot tell a test renamed from a test deleted and another written\n")
+                && nested.contains("        the file no longer reports 3 tests under the names it had (demo.Outer.top, demo.Outer$A.works, demo.Outer$B.works), and reports 3 under names it did not have "
+                        + "(demo.Renamed.top, demo.Renamed$A.works, demo.Renamed$B.works). The reports cannot tell a test renamed from a test deleted and another written\n")
                 && nested.contains("        demo.Renamed$A.works: passes before and after, but it cannot be told whether it is a new test: the file reports 3 tests it did not have and no longer "
                         + "reports 3 it had. It may be a new test that does not test the change, or a test the file had: one of the 3 tests it no longer reports, under a new name\n")
                 && nested.contains("4 could not be judged") && !nested.contains("new test pass"));
@@ -672,7 +672,7 @@ final class CheckTests {
         check("check: when the file as it was cannot be run, a test that passes on both sides could not be judged",
                 legacy.contains("added: passes before and after, but run as it was before the change, the file timed out after 900 s, so it cannot be told whether this test is new")
                 && legacy.contains("held: passes before and after, but run as it was before the change")
-                && legacy.contains("checks/legacy.t  [self test]\n        held: ") && !legacy.contains("so it does not test the change") && code == 0);
+                && legacy.contains("checks/legacy.t  [self test]\n        added: ") && !legacy.contains("so it does not test the change") && code == 0);
         check("check: and the report says so for the file as a whole",
                 legacy.contains("        run as it was before the change, the file timed out after 900 s, so it cannot be told which of its tests are new, were switched off or were removed\n"));
         write(repo, "checks/legacy.t", LEGACY);
@@ -704,8 +704,8 @@ final class CheckTests {
         String renamed = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: tests renamed could not be judged, one verdict for the file with both lists, and the check does not fail",
                 code == 0 && !renamed.contains("removed") && !renamed.contains("new test pass") && !renamed.contains("Note:")
-                && renamed.contains("        the file no longer reports 6 tests under the names it had (has a name, adds 1, adds 2, it's a name, rejectsNull(String)[1], rejectsNull(String)[2]), "
-                        + "and reports 6 under names it did not have (has a title, sums 1, sums 2, it's a title, refusesNull(String)[1], refusesNull(String)[2]). "
+                && renamed.contains("        the file no longer reports 6 tests under the names it had (adds 1, adds 2, has a name, it's a name, rejectsNull(String)[1], rejectsNull(String)[2]), "
+                        + "and reports 6 under names it did not have (has a title, it's a title, refusesNull(String)[1], refusesNull(String)[2], sums 1, sums 2). "
                         + "The reports cannot tell a test renamed from a test deleted and another written\n"));
         check("check: and each new test that passes on both sides may be a gone one: could not be judged",
                 renamed.contains("7 could not be judged\n") && renamed.contains("        refusesNull(String)[2]: passes before and after, but it cannot be told whether it is a new test: "
@@ -717,8 +717,8 @@ final class CheckTests {
         String beside = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: a test renamed next to a new one: at least one new test passes on both sides, and the check fails",
                 beside.contains("at least 1 new test passes before and after, so it does not test the change\n      checks/named.t  [self test]\n        the file reports 2 tests it did not have "
-                        + "and no longer reports 1 it had: at least 1 new test passes before and after. Under names the file did not have, 2 pass before and after (went, extra)")
-                && beside.contains("(goes), and reports 2 under names it did not have (went, extra). The reports cannot tell") && !beside.contains("removed") && code == 1);
+                        + "and no longer reports 1 it had: at least 1 new test passes before and after. Under names the file did not have, 2 pass before and after (extra, went)")
+                && beside.contains("(goes), and reports 2 under names it did not have (extra, went). The reports cannot tell") && !beside.contains("removed") && code == 1);
 
         // one test deleted, another added elsewhere: the reports say exactly what they say of a rename
         write(repo, "checks/named.t", "arrives: pass\n" + NAMED.replace("goes: pass\n", ""));
@@ -754,8 +754,8 @@ final class CheckTests {
         String newMethod = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: the cases under names the file did not report, as many as it has more cases, all passing on both sides, are new tests",
                 newMethod.contains("at least 3 new tests pass before and after, so they do not test the change\n      checks/named.t  [self test]\n        the file reports 3 tests it did not have: "
-                        + "at least 3 new tests pass before and after. Under names the file did not have, 3 pass before and after (rejectsNull(String)[3], rejectsBlank(String)[1], "
-                        + "rejectsBlank(String)[2]); the names do not say which tests are new") && code == 1);
+                        + "at least 3 new tests pass before and after. Under names the file did not have, 3 pass before and after (rejectsBlank(String)[1], rejectsBlank(String)[2], "
+                        + "rejectsNull(String)[3]); the names do not say which tests are new") && code == 1);
         // renamed, and a row added: two gone and three new, all passing on both sides: one more than before, and it passes on both sides
         write(repo, "checks/named.t", NAMED.replace("rejectsNull(String)[%i]: pass\n", "refusesNull(String)[%i]: pass\nrefusesNull(String)[3]: pass\n"));
         String renamedRows = report(Map.of("selftest-runner", "true", "runs", "1"));
@@ -780,8 +780,8 @@ final class CheckTests {
         String emptied = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: a file that reports no test after the change, where its tests passed, lost every one of them",
                 emptied.contains("at least 8 tests that ran before the change do not run now\n      checks/named.t  [self test]\n        the file as it was passed 8 of its tests, and after "
-                        + "the change it runs 0: at least 8 tests that ran before the change do not run now (no longer reported: has a name, adds 1, adds 2, it's a name, "
-                        + "rejectsNull(String)[1], rejectsNull(String)[2], refund, goes)\n") && !emptied.contains("could not be judged") && code == 1);
+                        + "the change it runs 0: at least 8 tests that ran before the change do not run now (no longer reported: adds 1, adds 2, goes, has a name, it's a name, refund, "
+                        + "rejectsNull(String)[1], rejectsNull(String)[2])\n") && !emptied.contains("could not be judged") && code == 1);
         write(repo, "checks/named.t", NAMED);
         // a new file with no test: nothing to judge, and the report says so
         write(repo, "checks/empty.t", "  nothing yet\n");
@@ -974,7 +974,7 @@ final class CheckTests {
         write(repo, "checks/broken.t", MENDED.replace("rows(int)[2]: pass", "rows(int)[2]: pass\nrows(int)[3]: needs fixed"));
         String grown = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: a broken row replaced while the file grows is not passed in silence: its old version fails under a name that still runs, could not be judged",
-                grown.contains("\n        holds, fragile, rows(int)[1], wobbly passed before the change and fail on the code after it as the file was. A test of each name still runs after the "
+                grown.contains("\n        fragile, holds, rows(int)[1], wobbly passed before the change and fail on the code after it as the file was. A test of each name still runs after the "
                         + "change, so it cannot be told whether each was edited for the changed behaviour, or taken out and its name given to another case")
                 && grown.contains("\n        rows(int)[3]\n") && code == 0);
 
@@ -1041,9 +1041,9 @@ final class CheckTests {
         String deletedAndSkipped = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: two old tests the change breaks, one deleted and one skipped, are two tests taken out of the way, not counted again as skipped now",
                 deletedAndSkipped.contains("2 tests passed before the change and fail on the code after it as the test was, and the change took them out of the way: removed, renamed or "
-                        + "switched off\n      checks/broken.t  [self test]\n        holds: passed before the change; as the test was, on the code after the change holds fails: expected "
-                        + "something else. The edited file does not report it now\n        fragile: passed before the change; as the test was, on the code after the change fragile "
-                        + "fails: expected something else, and the change skips it now\n")
+                        + "switched off\n      checks/broken.t  [self test]\n        fragile: passed before the change; as the test was, on the code after the change fragile "
+                        + "fails: expected something else, and the change skips it now\n        holds: passed before the change; as the test was, on the code after the change holds fails: "
+                        + "expected something else. The edited file does not report it now\n")
                 && !deletedAndSkipped.contains("ran before the change and is skipped now") && !deletedAndSkipped.contains("removed: the edited file") && code == 1);
         // deleted, and a test that passes deleted too: two fewer, one of them said to be taken out of the way, so at least one more removed
         write(repo, "checks/broken.t", MENDED.replace("holds: pass\n", "").replace("steady: pass\n", ""));
@@ -1157,7 +1157,7 @@ final class CheckTests {
         String one = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: more broken tests gone than cases that can be their rewrites: at least the rest were taken out of the way",
                 one.contains("at least 1 test passed before the change and fails on the code after it as the test was, and the change took it out of the way: removed, "
-                        + "renamed or switched off\n      checks/broken.t  [self test]\n        holds, fragile passed before the change and fail on the code after it as the file "
+                        + "renamed or switched off\n      checks/broken.t  [self test]\n        fragile, holds passed before the change and fail on the code after it as the file "
                         + "was, and the file does not report them now or skips them. It has 1 test that passes after the change and does not pass on both sides (holds anew), "
                         + "and at most 1 of the 2 old tests can be among them, rewritten for the changed behaviour: at least 1 was taken out of the way\n") && code == 1);
         // three broken tests renamed, and only one sensitive test that can be a rewrite: at least two were taken out of the way
@@ -1165,7 +1165,7 @@ final class CheckTests {
         String two = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: a file whose counts prove two tests taken out of the way is counted as two",
                 two.contains("at least 2 tests passed before the change and fail on the code after it as the test was, and the change took them out of the way: removed, "
-                        + "renamed or switched off\n      checks/broken.t  [self test]\n        holds, fragile, rows(int)[1] passed before the change and fail on the code after it as "
+                        + "renamed or switched off\n      checks/broken.t  [self test]\n        fragile, holds, rows(int)[1] passed before the change and fail on the code after it as "
                         + "the file was") && two.contains("and at most 1 of the 3 old tests can be among them, rewritten for the changed behaviour: at least 2 were taken out of the way\n")
                 && code == 1);
         write(repo, "checks/broken.t", BROKEN);
@@ -1198,7 +1198,7 @@ final class CheckTests {
         String outgrown = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: a file whose old version does not load on the change, where nothing else is said of it, could not be judged: the old tests could not be run on the change",
                 outgrown.contains("      checks/grow.t  [self test]\n        the old tests could not be run on the code after the change: there the file as it was does not compile, so it "
-                        + "is not known whether the change broke any of the 3 old tests that passed before it (rows(int)[1], rows(int)[2], loads) and took it out of the way or replaced it\n")
+                        + "is not known whether the change broke any of the 3 old tests that passed before it (loads, rows(int)[1], rows(int)[2]) and took it out of the way or replaced it\n")
                 && outgrown.contains("      checks/grow.t  [self test]\n        rows(int)[3]\n") && !outgrown.contains("out of the way:") && code == 0);
         write(repo, "checks/grow.t", GROW);
         write(repo, "prod.txt", "v1\nfixed\n");
@@ -1242,7 +1242,7 @@ final class CheckTests {
         write(repo, "checks/init.t", "works: pass\nalso works: pass\n");
         String init = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: tests that come out from behind a failure reported in their place are not new tests that pass on both sides: could not be judged, with the reason",
-                init.contains("      checks/init.t  [self test]\n        works: passes before and after, but it cannot be told whether it is a new test: the file reports 2 tests it did "
+                init.contains("      checks/init.t  [self test]\n        also works: passes before and after, but it cannot be told whether it is a new test: the file reports 2 tests it did "
                         + "not have and no longer reports 1 it had. It may be a new test that does not test the change, or a test the file had: the test it no longer reports, under a "
                         + "new name, or a test the file had that its report as it was did not list: the file as it was reported failures")
                 && !init.contains("new test pass") && code == 0);
@@ -1276,7 +1276,7 @@ final class CheckTests {
         check("check: a failure reported in place of a file's tests after the change fails the check, and only the tests beyond it are said not to run now",
                 standIn.contains("1 fails after the change\n      checks/side/both.t  [self test]\n        initializationError: throws IllegalStateException")
                 && standIn.contains(L1 + "      checks/side/both.t  [self test]\n        the file as it was passed 2 of its tests, and after the change it runs 1: at least 1 test that ran "
-                        + "before the change does not run now (no longer reported: stays, goes; reported for the first time: initializationError)") && code == 1);
+                        + "before the change does not run now (no longer reported: goes, stays; reported for the first time: initializationError)") && code == 1);
         write(repo, "checks/side/both.t", SIDE);
 
         // and an old test the change breaks, gone from such a report, is not said to be taken out of the way
@@ -1314,8 +1314,9 @@ final class CheckTests {
         write(repo, "checks/broken.t", "demo.Broken::demo.Broken: skip\n");
         String brokenOff = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: old tests the change breaks, switched off with their class as one skipped case, were taken out of the way, by name",
-                brokenOff.contains("      checks/broken.t  [self test]\n        holds: passed before the change; as the test was, on the code after the change holds fails: expected "
-                        + "something else. The edited file does not report it now\n") && code == 1);
+                brokenOff.contains("      checks/broken.t  [self test]\n        fragile: passed before the change; as the test was, on the code after the change fragile fails: "
+                        + "expected something else. The edited file does not report it now\n        holds: passed before the change; as the test was, on the code after the change "
+                        + "holds fails: expected something else. The edited file does not report it now\n") && code == 1);
         write(repo, "checks/broken.t", BROKEN);
     }
 
@@ -1362,7 +1363,7 @@ final class CheckTests {
         String brokenFile = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("lost: a test deleted from a file that failed as it was could not be judged, said once, and the check passes",
                 brokenFile.contains("1 could not be judged\n      checks/hooked.t  [self test]\n        the file as it was passed 2 of its tests, and after the change it runs 1 "
-                        + "(no longer reported: refunds, afterAll hook). But the file as it was reported failures (a failure outside a test's body, in its set-up, tear-down or "
+                        + "(no longer reported: afterAll hook, refunds). But the file as it was reported failures (a failure outside a test's body, in its set-up, tear-down or "
                         + "loading, may be reported in place of the file's tests or as a case of its own): a file that did not pass as it was is not said to have lost tests, so "
                         + "whether a test that ran does not run now is not known\n") && !lostSaid(brokenFile) && code == 0);
         write(repo, "checks/hooked.t", HOOKED);
@@ -1633,11 +1634,53 @@ final class CheckTests {
         for (Map.Entry<String, String> e : quiet.entrySet()) {
             String was = Files.readString(repo.resolve(e.getKey()));
             write(repo, e.getKey(), e.getValue());
-            String calm = report(Map.of("selftest-runner", "true", "runs", "3"));
-            check("every difference: ordinary work in " + e.getKey() + " prints nothing that could not be judged and nothing unstable",
-                    !calm.contains("could not be judged") && !calm.contains("from run to run") && code == 0);
+            for (int order = 0; order <= 2; order++) {
+                // and where each report lists its cases in another order from run to run, as a build that runs tests concurrently writes them
+                Check.order(order);
+                String calm = report(Map.of("selftest-runner", "true", "runs", "3"));
+                Check.order(0);
+                check("every difference: ordinary work in " + e.getKey() + " prints nothing that could not be judged and nothing unstable" + (order == 0 ? "" : ", in report order " + order),
+                        !calm.contains("could not be judged") && !calm.contains("from run to run") && code == 0);
+            }
             write(repo, e.getKey(), was);
         }
+
+        // CR4-2: the same cases in another order are the same answer. Two tests skipped under new names beside one that ran, listed in the second run
+        // after the change in the other order: could not be judged, as in one run, and nothing from run to run
+        write(repo, "checks/fresh.t", "a: pass\np: skip\nq: skip\n");
+        String inOrder = report(Map.of("selftest-runner", "true", "runs", "2"));
+        Check.order(1);
+        String swapped = report(Map.of("selftest-runner", "true", "runs", "2"));
+        Check.order(0);
+        check("every difference: tests skipped under new names, reported in another order in a repeat run, could not be judged and are not unstable",
+                swapped.contains("2 could not be judged\n      checks/fresh.t  [self test]\n        the file runs 1 of its tests where it ran 1 before the change, and skips 2 where it "
+                        + "skipped 0 (skipped under names the file did not report before: p, q)") && !swapped.contains("from run to run") && code == 0 && swapped.equals(inOrder));
+        write(repo, "checks/fresh.t", FRESH);
+        // every report of a multi-run fixture in another order, within a run and from run to run: the output is the same, byte for byte
+        Map<String, String> many = new java.util.LinkedHashMap<>();
+        many.put("checks/fresh.t", "a: pass\np: skip\nq: skip\nz: pass\n");
+        many.put("checks/judged.t", JUDGED.replace("stays: pass", "group > stays: pass").replace("turned off: pass", "turned off: skip") + "idle: pass\n");
+        many.put("checks/broken.t", MENDED.replace("holds: pass", "kept up: pass") + "wavers: pass-once\n");
+        many.put("checks/code.t", CODE.replace("A: pass", "A: skip") + "G: pass\n");
+        many.put("checks/varies.t", "a: pass\nr: pass-later\n");
+        many.put("checks/named.t", NAMED.replace("goes: pass\n", "went: pass\nextra: pass\n"));
+        many.put("checks/retry.t", "steady: gone-later fixed\nflaky: skip\n");
+        many.put("checks/kept.t", "kept: fails-later fixed\nsensitive: needs fixed\nother: needs fixed\n");
+        Map<String, String> kept = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, String> e : many.entrySet()) {
+            kept.put(e.getKey(), Files.readString(repo.resolve(e.getKey())));
+            write(repo, e.getKey(), e.getValue());
+        }
+        String asListed = report(Map.of("selftest-runner", "true", "runs", "3"));
+        int asListedCode = code;
+        for (int order = 1; order <= 2; order++) {
+            Check.order(order);
+            String reordered = report(Map.of("selftest-runner", "true", "runs", "3"));
+            Check.order(0);
+            check("every difference: every report of " + many.size() + " files in another order (" + order + ") prints the very same output, with the same exit code",
+                    reordered.equals(asListed) && code == asListedCode && asListedCode == 1 && asListed.contains("from run to run") && asListed.contains(NO_RULE));
+        }
+        for (Map.Entry<String, String> e : kept.entrySet()) write(repo, e.getKey(), e.getValue());
     }
 
     /** A test file of the base with two nested classes that have a method of one name, the first of which the fix breaks. */

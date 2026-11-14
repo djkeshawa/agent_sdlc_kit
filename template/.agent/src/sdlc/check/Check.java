@@ -115,6 +115,15 @@ public final class Check {
     }
 
     /**
+     * For the self test: the stand-in runner reports the cases of each file in another order from
+     * run to run (see SelfTestRunner.order; 0 for the order of the file), as a build that runs
+     * tests concurrently does, so that what is said can be seen not to depend on it.
+     */
+    public static void order(int how) {
+        SelfTestRunner.order = how;
+    }
+
+    /**
      * For the self test: runs the witness of a change once with the stand-in runner, and says
      * whether it made the fourth checkout ("made" or "not made") and whether the checkout after
      * the change then still holds exactly the files of the change's tree ("head intact" or "head
