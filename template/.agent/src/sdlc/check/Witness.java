@@ -82,10 +82,21 @@ final class Witness {
     /**
      * name is "" when the verdict is about the whole file. tests is how many tests it counts: one
      * for a test, and for some verdicts about a file the least number the reports prove (atLeast).
+     * newCode: could not be judged because before the change the test did not compile, was not
+     * there, or threw: what a test of code the change adds does there.
      */
-    record Verdict(String file, String name, Kind kind, String detail, String runner, int tests) {
+    record Verdict(String file, String name, Kind kind, String detail, String runner, int tests, boolean newCode) {
         Verdict(String file, String name, Kind kind, String detail, String runner) {
-            this(file, name, kind, detail, runner, 1);
+            this(file, name, kind, detail, runner, 1, false);
+        }
+
+        Verdict(String file, String name, Kind kind, String detail, String runner, int tests) {
+            this(file, name, kind, detail, runner, tests, false);
+        }
+
+        /** Could not be judged: before the change the test did not compile, was not there, or threw. */
+        static Verdict beforeFailed(String file, String name, String detail, String runner) {
+            return new Verdict(file, name, Kind.UNKNOWN, detail, runner, 1, true);
         }
 
         /** True when it counts at least so many of the tests it names, and which of them the reports do not say. */
@@ -210,8 +221,9 @@ final class Witness {
                 else if (twice.contains(key(c))) {
                     if (seen.add(key(c))) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "more than one test reports this name, so they cannot be told apart", by));
                 }
-                else if (b == null || b.problem() != null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "before the change the file " + (b == null ? "gave no result" : b.problem()), by));
-                else if (p == null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "was not found before the change", by));
+                else if (b == null || b.problem() != null) out.add(b != null && b.broken() ? Verdict.beforeFailed(f, c.name(), "before the change the file " + b.problem(), by)
+                        : new Verdict(f, c.name(), Kind.UNKNOWN, "before the change the file " + (b == null ? "gave no result" : b.problem()), by));
+                else if (p == null) out.add(Verdict.beforeFailed(f, c.name(), "was not found before the change", by));
                 else if (p.status() == Status.PASSED && shared != null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after, but " + shared, by));
                 else if (p.status() == Status.PASSED && e.problem() != null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after, but run as it was before the change, the file "
                         + e.problem() + ", so it cannot be told whether this test is new", by));
@@ -224,7 +236,7 @@ final class Witness {
                 }
                 else if (p.status() == Status.SKIPPED) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "was skipped before the change", by));
                 else if (p.status() == Status.FLAKY) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "before the change the build ran it again and got another result", by));
-                else if (p.status() == Status.ERRORED) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "before the change it threw " + shortType(p) + ", not an assertion", by));
+                else if (p.status() == Status.ERRORED) out.add(Verdict.beforeFailed(f, c.name(), "before the change it threw " + shortType(p) + ", not an assertion", by));
                 else candidates.computeIfAbsent(f, k -> new LinkedHashSet<>()).add(key(c));
             }
             if (n == null) {

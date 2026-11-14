@@ -58,7 +58,8 @@ public final class Check {
             failed |= section(out, w, Kind.SKIPPED_NOW, n -> n + " ran before the change and " + (n == 1 ? "is" : "are") + " skipped now", true);
             failed |= section(out, w, Kind.REMOVED, n -> n + (n == 1 ? " test was" : " tests were") + " removed: the edited file reports fewer tests than it had before the change", true);
             section(out, w, Kind.UNSTABLE, n -> n + " gave different results from run to run", true);
-            if (section(out, w, Kind.UNKNOWN, n -> n + " could not be judged", true)) {
+            section(out, w, Kind.UNKNOWN, n -> n + " could not be judged", true);
+            if (w.verdicts().stream().anyMatch(Verdict::newCode)) {
                 out.println("      A test of code that did not exist before the change cannot fail there for the right reason, so it is not counted either way.");
             }
             section(out, w, Kind.SKIPPED, n -> n + (n == 1 ? " is" : " are") + " skipped", false);

@@ -253,6 +253,7 @@ final class CheckTests {
         check("check: a test that fails after the change is reported", r.contains("1 fails after the change") && r.contains("        broken: fails"));
         check("check: a test that threw something other than an assertion before the change cannot be judged",
                 r.contains("could not be judged") && r.contains("new feature: before the change it threw"));
+        check("check: and the report says why such a test is not counted", r.contains("      A test of code that did not exist before the change cannot fail there for the right reason"));
         check("check: a test whose result changes from run to run is unstable, not sensitive", r.contains("1 gave different results from run to run") && r.contains("        random"));
         check("check: a skipped test is listed", r.contains("1 is skipped") && r.contains("        later"));
         check("check: problems make the exit code 1", code == 1);
@@ -623,6 +624,8 @@ final class CheckTests {
                 && swapped.contains("        arrives: passes before and after, but it cannot be told whether it is a new test: the file reports 1 test it did not have and no longer reports 1 it had. "
                         + "It may be a new test that does not test the change, or a test the file had: the test it no longer reports, under a new name\n")
                 && !swapped.contains("removed") && !swapped.contains("new test pass") && code == 0);
+        check("check: what is said of code that did not exist before the change is not said of a test that could not be judged for another reason",
+                !swapped.contains("A test of code that did not exist"));
 
         // a row put in among the arguments of a parameterized test, named by its place: the last row has a name the file did not report.
         // One more case than before, and every case passes on both sides: the new one, wherever it is, does not test the change.
