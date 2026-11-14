@@ -45,7 +45,8 @@ final class Witness {
         /**
          * A new test that passes on both sides: it does not test the change. Of a file the change
          * adds, said of each such test by name; of an edited file, said of the file (name ""): at
-         * least so many new tests pass on both sides, whatever their names (see newTests).
+         * least so many new tests pass on both sides, whatever their names, where the report of
+         * the file as it was lists every test, and in every run (see newTests).
          */
         PASSES_ON_BOTH,
         /** A test whose name the file reported before the change, that passes on both sides: not counted against the change. */
@@ -60,7 +61,11 @@ final class Witness {
          * names.
          */
         OLD_FAILS_AFTER,
-        /** Nothing can be said: it could not run before the change, or threw something other than an assertion there, or the reports cannot tell two answers apart. */
+        /**
+         * Nothing can be said: it could not run before the change, or threw something other than an
+         * assertion there, or the reports cannot tell two answers apart, or a report may not list
+         * every test (see listing), or the fourth run did not judge an old test (see untold).
+         */
         UNKNOWN,
         /** Runs disagreed with each other. */
         UNSTABLE,
@@ -75,8 +80,8 @@ final class Witness {
         /** Skipped under its name in the file as it was and after the change: not counted. */
         EXISTING_SKIPPED,
         /**
-         * Said of a file (name ""): it reports fewer tests than it had before the change, so at
-         * least so many were removed (see gone).
+         * Said of a file (name ""): it reports fewer tests than it had before the change, where both
+         * its reports list every test, so at least so many were removed (see gone).
          */
         REMOVED
     }
@@ -224,6 +229,7 @@ final class Witness {
         Map<String, List<Verdict>> skips = new LinkedHashMap<>(); // of those, the files whose skips may say a test is switched off: the first answer, said after the repeat runs
         Map<String, Map<String, String>> shownIn = new LinkedHashMap<>(); // per file: how its cases are shown (see shown)
         Map<String, Set<String>> passingIn = new LinkedHashMap<>(); // per file: the cases that pass on both sides
+        Map<String, List<Verdict>> newIn = new LinkedHashMap<>(); // per edited file: what its counts say of its new tests (see newTests), said after the repeat runs
         for (String f : files) {
             String shared = runner.sharedBySides(change, head.dir, f);
             FileRun a = after.get(f), b = before.get(f);
@@ -289,7 +295,7 @@ final class Witness {
                 if (!s.answer().isEmpty()) skips.put(f, s.answer());
                 // the cases that do not pass on both sides; of the skipped ones, those under a name skipped before too only where a skip may hide a test (see newTests)
                 long asBefore = n.asBefore().stream().mapToLong(Flip::tests).sum();
-                out.addAll(newTests(f, n, passBoth, a.cases().size() - clean - (s.answer().isEmpty() ? asBefore : 0), by));
+                newIn.put(f, newTests(f, n, passBoth, a.cases().size() - clean - (s.answer().isEmpty() ? asBefore : 0), by));
             }
             if (e.problem() != null) out.add(new Verdict(f, "", Kind.UNKNOWN, "run as it was before the change, the file " + e.problem()
                     + ", so it cannot be told which of its tests are new, were switched off or were removed", by));
@@ -314,9 +320,13 @@ final class Witness {
             restore(change, runner, base, files);
         }
         List<String> sensitive = new ArrayList<>(candidates.keySet());
-        // files whose skips may say a test is switched off, or whose counts say tests were removed: their old and after runs are made again
+        // files whose skips may say a test is switched off, or whose counts say tests were removed or new tests pass on both sides: their old and
+        // after runs are made again, as what the counts say must be said by every run
         List<String> switched = new ArrayList<>(skips.keySet());
-        for (Map.Entry<String, Names> e : named.entrySet()) if (e.getValue().gone().size() > e.getValue().fresh().size() && !switched.contains(e.getKey())) switched.add(e.getKey());
+        for (Map.Entry<String, Names> e : named.entrySet()) {
+            boolean counts = e.getValue().gone().size() > e.getValue().fresh().size() || newIn.get(e.getKey()).stream().anyMatch(v -> v.kind() == Kind.PASSES_ON_BOTH);
+            if (counts && !switched.contains(e.getKey())) switched.add(e.getKey());
+        }
         Set<String> again = new LinkedHashSet<>(sensitive);
         again.addAll(switched);
         for (int i = 1; i < runs && !again.isEmpty(); i++) {
@@ -366,9 +376,27 @@ final class Witness {
             String f = e.getKey();
             out.addAll(broken(f, e.getValue(), seen.of(Side.AFTER, f), passingIn.get(f), fourth, said, judged, by));
         }
-        Set<String> counted = new LinkedHashSet<>(); // files of which the counts say that fewer tests run
-        for (Map.Entry<String, List<Verdict>> s : skips.entrySet()) if (s.getValue().stream().anyMatch(v -> v.kind() == Kind.SKIPPED_NOW)) counted.add(s.getKey());
+        Set<String> counted = new LinkedHashSet<>(); // files of which the counts say, below, that fewer tests run: said in every run, and not all of it said above
+        for (Map.Entry<String, List<Verdict>> s : skips.entrySet()) {
+            String f = s.getKey();
+            if (!unsteady.contains(f) && s.getValue().stream().anyMatch(v -> v.kind() == Kind.SKIPPED_NOW && v.tests() > said.getOrDefault(f, 0L))) counted.add(f);
+        }
+        for (Map.Entry<String, List<Verdict>> e : newIn.entrySet()) {
+            String f = e.getKey();
+            for (Verdict v : e.getValue()) {
+                // new tests that pass on both sides, by the counts of the file: the counts must be the same in every run
+                if (v.kind() == Kind.PASSES_ON_BOTH && recounted.contains(f)) out.add(new Verdict(f, "", Kind.UNSTABLE, v.detail().substring(0, v.detail().indexOf(". Under names"))
+                        + ", but what the file reports, after the change or as it was, is not the same in every run", by, v.tests()));
+                else out.add(v);
+            }
+        }
         out.addAll(gone(named, counted, said, judged, recounted, by));
+        // a file whose skips said nothing in the first run and something in another, where nothing above says that its reports differ from run to run
+        for (String f : unsteady) {
+            if (skips.containsKey(f) || out.stream().anyMatch(v -> v.file().equals(f) && v.name().isEmpty() && v.kind() == Kind.UNSTABLE)) continue;
+            out.add(new Verdict(f, "", Kind.UNSTABLE, "whether tests that ran before the change are skipped now differs from run to run: what the file reports, after the change or as it "
+                    + "was, is not the same in every run", by));
+        }
         for (Map.Entry<String, List<Verdict>> s : skips.entrySet()) {
             String f = s.getKey();
             for (Verdict v : s.getValue()) {

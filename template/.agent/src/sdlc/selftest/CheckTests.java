@@ -523,6 +523,20 @@ final class CheckTests {
                 recounted.contains("1 gave different results from run to run\n      checks/judged.t  [self test]\n        the file no longer reports 1 test under the name it had (goes too), "
                         + "and reports none under a name it did not have, but what the file reports, after the change or as it was, is not the same in every run\n")
                 && !recounted.contains("removed") && code == 0);
+        // the same where the counts say new tests pass on both sides: they are made again too, and must say it in every run
+        write(repo, "checks/judged.t", JUDGED + "idle: pass\nlate: skip-later\n");
+        String renumbered = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("check: a file whose counts say a new test passes on both sides, and that reports another number of tests in a repeat run, is unstable",
+                renumbered.contains("1 gave different results from run to run\n      checks/judged.t  [self test]\n        the file reports 1 test it did not have: at least 1 new test "
+                        + "passes before and after, but what the file reports, after the change or as it was, is not the same in every run\n")
+                && !renumbered.contains("so it does not test the change") && code == 0);
+        // a test removed, said in every run, and a test of the file skipped in the repeat run only: that its skips differ from run to run is said too
+        write(repo, "checks/judged.t", JUDGED.replace("goes too: pass\n", "").replace("stays: pass", "stays: pass-once"));
+        String skippedLater = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("check: a file whose skips say nothing in the first run and something in a repeat run is unstable in that, beside what its counts say",
+                skippedLater.contains("1 gave different results from run to run\n      checks/judged.t  [self test]\n        whether tests that ran before the change are skipped now "
+                        + "differs from run to run: what the file reports, after the change or as it was, is not the same in every run\n")
+                && skippedLater.contains("at least 1 test was removed") && code == 1);
         write(repo, "checks/judged.t", JUDGED.replace("goes too: pass\n", ""));
         reasons.reset();
         try {
@@ -980,6 +994,15 @@ final class CheckTests {
         check("check: a deleted test the change breaks, beside a rename, is said once: taken out of the way, and no test besides it is said to be removed",
                 renamedBeside.contains("1 test passed before the change and fails on the code after it as the test was, and the change took it out of the way: removed, renamed or switched "
                         + "off\n      checks/broken.t  [self test]\n        holds: passed before the change") && !renamedBeside.contains("was removed") && code == 1);
+        // a test that passes renamed, beside a test the change breaks skipped: the skip is all said as a test taken out of the way, and the rename
+        // beside it could not be judged, as always
+        write(repo, "checks/broken.t", MENDED.replace("steady: pass", "steadfast: pass").replace("fragile: pass", "fragile: skip"));
+        String renamedBesideOff = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a rename beside a broken test switched off could not be judged, though the count of the skips is all said as the broken test",
+                renamedBesideOff.contains("        fragile: passed before the change; as the test was, on the code after the change fragile fails: expected something else, and the change "
+                        + "skips it now\n") && renamedBesideOff.contains("        the file no longer reports 1 test under the name it had (steady), and reports 1 under a name it did "
+                        + "not have (steadfast). The reports cannot tell a test renamed from a test deleted and another written\n")
+                && !renamedBesideOff.contains("ran before the change and is skipped now") && code == 1);
         // two tests the change breaks, one deleted and one skipped: two tests taken out of the way, and nothing more. The skip is not counted again
         // beside them, and as a name is skipped now that ran, whether the deleted one was removed is not said either (it may be in the skipped case)
         write(repo, "checks/broken.t", MENDED.replace("holds: pass\n", "").replace("fragile: pass", "fragile: skip"));
