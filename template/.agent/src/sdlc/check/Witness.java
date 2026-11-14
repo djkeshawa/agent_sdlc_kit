@@ -190,6 +190,7 @@ final class Witness {
         Map<String, List<Verdict>> skips = new LinkedHashMap<>(); // of those, the files whose skips may say a test is switched off: the first answer, said after the repeat runs
         Map<String, List<JUnitXml.Case>> rewrites = new LinkedHashMap<>(); // of those, the cases that pass after the change and do not pass on both sides (see broken)
         Map<String, Map<String, String>> shownIn = new LinkedHashMap<>(); // per file: how its cases are shown (see shown)
+        Map<String, Set<String>> passingIn = new LinkedHashMap<>(); // per file: the cases that pass on both sides
         for (String f : files) {
             String shared = runner.sharedBySides(change, head.dir, f);
             FileRun a = after.get(f), b = before.get(f);
@@ -215,6 +216,7 @@ final class Witness {
             List<JUnitXml.Case> passBoth = new ArrayList<>(); // cases under a name the file did not report before that pass on both sides (see newTests)
             long clean = 0; // cases that pass on both sides, under any name
             Set<String> passing = new LinkedHashSet<>(); // the names of those
+            passingIn.put(f, passing);
             for (JUnitXml.Case c : a.cases()) {
                 JUnitXml.Case p = was.get(key(c));
                 // First what the run after the change says alone: two cases of one name on the side before the change do not matter to these.
@@ -326,7 +328,7 @@ final class Witness {
         Map<String, Long> said = new LinkedHashMap<>(); // per file: how many old tests are said to be taken out of the way (see budget)
         for (Map.Entry<String, Names> e : named.entrySet()) {
             String f = e.getKey();
-            out.addAll(broken(f, e.getValue(), after.get(f), rewrites.get(f), fourth, said, judged, by));
+            out.addAll(broken(f, e.getValue(), after.get(f), rewrites.get(f), passingIn.get(f), fourth, said, judged, by));
         }
         Set<String> counted = new LinkedHashSet<>(); // files of which the counts say that fewer tests run
         for (Map.Entry<String, List<Verdict>> s : skips.entrySet()) if (s.getValue().stream().anyMatch(v -> v.kind() == Kind.SKIPPED_NOW)) counted.add(s.getKey());
@@ -359,10 +361,12 @@ final class Witness {
     /**
      * What the fourth run said. first: each file's first run, null when it gave no result. broke:
      * per file, the old tests that passed in the file as it was and failed or threw here in every
-     * run; wavering: those that did so in some runs only.
+     * run; wavering: those that did so in some runs only. after: per file with a test in broke or
+     * wavering, the runs of the file as the change has it that were made with the repeat runs
+     * (see broken).
      */
-    private record Fourth(Map<String, FileRun> first, Map<String, Set<String>> broke, Map<String, Set<String>> wavering) {
-        static final Fourth NONE = new Fourth(Map.of(), Map.of(), Map.of());
+    private record Fourth(Map<String, FileRun> first, Map<String, Set<String>> broke, Map<String, Set<String>> wavering, Map<String, List<FileRun>> after) {
+        static final Fourth NONE = new Fourth(Map.of(), Map.of(), Map.of(), Map.of());
 
         /** "passed before the change; as the test was, on the code after the change x fails: why", of those keys that broke. */
         String said(String file, java.util.Collection<String> keys, Map<String, String> shown) {
@@ -391,7 +395,8 @@ final class Witness {
      * run), as they were before the change, on the code after it. An old test that passed in the
      * third run (its file as it was, on the code as it was) and fails or throws here failed on what
      * the change wrote; what became of it decides what is said (see broken). Like a sensitive test
-     * it must do so in every run, on both sides: else it wavered.
+     * it must do so in every run, on both sides: else it wavered. With each repeat run the file is
+     * also run as the change has it, as what became of the old test must hold in every run too.
      *
      * The checkout is the tree after the change with only these test files put back as the base
      * has them (Sides.oldTests, one checkout for each runner): production code, build files,
@@ -415,7 +420,7 @@ final class Witness {
             runner.forgetBuilt(mixed.dir, files);
         } catch (java.io.IOException e) {
             for (String f : files) first.put(f, FileRun.failed("could not be set up (" + e.getMessage() + ")"));
-            return new Fourth(first, Map.of(), Map.of());
+            return new Fourth(first, Map.of(), Map.of(), Map.of());
         }
         Map<String, FileRun> ran = runner.run(mixed.dir, files, timeout);
         for (String f : files) first.put(f, ran.get(f));
@@ -425,14 +430,16 @@ final class Witness {
             for (String k : wanted.get(f)) if (status(was, k) == Status.PASSED && failed(status(first.get(f), k))) broke.computeIfAbsent(f, x -> new LinkedHashSet<>()).add(k);
         }
         List<String> again = new ArrayList<>(broke.keySet());
+        Map<String, List<FileRun>> after = new LinkedHashMap<>();
         for (int i = 1; i < runs && !again.isEmpty(); i++) {
-            Map<String, FileRun> o = runner.run(sides.old().dir, again, timeout), m = runner.run(mixed.dir, again, timeout);
+            Map<String, FileRun> o = runner.run(sides.old().dir, again, timeout), m = runner.run(mixed.dir, again, timeout), h = runner.run(sides.head().dir, again, timeout);
             for (String f : again) {
                 for (String k : broke.get(f)) if (status(o.get(f), k) != Status.PASSED || !failed(status(m.get(f), k))) wavering.computeIfAbsent(f, x -> new LinkedHashSet<>()).add(k);
+                after.computeIfAbsent(f, x -> new ArrayList<>()).add(h.get(f));
             }
         }
         for (Map.Entry<String, Set<String>> w : wavering.entrySet()) broke.get(w.getKey()).removeAll(w.getValue());
-        return new Fourth(first, broke, wavering);
+        return new Fourth(first, broke, wavering, after);
     }
 
     private static boolean failed(Status s) {
@@ -793,6 +800,12 @@ final class Witness {
      *   not be judged. Where the file runs fewer tests than before, the counts already fail it
      *   (see skips and gone), so nothing is lost by not accusing this name of what they prove.
      *
+     * All of this must hold in every run (with --runs N, the file as the change has it is run again
+     * with the fourth run's repeats): an old test said gone or skipped is gone or skipped in each
+     * run after the change, and M is the most cases that can be a rewrite in any one run. An old
+     * test that is gone or skipped in one run and runs in another is unstable: whether the change
+     * took it out of the way is not the same in every run.
+     *
      * An old test whose name is gone or skipped, of which the runs disagree, is unstable (unless
      * the counts say on their own that it was removed: no new name). How many old tests are said
      * to be taken out of the way goes into said, so that the counts of tests removed and switched
@@ -807,13 +820,27 @@ final class Witness {
      * off beyond it. All said then comes to max(t, what the counts prove), never more than the
      * tests that are taken out, removed or no longer run.
      */
-    private static List<Verdict> broken(String f, Names n, FileRun a, List<JUnitXml.Case> rewrites, Fourth fourth, Map<String, Long> said, Set<String> judged, String by) {
+    private static List<Verdict> broken(String f, Names n, FileRun a, List<JUnitXml.Case> rewrites, Set<String> passing, Fourth fourth, Map<String, Long> said, Set<String> judged, String by) {
         List<Verdict> out = new ArrayList<>();
         Map<String, List<JUnitXml.Case>> now = byKey(a.cases());
-        List<String> out1 = new ArrayList<>(), running = new ArrayList<>(); // the old tests broken: not run now, and run now
+        List<FileRun> again = fourth.after.getOrDefault(f, List.of()); // the repeat runs after the change
+        List<String> out1 = new ArrayList<>(), running = new ArrayList<>(), unsure = new ArrayList<>(); // the old tests broken: not run now, run now, and not the same in every run
         for (String k : fourth.broke.getOrDefault(f, Set.of())) {
-            if (now.getOrDefault(k, List.of()).stream().allMatch(c -> c.status() == Status.SKIPPED)) out1.add(k);
+            boolean gone = notRun(a, k);
+            if (again.stream().anyMatch(r -> r == null || r.problem() != null || notRun(r, k) != gone)) unsure.add(k);
+            else if (gone) out1.add(k);
             else running.add(k);
+        }
+        for (FileRun r : again) {
+            // the most cases that can be a rewrite in any one run
+            List<JUnitXml.Case> can = r == null || r.problem() != null ? List.of()
+                    : r.cases().stream().filter(c -> (c.status() == Status.PASSED || c.status() == Status.FLAKY) && !passing.contains(key(c))).toList();
+            if (can.size() > rewrites.size()) rewrites = can;
+        }
+        for (String k : unsure) {
+            out.add(new Verdict(f, shown(n.shown(), k), Kind.UNSTABLE, fourth.said(f, List.of(k), n.shown()) + ", and the change skips it, or the file does not report it, in one run "
+                    + "after the change and runs it in another", by));
+            judged.add(f + "\n" + k);
         }
         for (String k : fourth.wavering.getOrDefault(f, Set.of())) {
             // a gone test of a file with no new one was removed all the same, and one switched off by name is so all the same
@@ -846,6 +873,11 @@ final class Witness {
                 + "name given to another case, as a row taken out does to the rows after it where cases are named by their place"
                 + (n.r1() < n.r0() ? ". The file runs fewer tests than before (" + n.r1() + " where it ran " + n.r0() + ")" : ""), by, running.size()));
         return out;
+    }
+
+    /** True when a run does not report a case of this identity, or skips every one. */
+    private static boolean notRun(FileRun run, String key) {
+        return run.cases().stream().filter(c -> key(c).equals(key)).allMatch(c -> c.status() == Status.SKIPPED);
     }
 
     /** The name of a case by its identity (suite#name). */

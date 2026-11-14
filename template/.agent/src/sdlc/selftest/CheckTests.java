@@ -956,6 +956,23 @@ final class CheckTests {
                         + "expected something else, and the change skips it now\n")
                 && !rowOff.contains("ran before the change and is skipped now") && code == 1);
 
+        // a test the change breaks, skipped after the change in the first run only: whether the change took it out of the way is not the same in every run
+        write(repo, "checks/broken.t", MENDED.replace("holds: pass", "holds: skip-once fixed"));
+        String skippedOnce = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("check: an old test the change breaks, skipped after the change in one run and run in another, is unstable, not taken out of the way",
+                skippedOnce.contains("      checks/broken.t  [self test]\n        holds: passed before the change; as the test was, on the code after the change holds fails: "
+                        + "expected something else, and the change skips it, or the file does not report it, in one run after the change and runs it in another\n")
+                && !skippedOnce.contains("out of the way: removed") && !skippedOnce.contains("ran before the change and is skipped now") && code == 0);
+
+        // a test the change breaks, deleted, and a new test skipped in the first run after the change only: in the later run it passes after the
+        // change and not before, so it may be the old test rewritten. What is said must hold in every run: could not be judged
+        write(repo, "checks/broken.t", MENDED.replace("holds: pass", "holds anew: skip-once fixed"));
+        String rewriteLater = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("check: a case that can be a rewrite of a broken test in a repeat run only keeps it from being said taken out of the way",
+                rewriteLater.contains("        holds passed before the change and fails on the code after it as the file was, and the file does not report it now or skips it. It has "
+                        + "1 test that passes after the change and does not pass on both sides (holds anew), so it cannot be told whether the old test was rewritten")
+                && !rewriteLater.contains("out of the way: removed") && code == 0);
+
         // a row the change breaks, switched off, with a new row after it: the skips could not be judged (more are skipped while as many run),
         // and the fourth run finds the row skipped now failing on the change, with no case that could be it rewritten
         write(repo, "checks/broken.t", MENDED.replace("rows(int)[1]: pass", "rows(int)[1]: skip").replace("rows(int)[2]: pass", "rows(int)[2]: pass\nrows(int)[3]: pass"));
