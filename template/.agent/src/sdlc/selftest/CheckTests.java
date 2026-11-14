@@ -202,6 +202,7 @@ final class CheckTests {
         write(repo, "checks/failing.t", FAILING);
         write(repo, "checks/ignored.t", IGNORED);
         write(repo, "checks/plain.t", PLAIN);
+        write(repo, "checks/flip.t", FLIP);
         write(repo, "checks/titles.t", TITLES);
         write(repo, "checks/once.t", ONCE);
         write(repo, "checks/nested.t", NESTED);
@@ -864,6 +865,15 @@ final class CheckTests {
                         + "run to run") && !alternate.contains("ran before the change and is skipped now") && code == 0);
         write(repo, "checks/nested.t", NESTED);
 
+        // the same kind and count, the same names that ran before and are skipped now, the same counts of names gone and new: only the words of the
+        // answer differ between the runs (one case of b runs in the first, two in the repeat). Another answer all the same: unstable
+        write(repo, "checks/flip.t", "a: skip\nb 1: pass\nb 2: skip-once fixed\n");
+        String worded = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("check: a repeat run whose answer differs from the first only in its words is unstable",
+                worded.contains("1 gave different results from run to run\n      checks/flip.t  [self test]\n        whether tests that ran before the change are skipped now differs "
+                        + "from run to run") && !worded.contains("1 skipped before and run now") && code == 0);
+        write(repo, "checks/flip.t", FLIP);
+
         // the file as it was ran the test in its first run and skipped it in a later one: the repeat runs of the old side count
         write(repo, "checks/once.t", "target: skip\n");
         String once = report(Map.of("selftest-runner", "true", "runs", "2"));
@@ -970,6 +980,16 @@ final class CheckTests {
         check("check: a deleted test the change breaks, beside a rename, is said once: taken out of the way, and no test besides it is said to be removed",
                 renamedBeside.contains("1 test passed before the change and fails on the code after it as the test was, and the change took it out of the way: removed, renamed or switched "
                         + "off\n      checks/broken.t  [self test]\n        holds: passed before the change") && !renamedBeside.contains("was removed") && code == 1);
+        // two tests the change breaks, one deleted and one skipped: two tests taken out of the way, and nothing more. The skip is not counted again
+        // beside them, and as a name is skipped now that ran, whether the deleted one was removed is not said either (it may be in the skipped case)
+        write(repo, "checks/broken.t", MENDED.replace("holds: pass\n", "").replace("fragile: pass", "fragile: skip"));
+        String deletedAndSkipped = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: two old tests the change breaks, one deleted and one skipped, are two tests taken out of the way, not counted again as skipped now",
+                deletedAndSkipped.contains("2 tests passed before the change and fail on the code after it as the test was, and the change took them out of the way: removed, renamed or "
+                        + "switched off\n      checks/broken.t  [self test]\n        holds: passed before the change; as the test was, on the code after the change holds fails: expected "
+                        + "something else. The edited file does not report it now\n        fragile: passed before the change; as the test was, on the code after the change fragile "
+                        + "fails: expected something else, and the change skips it now\n")
+                && !deletedAndSkipped.contains("ran before the change and is skipped now") && !deletedAndSkipped.contains("removed: the edited file") && code == 1);
         // deleted, and a test that passes deleted too: two fewer, one of them said to be taken out of the way, so at least one more removed
         write(repo, "checks/broken.t", MENDED.replace("holds: pass\n", "").replace("steady: pass\n", ""));
         String twoGone = report(Map.of("selftest-runner", "true", "runs", "1"));
@@ -990,6 +1010,17 @@ final class CheckTests {
                         + "longer reports 2 tests under the names it had (demo.Pair$A.works, demo.Pair$B.works), and reports none under a name it did not have: at least 2 tests were "
                         + "removed, of which at most 1 is an old test said above to be taken out of the way, so at least 1 more.") && code == 1);
         write(repo, "checks/pair.t", PAIR);
+        // the same two methods renamed in their classes: the first, which the change breaks, is taken out of the way; the second is not judged by the
+        // first's name, and the two names gone beside two new ones could not be judged as a rename
+        write(repo, "checks/pair.t", "demo.Pair$A::kept: pass\ndemo.Pair$B::kept: pass\ndemo.Pair::top: pass\n");
+        String pairRenamed = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: an old test taken out of the way does not stand for another class's test of its name: the rename beside it could not be judged",
+                pairRenamed.contains("      checks/pair.t  [self test]\n        demo.Pair$A.works: passed before the change; as the test was, on the code after the change "
+                        + "demo.Pair$A.works fails: expected something else. The edited file does not report it now\n")
+                && pairRenamed.contains("        the file no longer reports 2 tests under the names it had (demo.Pair$A.works, demo.Pair$B.works), and reports 2 under names it did not "
+                        + "have (demo.Pair$A.kept, demo.Pair$B.kept). The reports cannot tell a test renamed from a test deleted and another written\n") && code == 1);
+        write(repo, "checks/pair.t", PAIR);
+
         // fails as it was on the change in one run and not in another: unstable
         write(repo, "checks/broken.t", MENDED.replace("wobbly: pass", "wobbled: pass"));
         String wobbly = report(Map.of("selftest-runner", "true", "runs", "2"));
@@ -1225,6 +1256,9 @@ final class CheckTests {
 
     /** A test file of the base as JUnit 4 reports an ignored class: one skipped case of the class, whatever number of tests it holds. */
     private static final String IGNORED = "demo.Ignored::demo.Ignored: skip\n";
+
+    /** A test file of the base with a test that runs and two cases of one method that are skipped. */
+    private static final String FLIP = "a: pass\nb %i: skip\n";
 
     /** A test file of the base with a class of three tests that pass. */
     private static final String PLAIN = "demo.Plain::first: pass\ndemo.Plain::second: pass\ndemo.Plain::third: pass\n";
