@@ -460,6 +460,13 @@ final class CheckTests {
         String asleep = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: a skipped test under a new name, in a file none of whose tests ran before, is listed as skipped",
                 asleep.contains("1 is skipped\n      checks/asleep.t  [self test]\n        later\n") && !asleep.contains("could not be judged") && code == 0);
+        // the same file, where a test that passes on both sides comes with the skipped one: two new names and one more case each, and only one
+        // of the two can be the new test that is skipped
+        write(repo, "checks/asleep.t", ASLEEP + "later: skip\nidle: pass\n");
+        String woken = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: two new tests, one skipped and one passing on both sides: the second does not test the change",
+                woken.contains("1 new test passes before and after, so it does not test the change\n      checks/asleep.t  [self test]\n        idle\n")
+                && woken.contains("1 is skipped\n      checks/asleep.t  [self test]\n        later\n") && code == 1);
         write(repo, "checks/asleep.t", ASLEEP);
 
         // one gone and none new: removed, by name

@@ -248,9 +248,9 @@ final class Witness {
                 Skips s = skips(f, n, by);
                 out.addAll(s.listed());
                 if (!s.answer().isEmpty()) skips.put(f, s.answer());
-                // the cases that do not pass on both sides; skipped ones only where a skip may hide a test (see newTests)
-                long skipped = a.cases().stream().filter(c -> c.status() == Status.SKIPPED).count();
-                out.addAll(newTests(f, n, passBoth, a.cases().size() - clean - (s.answer().isEmpty() ? skipped : 0), by));
+                // the cases that do not pass on both sides; of the skipped ones, those under a name skipped before too only where a skip may hide a test (see newTests)
+                long asBefore = n.asBefore().stream().mapToLong(Flip::tests).sum();
+                out.addAll(newTests(f, n, passBoth, a.cases().size() - clean - (s.answer().isEmpty() ? asBefore : 0), by));
             }
             if (e.problem() != null) out.add(new Verdict(f, "", Kind.UNKNOWN, "run as it was before the change, the file " + e.problem()
                     + ", so it cannot be told which of its tests are new, were switched off or were removed", by));
@@ -639,11 +639,15 @@ final class Witness {
      *   after, could not be judged, or are skipped where a skip may hide a test). A new test is
      *   one of the cases after the change, so at least F - G - X new tests pass on both sides.
      *
-     * Sound under any naming: neither count looks at what a name says. Skipped cases count in X
-     * only where the file's skips may hide a test (see skips): where they cannot, every skipped
-     * case is under a name that was skipped before, and a new test put in under such a name would
-     * have moved a case to a name that ran before (an off flip) or to a skipped one the file did
-     * not have, which the skips then say.
+     * Sound under any naming: neither count looks at what a name says. One assumption is made,
+     * the one the skips make where they say nothing (see skips, 1): a case skipped under a name
+     * that was skipped before too, in a file whose skips say nothing, is the test that was
+     * skipped there. Such cases do not count in X. Without it, a skipped test put in where cases
+     * are named by their place, with the skipped test it pushed on switched on, gives the same
+     * reports as a test that passes on both sides added beside a test skipped all along; a test
+     * skipped all along would then keep every file that has one from ever being said to have a
+     * new test that does not test the change. Everywhere else skipped cases count in X: where
+     * the skips may hide a test, and for a case skipped under a name the file did not report.
      *
      * P: the cases under names the file did not have that pass on both sides. The least number,
      * N = F - G - X, is never more than P (each of the F not counted in P is one of the X). N > 0:
