@@ -275,7 +275,7 @@ public final class Runners {
         private static final Pattern DID_NOT_LOAD = Pattern.compile("SyntaxError|Failed to load|Failed to resolve import|Cannot find module|Transform failed|Failed to parse source");
         /** True when vitest's output reports a load failure within a few lines of this file's name. */
         /**
-         * Reads one output stream of vitest line by line and notes the test files it says it could
+         * Reads the output of vitest line by line, both streams as they arrive, and notes the test files it says it could
          * not load: a line that says so (DID_NOT_LOAD) on, or up to five lines after, a line that
          * names the file. Another file's syntax error says nothing about this one.
          */
@@ -290,7 +290,7 @@ public final class Runners {
             }
 
             @Override
-            public void accept(String line) {
+            public synchronized void accept(String line) {
                 last.addLast(line);
                 if (last.size() > 6) last.removeFirst();
                 if (!DID_NOT_LOAD.matcher(line).find()) return;
@@ -427,7 +427,8 @@ public final class Runners {
                     }
                     cmd.addAll(rel);
                     Set<String> didNotLoad = java.util.concurrent.ConcurrentHashMap.newKeySet();
-                    Proc p = Proc.runBuild(project, Map.of("CI", "1"), timeoutSeconds, new LoadFailures(rel, didNotLoad), new LoadFailures(rel, didNotLoad), cmd.toArray(new String[0]));
+                    LoadFailures reader = new LoadFailures(rel, didNotLoad); // one for both streams: vitest may name the file on one and the error on the other
+                    Proc p = Proc.runBuild(project, Map.of("CI", "1"), timeoutSeconds, reader, reader, cmd.toArray(new String[0]));
                     List<JUnitXml.Case> cases = new ArrayList<>();
                     String unreadable = null;
                     if (p.code() == 124) {

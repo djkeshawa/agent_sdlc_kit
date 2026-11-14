@@ -176,13 +176,14 @@ public final class Change {
     /**
      * Clears, in the copy of the index, the two flags that tell git not to look at a file
      * (assume-unchanged, skip-worktree): with them set, an edit of that file would be missing from
-     * the snapshot. A file a sparse checkout leaves out (skip-worktree, and not on disk) keeps its
-     * flag: it is not deleted, it was never checked out.
+     * the snapshot. A file that a sparse checkout's rules leave out keeps its flag: it is not
+     * deleted, it was never checked out. A flagged file that is missing for any other reason is a
+     * deleted file.
      */
     private static void lookAtEveryFile(Map<String, String> env) {
         Proc flagged = Proc.runWithEnv(Ctx.root, env, null, 120, "git", "ls-files", "-v", "-z");
         if (!flagged.ok()) throw new UsageException("cannot record the working tree (git ls-files): " + flagged.err().strip());
-        StringBuilder clear = new StringBuilder();
+        StringBuilder clear = new StringBuilder(), missing = new StringBuilder();
         for (String entry : flagged.out().split("\0")) {
             if (entry.length() < 3) continue;
             char tag = entry.charAt(0);
@@ -190,8 +191,27 @@ public final class Change {
             boolean skip = tag == 'S' || tag == 's';
             boolean assumed = Character.isLowerCase(tag);
             if (!skip && !assumed) continue;
-            if (skip && !Files.exists(Ctx.root.resolve(path), java.nio.file.LinkOption.NOFOLLOW_LINKS)) continue;
+            if (skip && !Files.exists(Ctx.root.resolve(path), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                missing.append(path).append('\0');
+                continue;
+            }
             clear.append(path).append('\0');
+        }
+        // A flagged file that is not on disk: left out by a sparse checkout, or deleted. Only git's own reading of the
+        // sparse rules tells the two apart.
+        if (missing.length() > 0) {
+            boolean sparse = Proc.run(Ctx.root, "git", "config", "--bool", "core.sparseCheckout").out().strip().equals("true");
+            if (!sparse) {
+                clear.append(missing); // no sparse checkout: the files are gone, and that is part of the change
+            } else {
+                Proc inside = Proc.runWithInput(Ctx.root, missing.toString(), 120, "git", "sparse-checkout", "check-rules", "-z");
+                if (!inside.ok()) {
+                    throw new UsageException("this is a sparse checkout with files that are not on disk, and this git cannot say which of them the sparse rules leave out "
+                            + "(git sparse-checkout check-rules needs git 2.41): " + inside.err().strip());
+                }
+                // what the rules keep in the checkout and is not there was deleted
+                for (String path : inside.out().split("\0")) if (!path.isEmpty()) clear.append(path).append('\0');
+            }
         }
         if (clear.length() == 0) return;
         // one flag per call: given both, git clears only the first

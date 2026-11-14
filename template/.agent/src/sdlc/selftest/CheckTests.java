@@ -59,6 +59,9 @@ final class CheckTests {
         Proc listened = Proc.exec(repo, Map.of(), null, 60, 40, 40, heard::add, null, "git", "help", "-a");
         check("output: a listener gets every line, also those of the middle that is left out",
                 listened.out().equals(ends.out()) && String.join("\n", heard).strip().equals(whole.out().strip()) && heard.size() > 10);
+        java.util.List<String> pieces = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        Proc.exec(repo, Map.of(), null, 60, 40, 40, pieces::add, null, "git", "rev-parse", "--sq-quote", "a".repeat(17000), "COMPILATION ERROR");
+        check("output: a listener is given the end of a very long line too", pieces.stream().anyMatch(l -> l.contains("COMPILATION ERROR")));
         Proc strict = Proc.exec(repo, Map.of(), null, 60, 40, 0, null, null, "git", "help", "-a");
         check("output: an answer that is read as a whole is an error when it is too large, not a shortened answer",
                 strict.code() == Proc.TOO_MUCH_OUTPUT && strict.out().isEmpty() && strict.err().contains("larger than"));
@@ -140,6 +143,13 @@ final class CheckTests {
             git(repo, "update-index", "--no-" + flag, "prod.txt");
             write(repo, "prod.txt", "v1\n");
         }
+
+        // a flagged file that is deleted is a deleted file, where no sparse checkout leaves it out
+        git(repo, "update-index", "--skip-worktree", "tests/old.t");
+        Files.delete(repo.resolve("tests/old.t"));
+        check("check: a deleted file marked skip-worktree is part of the change", report(Map.of("no-run", "true")).contains("1 file changed against main"));
+        write(repo, "tests/old.t", "kept: pass\n");
+        git(repo, "update-index", "--no-skip-worktree", "tests/old.t");
 
         // an uncommitted change: the fix, an edited test file, a new untracked test file, an ignored file
         write(repo, "prod.txt", "v1\nfixed\n");

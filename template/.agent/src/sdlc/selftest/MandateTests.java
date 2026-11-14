@@ -166,6 +166,8 @@ final class MandateTests {
                 && sdlc.check.TestNames.namesBuiltAtRunTime("a.test.ts", "it(name, () => {});\n")
                 && sdlc.check.TestNames.namesBuiltAtRunTime("a.test.ts", "it('adds ' + n, () => {});\n")
                 && !sdlc.check.TestNames.namesBuiltAtRunTime("a.test.ts", "it('adds', () => {});\nit(`plain`, async () => {});\ntest.skip('later', () => {});\n"));
+        check("names: it.each in a comment or a string does not make a file one that builds names",
+                !sdlc.check.TestNames.namesBuiltAtRunTime("a.test.ts", "// it.each([1])('n', () => {})\nconst s = 'it.each(';\nit('adds', () => {});\n"));
         check("mandate: such characters in other text (a file name, a name from git) are shown as a question mark",
                 sdlc.mandate.MandateCard.safe("a\u202eb\u200bc\u001bd\ud83d\ude00").equals("a?b?c?d\ud83d\ude00"));
         rule("mandate: a path with a sign that is not a wildcard of the format is refused", EXAMPLE.replace("src/main/java/com/acme/search/**", "src/main/{java,kotlin}/**"), "only * and ** are");

@@ -156,12 +156,17 @@ Claude Code, in `.claude/settings.json`:
   does not depend on what is kept. An answer of git larger than 64 MB stops the check with an
   error.
 - The change is the working tree as it is on disk. Flags that tell git not to look at a file
-  (`assume-unchanged`, `skip-worktree`) are not honoured, except for files a sparse checkout
-  leaves out.
+  (`assume-unchanged`, `skip-worktree`) are not honoured. A flagged file that is missing counts
+  as deleted, unless a sparse checkout is on and its rules leave that file out; telling the two
+  apart needs git 2.41 or newer, and an older git with such files stops the check with an error.
 - A script test file that builds test names while it runs (`it.each`, a template with `${...}`,
-  a variable as the name): a test of such a file that passes on both sides and is not declared
-  by a plain name is "could not be judged", because it cannot be read from the file whether it
-  is new.
+  a variable as the name): a test of such a file that passes on both sides is "could not be
+  judged" when its name is declared nowhere in the file as plain text, because it cannot be
+  read from the file whether it is new. A test declared by a plain name is judged as usual.
+- A test is "switched off" when the file has a skip, a to-do mark or a focus that it did not
+  have before on that test. The whole file is read for this, so a call written over several
+  lines is found, and text in a comment or a string is not. Conditional switches (`it.skipIf`,
+  `@DisabledOnOs`) are not reported.
 - In a pull request build the base branch must be fetched, with enough history to reach the
   commit the branch started from. Otherwise the check stops with an error.
 - Names of test cases are matched by simple reading of the file. A test shown under another

@@ -83,53 +83,65 @@ public final class Integrity {
 
     // ---------------- tests switched off, assertions ----------------
 
-    private static final List<Pattern> SWITCHED_OFF = List.of(
-            Pattern.compile("@([\\w$]+\\.)*(Disabled|DisabledIf\\w*|Ignore)\\b"),
-            Pattern.compile("assume(True|That)\\s*\\(\\s*false\\s*\\)"),
-            Pattern.compile("assumeFalse\\s*\\(\\s*true\\s*\\)"),
-            Pattern.compile("\\b(it|test|describe|context|suite)(\\.\\w+)*\\.(skip|todo)\\b"), // also it.concurrent.skip, test.skip.each
-            Pattern.compile("\\bx(it|test|describe|context)\\s*\\("),
-            Pattern.compile("@pytest\\.mark\\.skip|@unittest\\.skip|\\bt\\.Skip(Now)?\\s*\\("));
-    /**
-     * The same switches written with white space inside them, so that no single line shows them:
-     * a line break or a space around the dot (it\n.skip(...)), a space after the @ of an
-     * annotation. Looked for in a whole file, not line by line.
-     */
-    private static final List<Pattern> SPREAD = List.of(
-            Pattern.compile("\\b(?:it|test|describe|context|suite)(?:\\s*\\.\\s*\\w+)*?\\s*\\.\\s*(?:skip|todo|only)\\b"),
-            Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*)*(?:Disabled|DisabledIf\\w*|Ignore)\\b"));
+    // Switches as a whole file shows them. White space, also a line break, may stand around each dot and after the @ of
+    // an annotation, and other members may stand between (it.concurrent.skip, test.skip.each).
+    private static final Pattern SCRIPT_SWITCH = Pattern.compile(
+            "\\b(?:it|test|describe|context|suite)(?:\\s*\\.\\s*\\w+)*?\\s*\\.\\s*(?:skip|todo|only)\\b|\\bx(?:it|test|describe|context)(?=\\s*\\()|\\bf(?:it|describe)(?=\\s*\\()");
+    private static final Pattern OTHER_SWITCH = Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*)*(?:Disabled|DisabledIf\\w*|Ignore)\\b|assume(?:True|That)\\s*\\(\\s*false\\s*\\)"
+            + "|assumeFalse\\s*\\(\\s*true\\s*\\)|@pytest\\.mark\\.skip|@unittest\\.skip|\\bt\\.Skip(?:Now)?(?=\\s*\\()");
+    private static final Pattern DECLARED_NEXT = Pattern.compile("\\bvoid\\s+(\\w+)\\s*\\(|\\b(?:class|interface|record)\\s+(\\w+)|\\b(?:def|func)\\s+(\\w+)");
 
-    /** A file's lines with comments dropped and strings emptied, one per line. */
-    private static String codeOf(String text) {
-        StringBuilder code = new StringBuilder();
-        for (String line : text.split("\\R", -1)) code.append(code(line)).append('\n');
-        return code.toString();
+    /** One switch of a file: how it is written (white space taken out), what it switches, and whether it focuses. */
+    public record Switch(String how, String what, boolean focuses) {
+        public String shown() {
+            if (what.isEmpty()) return how;
+            char first = what.charAt(0);
+            return first == '"' || first == '\'' || first == '`' ? how + "(" + what + ", ...)" : how + " on " + what;
+        }
     }
 
     /**
-     * How many switches a file holds that a line-by-line reading does not see (the ones with
-     * white space inside). A change that raises this number has switched a test off or focused one.
+     * Every switch of a file that skips a test, marks it as to do, or focuses on one, each with the
+     * test it stands on: the title that follows a script call, the method or class that follows a
+     * Java annotation. Comments and the insides of strings are not code and hold no switches.
      */
-    public static int spreadSwitches(String text) {
-        if (text == null) return 0;
-        String code = codeOf(text);
-        int n = 0;
-        for (Pattern p : SPREAD) {
-            Matcher m = p.matcher(code);
-            while (m.find()) if (m.group().chars().anyMatch(Character::isWhitespace)) n++;
+    public static List<Switch> switches(String path, String text) {
+        List<Switch> out = new ArrayList<>();
+        if (text == null) return out;
+        String code = Code.mask(path, text);
+        Matcher m = SCRIPT_SWITCH.matcher(code);
+        while (m.find()) {
+            String how = m.group().replaceAll("\\s+", "");
+            // the title: the first string after the call opens, within the next few lines
+            String what = "";
+            for (int i = m.end(); i < Math.min(code.length(), m.end() + 300); i++) {
+                char c = code.charAt(i);
+                if (c != '"' && c != '\'' && c != '`') continue;
+                int close = code.indexOf(c, i + 1);
+                if (close > i) what = text.substring(i, close + 1);
+                break;
+            }
+            out.add(new Switch(how, what, how.endsWith(".only") || how.startsWith("f")));
         }
-        return n;
+        m = OTHER_SWITCH.matcher(code);
+        while (m.find()) {
+            Matcher next = DECLARED_NEXT.matcher(code).region(m.end(), Math.min(code.length(), m.end() + 800));
+            String what = !next.find() ? "" : next.group(1) != null ? next.group(1) : next.group(2) != null ? next.group(2) : next.group(3);
+            out.add(new Switch(m.group().replaceAll("\\s+", ""), what, false));
+        }
+        return out;
     }
 
-    /** Every switch of a file: tests skipped, marked to do, or focused, however they are written. */
-    public static int switches(String text) {
-        if (text == null) return 0;
-        int n = spreadSwitches(text);
-        for (String line : codeOf(text).split("\n", -1)) {
-            n += count(FOCUSED, line);
-            for (Pattern p : SWITCHED_OFF) n += count(p, line);
-        }
-        return n;
+    /**
+     * The switches a file has now and did not have before. Each one is matched with one of the
+     * same writing on the same test: a switch taken off one test does not make up for one put on
+     * another.
+     */
+    public static List<Switch> addedSwitches(String path, String before, String after) {
+        List<Switch> was = switches(path, before);
+        List<Switch> added = new ArrayList<>();
+        for (Switch s : switches(path, after)) if (!was.remove(s)) added.add(s);
+        return added;
     }
 
     private static final Pattern FOCUSED = Pattern.compile("\\b(it|test|describe|context|suite)(\\.\\w+)*\\.only\\b|\\bf(it|describe)\\s*\\(");
@@ -235,21 +247,19 @@ public final class Integrity {
 
     private void switchedOff() {
         // the repository's own settings first (they may name more test folders), then the patterns of every stack
-        for (String hit : Checks.disabledTests(added)) {
-            if (Checks.containsDisabled(code(hitLine(hit)))) switchedOff(hitPath(hit), hitLine(hit));
-        }
-        for (Map.Entry<String, List<String>> e : added.entrySet()) {
-            if (!isTestFile(e.getKey())) continue;
-            for (String line : e.getValue()) {
-                String code = code(line);
-                if (FOCUSED.matcher(code).find() || SWITCHED_OFF.stream().anyMatch(p -> p.matcher(code).find())) switchedOff(e.getKey(), line.trim());
-            }
-        }
-        // a switch written over more than one line, or with something between its parts, shows on no single line
+        // The whole file is read, before and after: a switch may be written over several lines, and one that is
+        // taken off a test does not make up for one put on another.
         for (String path : change.paths("AM")) {
             if (!isTestFile(path)) continue;
-            int more = spreadSwitches(after(path)) - spreadSwitches(before(path));
-            if (more > 0) problem("test switched off", path, more + (more == 1 ? " test is" : " tests are") + " skipped or focused by a call written over more than one line (it, a line break, .skip)");
+            for (Switch s : addedSwitches(path, before(path), after(path))) problem(s.focuses() ? "test focused" : "test switched off", path,
+                    s.focuses() ? "only this test runs, the others in the file are skipped: " + s.shown() : s.shown());
+        }
+        // the repository's own patterns may name more than the built-in reading knows
+        for (String hit : Checks.disabledTests(added)) {
+            String code = code(hitLine(hit));
+            if (!Checks.containsDisabled(code)) continue;
+            if (SCRIPT_SWITCH.matcher(code).find() || OTHER_SWITCH.matcher(code).find()) continue; // read above, with the file around it
+            switchedOff(hitPath(hit), hitLine(hit));
         }
     }
 

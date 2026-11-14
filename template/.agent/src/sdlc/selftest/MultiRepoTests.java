@@ -209,6 +209,10 @@ final class MultiRepoTests {
         check("contracts: removed and added operations", d.stream().anyMatch(x -> x.kind().equals("removed") && x.operation().equals("GET /refunds/{id}"))
                 && d.stream().anyMatch(x -> x.kind().equals("added") && x.operation().equals("DELETE /refunds/{id}")));
         check("contracts: an unchanged spec has no changes", Contracts.diff(v1, Contracts.parse(OPENAPI)).isEmpty());
+        check("contracts: a path with a slash at its end is another path",
+                Contracts.diff(v1, Contracts.parse(OPENAPI.replace("/orders/{orderId}/refunds:", "/orders/{orderId}/refunds/:"))).stream().anyMatch(c -> c.kind().equals("removed")));
+        check("contracts: a channel written in another case is another channel",
+                Contracts.diff(Contracts.parse(ASYNCAPI), Contracts.parse(ASYNCAPI.replace("refund-events", "Refund-Events"))).stream().anyMatch(c -> c.kind().equals("removed")));
         check("contracts: another name for a path parameter is not another operation",
                 Contracts.diff(v1, Contracts.parse(OPENAPI.replace("/orders/{orderId}/refunds", "/orders/{id}/refunds"))).isEmpty());
         check("contracts: operation names normalise", Contracts.normalize("post  /orders/{orderId}/refunds/").equals(Contracts.normalize("POST /orders/{id}/refunds")));

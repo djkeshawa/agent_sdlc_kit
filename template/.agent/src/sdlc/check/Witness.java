@@ -121,7 +121,7 @@ final class Witness {
                 else if (p == null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "was not found before the change", runner.name()));
                 else if (p.status() == Status.PASSED && shared != null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after, but " + shared, runner.name()));
                 else if (p.status() == Status.PASSED && oneIsNew) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after; the file now has more tests of this name than before, so a new one cannot be told from the old one", runner.name()));
-                else if (p.status() == Status.PASSED && !old && builtAtRunTime) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after; the file builds test names while it runs, so it cannot be read from the file whether this test is new", runner.name()));
+                else if (p.status() == Status.PASSED && !old && builtAtRunTime && !declaredNow.containsKey(plain)) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after; the file builds test names while it runs, so it cannot be read from the file whether this test is new", runner.name()));
                 else if (p.status() == Status.PASSED) out.add(new Verdict(f, c.name(), old ? Kind.EXISTING_PASSES_ON_BOTH : Kind.PASSES_ON_BOTH, "", runner.name()));
                 else if (p.status() == Status.SKIPPED) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "was skipped before the change", runner.name()));
                 else if (p.status() == Status.FLAKY) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "before the change the build ran it again and got another result", runner.name()));

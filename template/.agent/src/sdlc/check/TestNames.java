@@ -54,17 +54,19 @@ public final class TestNames {
         return out;
     }
 
+    // read in the file's code, where the inside of every string is blank and a ${ of a template string stays
     private static final Pattern BUILT_AT_RUN_TIME = Pattern.compile("\\b(?:it|test|describe)(?:\\s*\\.\\s*\\w+)*\\s*\\.\\s*(?:each|for)\\b"
-            + "|\\b(?:it|test)(?:\\s*\\.\\s*\\w+)*\\s*\\(\\s*(?:[^'\"`\\s)]|`[^`]*\\$\\{|(['\"])(?:\\\\.|(?!\\1).)*\\1\\s*\\+)");
+            + "|\\b(?:it|test)(?:\\s*\\.\\s*\\w+)*\\s*\\(\\s*(?:[^'\"`\\s)]|`[^`]*\\$\\{|(['\"])[^'\"\\n]*\\1\\s*\\+)");
 
     /**
      * True when a script file builds test names while it runs (it.each, a template with ${...}, a
      * variable or a sum of strings as the name): its reported names cannot all be read from its
-     * text, so "this name is not declared" does not mean "this test is new".
+     * text, so "this name is not declared" does not mean "this test is new". Comments and the
+     * insides of strings do not count.
      */
     public static boolean namesBuiltAtRunTime(String path, String text) {
         if (text == null || path.endsWith(".java") || path.endsWith(".t")) return false;
-        return BUILT_AT_RUN_TIME.matcher(text).find();
+        return BUILT_AT_RUN_TIME.matcher(Code.mask(path, text)).find();
     }
 
     /** The value of a script string literal's inside, with its escapes (quotes, line break, tab, hexadecimal and Unicode forms) resolved; an escape it does not know stands for its character. */

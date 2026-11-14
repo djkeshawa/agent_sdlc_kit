@@ -188,14 +188,27 @@ public final class Contracts {
 
     // ---------------- diff ----------------
 
-    /** Operation keys by what they mean (normalize). Two keys of one spec that mean the same stay apart under their own names. */
+    /** Operation keys by what they are (identity). Two keys of one spec that are the same operation stay apart under their own names. */
     private static Map<String, String> canonical(Set<String> keys) {
         Map<String, String> out = new LinkedHashMap<>();
         Set<String> twice = new LinkedHashSet<>();
-        for (String key : keys) if (out.put(normalize(key), key) != null) twice.add(normalize(key));
+        for (String key : keys) if (out.put(identity(key), key) != null) twice.add(identity(key));
         for (String t : twice) out.remove(t);
-        for (String key : keys) if (twice.contains(normalize(key))) out.put(key, key);
+        for (String key : keys) if (twice.contains(identity(key))) out.put(key, key);
         return out;
+    }
+
+    /**
+     * What makes two operation keys the same operation: for HTTP, the method and the path with its
+     * parameters unnamed. Nothing else is taken as equal: "/orders" and "/orders/" may be two
+     * routes, and "Orders" and "orders" two channels.
+     */
+    static String identity(String key) {
+        int sp = key.indexOf(' ');
+        if (sp > 0 && METHODS.contains(key.substring(0, sp).toLowerCase(Locale.ROOT))) {
+            return key.substring(0, sp).toUpperCase(Locale.ROOT) + " " + key.substring(sp + 1).replaceAll("\\{[^}/]*\\}", "{}");
+        }
+        return key;
     }
 
     private static final java.util.regex.Pattern PLACEHOLDER = java.util.regex.Pattern.compile("\\{([^}/]*)\\}");

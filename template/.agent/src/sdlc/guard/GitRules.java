@@ -130,16 +130,26 @@ final class GitRules {
         return value.strip().matches("(?i)|cat|more|less( -[A-Za-z]+)*|true|false|:");
     }
 
+    /**
+     * True when the argument is the long option or a shortened form of it: git takes any start of
+     * an option's name that fits no other option ("--remove-sect", "--edi"). A start that fits
+     * several is refused by git itself, so treating it as each of them is safe.
+     */
+    static boolean longOption(String arg, String option) {
+        String name = arg.contains("=") ? arg.substring(0, arg.indexOf('=')) : arg;
+        return name.length() > 2 && name.startsWith("--") && option.startsWith(name);
+    }
+
     private static Decision config(List<String> rest) {
         String first = rest.stream().filter(a -> !a.startsWith("-")).findFirst().orElse("");
         boolean read = first.equals("get") || first.equals("list") || rest.stream().anyMatch(a -> a.equals("--get") || a.equals("--list") || a.equals("-l") || a.equals("--get-all") || a.equals("--get-regexp"));
         boolean unset = first.equals("unset") || rest.stream().anyMatch(a -> a.startsWith("--unset"));
-        if (rest.stream().anyMatch(a -> a.equals("--global") || a.equals("--system"))) return read ? Decision.allow() : Decision.deny("changes git settings outside this repository.");
+        if (rest.stream().anyMatch(a -> longOption(a, "--global") || longOption(a, "--system"))) return read ? Decision.allow() : Decision.deny("changes git settings outside this repository.");
         // a whole section at once takes its protected keys with it (core.hooksPath lives in [core]); an editor can write anything
-        if (first.equals("remove-section") || first.equals("rename-section") || rest.stream().anyMatch(a -> a.equals("--remove-section") || a.equals("--rename-section"))) {
+        if (first.equals("remove-section") || first.equals("rename-section") || rest.stream().anyMatch(a -> longOption(a, "--remove-section") || longOption(a, "--rename-section"))) {
             return Decision.deny("removes or renames a whole section of git settings, protected keys included. Change single keys instead.");
         }
-        if (first.equals("edit") || rest.stream().anyMatch(a -> a.equals("-e") || a.equals("--edit"))) {
+        if (first.equals("edit") || rest.stream().anyMatch(a -> longOption(a, "--edit") || a.matches("-[A-Za-z]*e[A-Za-z]*"))) {
             return Decision.deny("opens git settings in an editor, where the guard cannot see what is written. Set single keys instead.");
         }
         for (int i = 0; i < rest.size(); i++) {

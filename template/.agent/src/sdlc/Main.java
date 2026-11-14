@@ -116,7 +116,7 @@ public final class Main {
             code = dispatch(args, stdin);
         } catch (UsageException e) {
             if (guard) {
-                code = Hooks.emit(Decision.deny("the guard could not decide (" + e.getMessage() + ")."), hookFormat(args));
+                code = Hooks.emit(Decision.deny(sdlc.util.SafeOut.clean("the guard could not decide (" + e.getMessage() + ").")), hookFormat(args));
             } else {
                 System.err.println(sdlc.util.SafeOut.clean(e.getMessage())); // the message may quote a file name or a line of the repository
                 code = 3;
@@ -127,7 +127,7 @@ public final class Main {
         } catch (Throwable e) { // also StackOverflowError and OutOfMemoryError: a tool call built to crash the guard is refused
             if (guard) {
                 // fail closed: a broken guard must not wave tool calls through
-                code = Hooks.emit(Decision.deny("the guard failed (" + e + "). Ask a human to run: java .agent/Sdlc.java selftest"), hookFormat(args));
+                code = Hooks.emit(Decision.deny(sdlc.util.SafeOut.clean("the guard failed (" + e + "). Ask a human to run: java .agent/Sdlc.java selftest")), hookFormat(args));
             } else if (hook) {
                 System.err.println(sdlc.util.SafeOut.clean("[sdlc] hook error (ignored): " + e));
                 code = args[0].equals("git-hook") ? 1 : 0;

@@ -409,6 +409,12 @@ final class JavaGuardTests {
         expect("git config: the editor", shell("git config -e"), Decision.Kind.DENY);
         expect("git config: the editor, as a subcommand", shell("git config edit"), Decision.Kind.DENY);
         expect("git config: reading stays allowed", shell("git config --get core.autocrlf"), Decision.Kind.ALLOW);
+        expect("git config: a shortened --remove-section", shell("git config --remove-sect core"), Decision.Kind.DENY);
+        expect("git config: a shortened --rename-section", shell("git config --rename-sect core gone"), Decision.Kind.DENY);
+        expect("git config: a shortened --edit", shell("git config --edi"), Decision.Kind.DENY);
+        expect("git config: -e among other short options", shell("git config -ze"), Decision.Kind.DENY);
+        expect("git config: a shortened --global", shell("git config --glob some.key value"), Decision.Kind.DENY);
+        expect("git config: setting an ordinary key stays allowed", shell("git config --replace-all core.autocrlf false"), Decision.Kind.ALLOW);
         expect("gh api -XPUT", shell("gh api -XPUT repos/o/r/x"), Decision.Kind.DENY);
         expect("gh api --field=", shell("gh api repos/o/r/issues --field=title=x"), Decision.Kind.DENY);
         expect("gh api -fkey=", shell("gh api repos/o/r/issues -ftitle=x"), Decision.Kind.DENY);

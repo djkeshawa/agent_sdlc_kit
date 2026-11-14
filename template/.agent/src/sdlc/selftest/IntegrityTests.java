@@ -276,6 +276,17 @@ final class IntegrityTests {
         check("integrity: it.concurrent.skip is a test switched off", count(scan(repo), "test switched off") == 1);
         write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\n// it\n//   .skip('in a comment')\nconst s = 'it .skip(';\n");
         check("integrity: the same words in a comment or a string switch nothing off", problems(scan(repo)) == 0);
+        write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\nconst example = `\nit\n  .skip('documentation example')\n`;\n");
+        check("integrity: nor inside a template string that runs over several lines", problems(scan(repo)) == 0);
+        String skipOnOld = "it\n  .skip('old', () => { expect(1).toBe(1) })\nit\n  .concurrent('critical', () => { expect(1).toBe(1) })\n";
+        String skipOnCritical = "it\n  ('old', () => { expect(1).toBe(1) })\nit\n  .concurrent\n  .skip('critical', () => { expect(1).toBe(1) })\n";
+        List<sdlc.check.Integrity.Switch> movedSkip = sdlc.check.Integrity.addedSwitches("src/app.test.ts", skipOnOld, skipOnCritical);
+        check("integrity: a skip taken off one test does not make up for one put on another",
+                movedSkip.size() == 1 && movedSkip.get(0).how().equals("it.concurrent.skip") && movedSkip.get(0).what().equals("'critical'"));
+        check("integrity: a file whose switches stay on their tests has none added", sdlc.check.Integrity.addedSwitches("src/app.test.ts", skipOnOld, skipOnOld + "\nit('more', () => {})\n").isEmpty());
+        check("integrity: an annotation is read with the method it stands on",
+                sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n  @Test void b() {}\n}\n", "class ATest {\n  @Test void a() {}\n  @ Disabled\n  @Test void b() {}\n}\n")
+                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "b", false))));
         git(repo, "reset", "-q", "--hard", "HEAD~2");
         reset(repo);
         write(repo, "package.json", "{\"scripts\": {\"test\": \"vitest run" + " ".repeat(20000) + "|| true\"}}\n");

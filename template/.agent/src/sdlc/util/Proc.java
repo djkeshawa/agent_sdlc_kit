@@ -55,7 +55,7 @@ public record Proc(int code, String out, String err) {
     /**
      * Runs a command and keeps at most head bytes of the start of each output stream and tail bytes
      * of its end. With tail 0 a larger output is an error (TOO_MUCH_OUTPUT), not a shortened answer.
-     * A listener, when given, gets every line of its stream (the first 16 KB of a longer one).
+     * A listener, when given, gets every line of its stream (a line longer than 16 KB in pieces that overlap).
      */
     public static Proc exec(Path dir, java.util.Map<String, String> env, String stdin, int timeoutSeconds, int head, int tail,
             java.util.function.Consumer<String> outLines, java.util.function.Consumer<String> errLines, String... cmd) {
@@ -134,7 +134,15 @@ public record Proc(int code, String out, String err) {
         private void lines(byte[] buf, int n) {
             for (int i = 0; i < n; i++) {
                 if (buf[i] != '\n') {
-                    if (line.size() < 16384) line.write(buf[i]); // the start of a very long line is enough to decide on
+                    line.write(buf[i]);
+                    if (line.size() >= 16384) {
+                        // a very long line is handed over in pieces; each new piece starts with the end of the last one,
+                        // so a word the listener looks for is whole in one of them
+                        byte[] piece = line.toByteArray();
+                        listener.accept(new String(piece, StandardCharsets.UTF_8));
+                        line.reset();
+                        line.write(piece, piece.length - 512, 512);
+                    }
                     continue;
                 }
                 listener.accept(line.toString(StandardCharsets.UTF_8));
