@@ -83,73 +83,42 @@ public final class Integrity {
 
     // ---------------- tests switched off, assertions ----------------
 
-    // Switches as any text shows them, code or not. White space, also a line break, may stand around each dot and after
-    // the @ of an annotation, and other members may stand between (it.concurrent.skip, test.skip.each).
+    // Switches as a line shows them. White space may stand around each dot and after the @ of an annotation, and other
+    // members may stand between (it.concurrent.skip, test.skip.each).
     private static final Pattern SCRIPT_SWITCH = Pattern.compile(
             "\\b(?:it|test|describe|context|suite)(?:\\s*\\.\\s*\\w+)*?\\s*\\.\\s*(?:skip|todo|only|fixme)\\b|\\bx(?:it|test|describe|context)(?=\\s*\\()|\\bf(?:it|describe)(?=\\s*\\()");
     private static final Pattern OTHER_SWITCH = Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*)*(?:Disabled|DisabledIf\\w*|Ignore)\\b|\\bassumeTrue\\s*\\([^()]*\\bfalse\\b[^()]*\\)"
             + "|\\bassumeFalse\\s*\\([^()]*\\btrue\\b[^()]*\\)|\\bAssumptions\\s*\\.\\s*abort\\s*\\(|@pytest\\.mark\\.skip|@unittest\\.skip|\\bt\\.Skip(?:Now)?(?=\\s*\\()");
-    private static final Pattern DECLARED_NEXT = Pattern.compile("\\b(?:def|func)\\s+(\\w+)");
 
     /**
-     * One switch of a file: what it does ("skip", "todo", "only", "@Disabled", "assume") and what
-     * it stands on: the title of the test or group, the first argument as written when the title
-     * is computed, the method or class for Java. "" when nothing readable follows it.
+     * One switch of a Java file: what it does ("@Disabled", "@Ignore", "assume") and the
+     * declaration it stands on, by where it stands and what it is called ("CalcTest > subtracts").
      */
     public record Switch(String how, String what) {
-        public boolean focuses() {
-            return how.equals("only");
-        }
-
         public String shown() {
             return how + (what.isEmpty() ? "" : " on " + (what.length() > 80 ? what.substring(0, 80) + "..." : what));
         }
     }
 
-    /**
-     * A switch, the line of its file (from 0) that holds it, and the groups or classes it stands
-     * in ("" when the file could not be read well enough to say).
-     */
-    private record Found(Switch is, int line, String home) {
-        Found(Switch is, int line) {
-            this(is, line, "");
-        }
-    }
+    /** A switch, the name of the declaration it stands on without the classes around it, and whether that declaration is a test. */
+    private record Found(Switch is, String name, boolean test) {}
 
-    /** The groups or classes around a place of a file, outermost first; "" when the file is unsure or the place stands in none. */
-    private static String homeOf(List<Declared.Item> items, boolean unsure, int at) {
-        if (unsure) return "";
-        StringBuilder home = new StringBuilder();
-        for (Declared.Item item : items) if (item.group() && item.start() < at && at <= item.end()) home.append(home.length() == 0 ? "" : " > ").append(item.name());
-        return home.toString();
-    }
+    /** What tells one switch of a file from another: what it does, the declaration it stands on, and whether that is a test. */
+    private record Key(String how, String on, boolean test) {}
 
     /**
-     * Every switch in the code of a file that skips a test or marks it as to do, with its line.
-     * Comments and the insides of strings are not code. Script test files are not read here: the
-     * run of the file says which of its tests are skipped, and the lines a change adds are linted
-     * (see lintedSwitch).
+     * Every switch of a Java test file that skips a test: an annotation that switches it off and
+     * an assumption that never holds, each on the declaration it belongs to (Declared.java). A
+     * switch that is seen is never dropped: one on something that is no test method is kept under
+     * that declaration's name. Comments and the insides of strings are not code. Other test files
+     * are not read here: the lines a change adds are linted (see lintedSwitch), and the run of the
+     * file says which of its tests are skipped.
      */
     private static List<Found> found(String path, String text) {
         List<Found> out = new ArrayList<>();
         if (text == null || !readWhole(path)) return out;
-        String code = Code.mask(path, text);
-        if (isJava(path)) {
-            List<Declared.Item> items = Declared.java(path, text);
-            boolean unsure = Declared.unsure(path, text);
-            Matcher m = Declared.JAVA_OFF.matcher(code);
-            while (m.find()) out.add(new Found(new Switch("@" + m.group(1), Declared.declarationAfter(code, m.end())), Lines.at(text, m.start()), homeOf(items, unsure, m.start())));
-            for (int at : Declared.never(code)) {
-                String in = "";
-                for (Declared.Item item : items) if (!item.group() && item.start() <= at && at <= item.end()) in = item.name();
-                out.add(new Found(new Switch("assume", in), Lines.at(text, at), homeOf(items, unsure, at)));
-            }
-        } else {
-            Matcher m = OTHER_SWITCH.matcher(code);
-            while (m.find()) {
-                Matcher next = DECLARED_NEXT.matcher(code).region(m.end(), Math.min(code.length(), m.end() + 800));
-                out.add(new Found(new Switch(m.group().replaceAll("\\s+", ""), next.find() ? next.group(1) : ""), Lines.at(text, m.start())));
-            }
+        for (Declared.Item item : Declared.java(path, text)) {
+            for (String how : item.switches()) out.add(new Found(new Switch(how, item.where()), item.name(), item.test()));
         }
         return out;
     }
@@ -171,11 +140,11 @@ public final class Integrity {
 
     /**
      * True when the switches of a test file are read from the whole file, before and after the
-     * change (addedSwitches); false when they are found by the line lint of the lines the change
-     * adds (lintedSwitch). Script test files are linted: their run is the judge.
+     * change (addedSwitches): Java. Other test files are linted by the lines the change adds
+     * (lintedSwitch); for scripts their run is the judge.
      */
     public static boolean readWhole(String path) {
-        return !Code.isScript(path);
+        return isJava(path);
     }
 
     /**
@@ -187,84 +156,45 @@ public final class Integrity {
      */
     public static boolean lintedSwitch(String line) {
         String code = code(line);
-        return FOCUSED.matcher(code).find() || SCRIPT_SWITCH.matcher(code).find();
+        return FOCUSED.matcher(code).find() || SCRIPT_SWITCH.matcher(code).find() || OTHER_SWITCH.matcher(code).find();
     }
 
     /**
-     * The switches a change put into a file. The change itself says where to look: a switch is
-     * new when it stands on a line the change wrote and the lines that this place replaced did
-     * not hold the same switch on the same thing. So a switch taken off one test and put on
-     * another is new, wherever the two tests stand and however they are grouped, because they are
-     * two places; and a line that is only written differently (other quotes, another indent) is
-     * not. Where two such tests stand so close that the change is one place, the groups or
-     * classes around them tell them apart, as far as the file can be read. One case is not a new
-     * switch: a test that was moved as a whole, switch and all, to another place of the file.
+     * The switches a change put into a Java file: those the file has after the change and did not
+     * have before, each matched with one of the same kind on the same declaration (where it stands
+     * and what it is called), and as many times. The file is read whole, so a switch is judged by
+     * the declaration it stands on, whatever lines the change wrote: a switch taken off one test
+     * does not make up for one put on another, a switch on a line the change did not touch that
+     * the change puts onto a test is new, and a line only written differently changes nothing.
+     * Where either version could not be read to its end (Declared.unsure), declarations are known
+     * by their names alone. A test renamed while it is switched off is a new switch on the test of
+     * the new name.
      */
     public static List<Switch> addedSwitches(String path, String before, String after) {
-        List<Found> was = found(path, before), now = found(path, after);
-        if (now.isEmpty()) return new ArrayList<>();
-        String[] a = Lines.of(before), b = Lines.of(after);
-        List<Lines.Hunk> hunks = Lines.changed(a, b);
-        List<List<Found>> taken = new ArrayList<>(); // per changed place: the switches its old lines held that its new lines do not
-        List<Found> candidates = new ArrayList<>();
-        List<Integer> placeOf = new ArrayList<>();
-        for (int h = 0; h < hunks.size(); h++) {
-            Lines.Hunk hunk = hunks.get(h);
-            List<Found> old = new ArrayList<>();
-            for (Found f : was) if (hunk.holdsOld(f.line())) old.add(f);
-            for (Found f : now) {
-                if (!hunk.holdsNew(f.line())) continue;
-                // the same switch on the same thing in the same groups: the line was only written again
-                Found same = old.stream().filter(o -> o.is().equals(f.is()) && o.home().equals(f.home())).findFirst().orElse(null);
-                if (same != null) {
-                    old.remove(same);
-                    continue;
-                }
-                candidates.add(f);
-                placeOf.add(h);
-            }
-            taken.add(old);
-        }
+        boolean placed = !unsure(path, before) && !unsure(path, after);
+        List<Key> was = new ArrayList<>();
+        for (Found f : found(path, before)) was.add(key(f, placed));
         List<Switch> added = new ArrayList<>();
-        for (int c = 0; c < candidates.size(); c++) {
-            Switch s = candidates.get(c).is();
-            int here = placeOf.get(c);
-            boolean moved = false;
-            String needle = s.what().replaceAll("\\s+", "");
-            if (needle.startsWith("?(") && needle.endsWith(")")) needle = needle.substring(2, needle.length() - 1);
-            for (int g = 0; g < hunks.size() && !moved && !needle.isEmpty(); g++) {
-                Found gone = taken.get(g).stream().filter(o -> o.is().equals(s)).findFirst().orElse(null);
-                if (g == here || gone == null) continue;
-                // moved as a whole: where it was taken away nothing of that name was written, and where it now stands nothing of that name was replaced
-                if (squeezed(b, hunks.get(g).fromB(), hunks.get(g).toB()).contains(needle) || squeezed(a, hunks.get(here).fromA(), hunks.get(here).toA()).contains(needle)) continue;
-                taken.get(g).remove(gone);
-                moved = true;
-            }
-            if (!moved) added.add(s);
-        }
+        for (Found f : found(path, after)) if (!was.remove(key(f, placed))) added.add(f.is());
         return added;
     }
 
-    private static String squeezed(String[] lines, int from, int to) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = from; i < to && i < lines.length; i++) sb.append(lines[i]);
-        return sb.toString().replaceAll("\\s+", "");
+    private static Key key(Found f, boolean placed) {
+        return new Key(f.is().how(), placed ? f.is().what() : f.name(), f.test());
     }
 
     /**
-     * How often a file holds what looks like a switch inside what was read as a comment or a
+     * How often a Java file holds what looks like a switch inside what was read as a comment or a
      * string. Text there switches nothing off. But the reading is of tokens, not of the language,
      * and a file can be written so that it takes code for text; a change that adds such places is
      * therefore said out loud, never passed over.
      */
     public static List<String> switchesInText(String path, String text) {
         List<String> out = new ArrayList<>();
-        if (text == null) return out;
+        if (text == null || !readWhole(path)) return out;
         String code = Code.mask(path, text);
-        for (Pattern p : List.of(SCRIPT_SWITCH, OTHER_SWITCH)) {
-            Matcher m = p.matcher(text);
-            while (m.find()) if (!code.substring(m.start(), m.end()).equals(m.group())) out.add(m.group().replaceAll("\\s+", ""));
-        }
+        Matcher m = OTHER_SWITCH.matcher(text);
+        while (m.find()) if (!code.substring(m.start(), m.end()).equals(m.group())) out.add(m.group().replaceAll("\\s+", ""));
         return out;
     }
 
@@ -402,8 +332,7 @@ public final class Integrity {
                 continue;
             }
             read.add(path);
-            for (Switch s : addedSwitches(path, before(path), after(path))) problem(s.focuses() ? "test focused" : "test switched off", path,
-                    s.focuses() ? "only this test runs, the others in the file are skipped: " + s.shown() : s.shown());
+            for (Switch s : addedSwitches(path, before(path), after(path))) problem("test switched off", path, s.shown());
             if (unsure(path, after(path))) note("could not be read with confidence", path, "its brackets do not pair up for the reader, or a declaration in it could not be read to its end. "
                     + "Switches in it are still found; which tests it declares, and which are new, is not relied on");
             List<String> inText = addedSwitchesInText(path, before(path), after(path));

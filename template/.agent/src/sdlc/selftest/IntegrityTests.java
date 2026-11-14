@@ -312,6 +312,10 @@ final class IntegrityTests {
         write(repo, "src/app.test.ts", "describe('A', () => {\n  it('works', () => { check(1) })\n})\ndescribe('B', () => {\n  it.each([[1, 2]])('sums %i', async (a, b) => {\n    expect(a + b).toBe(3)\n  })\n})\n");
         check("integrity: a test with a table of cases that is only renamed is a rename", problems(scan(repo)) == 0 && only(scan(repo), Level.NOTE, "test renamed", "src/app.test.ts", "adds %i is now sums %i"));
         git(repo, "reset", "-q", "--hard", "HEAD~2");
+        // other test files are linted by the lines the change adds, as scripts are
+        write(repo, "tests/test_calc.py", "import pytest\n\n@pytest.mark.skip(reason=\"later\")\ndef test_adds():\n    assert 1 + 1 == 2\n");
+        check("integrity: a skip in a Python test file is found by the line lint", only(scan(repo), Level.PROBLEM, "test switched off", "tests/test_calc.py", "@pytest.mark.skip(reason="));
+        Files.delete(repo.resolve("tests/test_calc.py"));
         // a folder the repository itself names as tests (paths.test), where the built-in idea of a test file does not reach
         write(repo, "specs/foo.ts", "it('a', () => { expect(1).toBe(1) })\n");
         git(repo, "add", "-A");
@@ -327,19 +331,19 @@ final class IntegrityTests {
         git(repo, "reset", "-q", "--hard", "HEAD~1");
         check("integrity: an annotation is read with the method it stands on",
                 sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n  @Test void b() {}\n}\n", "class ATest {\n  @Test void a() {}\n  @ Disabled\n  @Test void b() {}\n}\n")
-                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "b"))));
+                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > b"))));
         check("integrity: a disabled method moved between two nested classes is found", sdlc.check.Integrity.addedSwitches("ATest.java",
                 "class ATest {\n  class X { @Disabled @Test void works() {} }\n  class Y { @Test void works() {} }\n}\n",
-                "class ATest {\n  class X { @Test void works() {} }\n  class Y { @Disabled @Test void works() {} }\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "works"))));
+                "class ATest {\n  class X { @Test void works() {} }\n  class Y { @Disabled @Test void works() {} }\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > Y > works"))));
         check("integrity: a switch on something that is no void method is not lost", sdlc.check.Integrity.addedSwitches("ATest.java",
                 "class ATest {\n  @TestFactory Stream<DynamicTest> all() { return null; }\n}\n",
-                "class ATest {\n  @Disabled @TestFactory Stream<DynamicTest> all() { return null; }\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "all"))));
+                "class ATest {\n  @Disabled @TestFactory Stream<DynamicTest> all() { return null; }\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > all"))));
         check("integrity: an annotation moved onto the declaration before, which is no void method, is found", sdlc.check.Integrity.addedSwitches("ATest.java",
                 "class ATest {\n  @TestFactory Stream<DynamicTest> all() { return null; }\n  @Disabled @Test void works() {}\n}\n",
-                "class ATest {\n  @Disabled @TestFactory Stream<DynamicTest> all() { return null; }\n  @Test void works() {}\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "all"))));
+                "class ATest {\n  @Disabled @TestFactory Stream<DynamicTest> all() { return null; }\n  @Test void works() {}\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > all"))));
         check("integrity: an assumption that never holds is found with a reason after it too", sdlc.check.Integrity.addedSwitches("ATest.java",
                 "class ATest {\n  @Test void a() { run(); }\n}\n", "class ATest {\n  @Test void a() { assumeTrue(false, \"temporarily unsupported\"); run(); }\n}\n")
-                .equals(List.of(new sdlc.check.Integrity.Switch("assume", "a"))));
+                .equals(List.of(new sdlc.check.Integrity.Switch("assume", "ATest > a"))));
         // files as people write them: the reader must follow each to its end, and find every test and every switch
         String junit = """
                 package demo;
@@ -380,12 +384,43 @@ final class IntegrityTests {
         check("reader: a JUnit file with nested classes, a text block, records and character literals is read to its end",
                 !sdlc.check.Integrity.unsure("src/test/java/demo/RefundsTest.java", junit)
                 && sdlc.check.TestNames.counts("src/test/java/demo/RefundsTest.java", junit).keySet().equals(java.util.Set.of("subtracts", "table", "roundsDown"))
-                && sdlc.check.Integrity.switches("src/test/java/demo/RefundsTest.java", junit).equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "roundsDown"))));
+                && sdlc.check.Integrity.switches("src/test/java/demo/RefundsTest.java", junit).equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "RefundsTest > Partial > roundsDown"))));
         // round 8
         check("integrity: the reason before the condition (JUnit 4) and an imported abort are found too", sdlc.check.Integrity.addedSwitches("ATest.java",
                 "class ATest {\n  @Test void a() { run(); }\n  @Test void b() { run(); }\n}\n",
                 "import static org.junit.jupiter.api.Assumptions.abort;\nclass ATest {\n  @Test void a() { Assume.assumeTrue(\"temporarily unsupported\", false); run(); }\n  @Test void b() { abort(\"later\"); run(); }\n}\n")
-                .equals(List.of(new sdlc.check.Integrity.Switch("assume", "a"), new sdlc.check.Integrity.Switch("assume", "b"))));
+                .equals(List.of(new sdlc.check.Integrity.Switch("assume", "ATest > a"), new sdlc.check.Integrity.Switch("assume", "ATest > b"))));
+        // Java switches are judged by the declaration they stand on, whatever lines the change wrote
+        String plain = "class ATest {\n  @Test\n  void a() {}\n\n  @Test\n  void b() {}\n}\n";
+        check("integrity: @Disabled added to an existing Java test is found by the declaration it stands on",
+                sdlc.check.Integrity.addedSwitches("ATest.java", plain, plain.replace("  @Test\n  void b", "  @Disabled(\"flaky\")\n  @Test\n  void b"))
+                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > b"))));
+        check("integrity: a switch on a line the change did not touch is new when the change puts it onto a test",
+                sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Disabled\n  void helper() {}\n}\n", "class ATest {\n  @Disabled\n  @Test void helper() {}\n}\n")
+                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > helper")))
+                && sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Disabled\n  int unused;\n  @Test void a() {}\n}\n", "class ATest {\n  @Disabled\n  @Test void a() {}\n}\n")
+                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > a"))));
+        check("integrity: a switch word moved to a test of the same name in another class is a new switch, however the lines are cut",
+                sdlc.check.Integrity.addedSwitches("ATest.java",
+                        "class ATest {\n  class X {\n    @Disabled\n    @Test void works() {}\n  }\n  class Y {\n    @Test void works() {}\n  }\n}\n",
+                        "class ATest {\n  class X {\n    @Test void works() {}\n  }\n  class Y {\n    @Disabled\n    @Test void works() {}\n  }\n}\n")
+                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > Y > works"))));
+        StringBuilder large = new StringBuilder("class ATest {\n");
+        for (int i = 0; i < 2500; i++) large.append("  @Test\n  void t").append(i).append("() {}\n");
+        String big = large.append("}\n").toString().replace("  @Test\n  void t1()", "  @Disabled\n  @Test\n  void t1()");
+        String reformatted = big.replace("\n  ", "\n    ");
+        check("integrity: in a large reformatted Java file a switch moved from one test to another is found, and the reformatting alone adds none",
+                sdlc.check.Integrity.addedSwitches("ATest.java", big, reformatted.replace("    @Disabled\n    @Test\n    void t1()", "    @Test\n    void t1()")
+                        .replace("    @Test\n    void t2()", "    @Disabled\n    @Test\n    void t2()")).equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > t2")))
+                && sdlc.check.Integrity.addedSwitches("ATest.java", big, reformatted).isEmpty());
+        check("integrity: a Java test moved within its class with its switch is not a new switch; one renamed while switched off is",
+                sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n  @Test void b() {}\n}\n",
+                        "class ATest {\n  @Test void b() {}\n  @Disabled @Test void a() {}\n}\n").isEmpty()
+                && sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n}\n", "class ATest {\n  @Disabled @Test void c() {}\n}\n")
+                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > c"))));
+        check("integrity: in a Java file the reader cannot follow to its end, declarations are known by their names alone",
+                sdlc.check.Integrity.unsure("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n  @Test void b() {\n}\n")
+                && sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Test void a() {}\n  @Test void b() {\n}\n", "class ATest {\n  @Disabled @Test void a() {}\n  @Test void b() {\n}\n").size() == 1);
         check("integrity: an assumption with a matcher is not a test switched off", sdlc.check.Integrity.addedSwitches("ATest.java",
                 "class ATest {\n  @Test void a() { run(); }\n}\n", "class ATest {\n  @Test void a() { Assume.assumeThat(false, is(false)); assumeTrue(ready(false)); run(); }\n}\n").isEmpty());
         check("integrity: a test that gains @Disabled is still a declared test, and one that loses it is not a new one",

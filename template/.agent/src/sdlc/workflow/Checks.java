@@ -185,9 +185,9 @@ public final class Checks {
         // comment or a string is known as one; the others (a repository's own marks, comment directives) are judged by the added line
         Set<String> disabled = new LinkedHashSet<>();
         for (String hit : disabledTests(added)) if (containsDisabled(sdlc.check.Integrity.withoutBuiltInSwitches(hit.substring(hit.indexOf(": ") + 2)))) disabled.add(hit);
-        // a switch that no added line shows (@, a line break, Disabled): read from the whole file, before and after, each with the
-        // test it stands on, so that one taken off a test does not make up for one put on another. Script test files are linted by
-        // the lines the change adds; their run is the judge.
+        // a Java switch that no added line shows (@, a line break, Disabled): read from the whole file, before and after, each with
+        // the declaration it stands on, so that one taken off a test does not make up for one put on another. Other test files are
+        // linted by the lines the change adds; for scripts their run is the judge.
         String branchPoint = Contracts.mergeBase(base);
         for (String f : files) {
             if (!Glob.any(Ctx.cfg.list("paths.test"), f)) continue;

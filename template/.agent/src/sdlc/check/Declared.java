@@ -207,7 +207,7 @@ final class Declared {
     private static final Pattern JAVA_TYPE = Pattern.compile("\\b(?:class|interface|record|enum)\\s+(\\w+)");
     private static final Pattern JAVA_METHOD = Pattern.compile("\\bvoid\\s+(\\w+)\\s*\\(");
     private static final Pattern JAVA_TEST = Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*)*(?:Test|ParameterizedTest|RepeatedTest|TestFactory|TestTemplate)\\b");
-    static final Pattern JAVA_OFF = Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*)*(Disabled|DisabledIf\\w*|Ignore)\\b");
+    private static final Pattern JAVA_OFF = Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*)*(Disabled|DisabledIf\\w*|Ignore)\\b");
     /** A call that may be an assumption that can never hold; its arguments decide (never). assumeThat(actual, matcher) is none: a matcher decides it. */
     private static final Pattern JAVA_ASSUME_CALL = Pattern.compile("\\b(assumeTrue|assumeFalse)\\s*\\(");
     private static final Pattern JAVA_ABORT = Pattern.compile("\\bAssumptions\\s*\\.\\s*abort\\s*\\(");
@@ -219,7 +219,7 @@ final class Declared {
      * false among its arguments (JUnit 5 puts the reason after it, JUnit 4 before it), assumeFalse
      * with a plain true, Assumptions.abort, and abort where that method is statically imported.
      */
-    static List<Integer> never(String code) {
+    private static List<Integer> never(String code) {
         List<Integer> out = new ArrayList<>();
         Matcher m = JAVA_ASSUME_CALL.matcher(code);
         while (m.find()) {
@@ -331,24 +331,6 @@ final class Declared {
         String name = called.find() ? called.group(1) : named.find() ? named.group(1) : "?";
         for (Item known : more) if (known.start() == from) return known;
         return loose(more, name, from);
-    }
-
-    /** The name of the declaration an annotation stands on: a type, a method (whatever it returns) or a field; "" when none can be read. */
-    static String declarationAfter(String code, int from) {
-        int end = from, depth = 0;
-        for (; end < code.length(); end++) {
-            char c = code.charAt(end);
-            if (c == '(') depth++;
-            else if (c == ')') depth--;
-            else if ((c == '{' || c == ';') && depth <= 0) break;
-        }
-        String header = JAVA_ANNOTATION.matcher(code.substring(from, end)).replaceAll(" ");
-        Matcher type = JAVA_TYPE.matcher(header);
-        if (type.find()) return type.group(1);
-        Matcher called = JAVA_CALLED.matcher(header);
-        if (called.find()) return called.group(1);
-        Matcher named = JAVA_NAMED.matcher(header.strip());
-        return named.find() ? named.group(1) : "";
     }
 
     /** True when the file cannot be relied on for what stands where: its brackets do not pair up, or a declaration could not be read to its end. */
