@@ -74,8 +74,11 @@ out does the opposite. What the names cannot tell, the counts of the file decide
 are true however tests are named. What the counts cannot prove is said as "could not be judged",
 never passed in silence; so is a run the check asked for that gave no answer.
 
-Every verdict is made after the last run, from every report the check made, each repeat of each
-way (`--runs`). A test is read in every combination of them: each run of the file as it was, with
+Every verdict is made after the last run. A test's verdicts, the counts of tests that do not run
+now and of new tests, and the old tests the change broke are made from every report the check
+made, each repeat of each way (`--runs`); what the skips and the names gone say is read from the
+first runs and compared with every repeat of a file that was run again. A test is read in every
+combination of the runs: each run of the file as it was, with
 each run before the change, with each run after it. A test that fails in any run after the change
 fails. Any other verdict of a test is said only where every combination says the same; else it
 is unstable (a test that looked sensitive in the first runs) or left to the rule below. Not every
@@ -88,8 +91,8 @@ Every difference gets an answer. Apart from the rules below, the check lists eve
 reports differ: a test the file as it was reported and the file after the change does not, or
 the other way, a test switched off or on, a test with another result (passed, passed only when
 run again, failed, threw, skipped) before and after the change, and a test one run of a way
-reported otherwise than another run of the same way. Each line the check prints says which of
-these it answers for. What no line answers for is printed all the same, one line for the file:
+reported otherwise than another run of the same way. Each rule of the check says which of these
+its lines answer for. What no line answers for is printed all the same, one line for the file:
 "could not be judged" for a difference between the file as it was and after the change, with
 the names and what each report said, and "different results from run to run" for one between
 runs. So a case that falls between two rules, or a repeat whose report no rule read, is said, not
@@ -310,7 +313,7 @@ Claude Code, in `.claude/settings.json`:
 - It does not yet check that a test executes the lines the change touches. An author who wants
   to cheat can write a test that tells the two sides apart without testing the fix.
 - A test that depends on the time, the network or the order of tests may be reported as
-  unstable.
+  unstable, or as failing where it fails in one of the runs after the change.
 - Two tests in one file that report the same name cannot be told apart and are not judged.
 - An edited test file is run three times instead of two: after the change, before it, and as it
   was. For Maven this is one more build of the module on the base commit (on a small project, 75

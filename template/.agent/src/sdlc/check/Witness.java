@@ -34,8 +34,10 @@ import sdlc.check.Runner.FileRun;
  * be any of these. So where the names cannot tell, the counts of each file decide (see names),
  * and what the counts cannot prove is said to be not known, never passed in silence.
  *
- * Every verdict is decided once every run is made, from every report of every run (see Seen and
- * decide), and each says what it answers for (see Cover). Then every difference among a file's
+ * Every verdict is decided once every run is made: a test's verdicts, the counts of lost and of
+ * new tests and the old tests the change broke from every report of every run (see Seen and
+ * decide); what the skips and the names gone say from the first runs, compared with every repeat
+ * of a file that was run again (see signature). Each says what it answers for (see Cover). Then every difference among a file's
  * reports, between the file as it was and after the change and from run to run, is listed apart
  * from the rules (see Ledger), and what no verdict answers for gets a line of its own (see
  * reconcile): a rule that says nothing of a difference leaves it said all the same.
@@ -1119,9 +1121,10 @@ final class Witness {
      */
     private static List<Verdict> newTests(String f, List<Count> counts, Set<String> freshEvery, String by) {
         if (counts.stream().allMatch(c -> c == null || c.passBoth().isEmpty())) return List.of();
-        Set<String> moved = new LinkedHashSet<>();
-        for (Count c : counts) if (c != null) moved.addAll(c.n().moved());
-        Cover cover = Cover.change(moved);
+        // the line speaks of the names the file did not have; the names it no longer has are for the rules of lost and gone
+        Set<String> fresh = new LinkedHashSet<>();
+        for (Count c : counts) if (c != null) for (JUnitXml.Case x : c.n().fresh()) fresh.add(key(x));
+        Cover cover = Cover.change(fresh);
         long min = counts.stream().mapToLong(c -> c == null ? 0 : c.least()).min().orElse(0), max = counts.stream().mapToLong(c -> c == null ? 0 : c.least()).max().orElse(0);
         if (min > 0) {
             Count at = counts.stream().filter(c -> c.least() == min).findFirst().orElseThrow();

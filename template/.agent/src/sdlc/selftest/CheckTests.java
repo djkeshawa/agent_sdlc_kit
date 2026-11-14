@@ -1573,23 +1573,26 @@ final class CheckTests {
 
         // each rule says what it answers for: where it speaks, the line for what no rule judged does not; where it is made to say nothing, that line
         // says what it would have answered for
-        Map<String, String[]> speaks = new java.util.LinkedHashMap<>();
-        speaks.put("new tests", new String[] {"checks/judged.t", JUDGED + "idle: pass\n"});
-        speaks.put("skips", new String[] {"checks/judged.t", JUDGED + "later: skip\n"});
-        speaks.put("gone", new String[] {"checks/judged.t", JUDGED.replace("stays: pass", "group > stays: pass")});
-        speaks.put("broken,gone", new String[] {"checks/broken.t", MENDED.replace("holds: pass", "kept up: pass")});
-        speaks.put("per test", new String[] {"checks/failing.t", FAILING + "  edited\n"});
-        speaks.put("lost", new String[] {"checks/judged.t", JUDGED.replace("turned off: pass", "turned off: skip")});
-        for (Map.Entry<String, String[]> e : speaks.entrySet()) {
-            String path = e.getValue()[0], was = Files.readString(repo.resolve(path));
-            write(repo, path, e.getValue()[1]);
+        String[][] speaks = {
+            {"new tests", "checks/judged.t", JUDGED + "idle: pass\n", "idle (as it was: not reported; after the change: passed)"},
+            {"skips", "checks/judged.t", JUDGED + "later: skip\n", "later (as it was: not reported; after the change: skipped)"},
+            {"gone", "checks/judged.t", JUDGED.replace("stays: pass", "group > stays: pass"), "stays (as it was: passed; after the change: not reported)"},
+            // the line of new tests that pass on both sides speaks of the names the file did not have, not of the one it no longer has
+            {"gone", "checks/named.t", NAMED.replace("goes: pass\n", "went: pass\nextra: pass\n"), "goes (as it was: passed; after the change: not reported)"},
+            {"broken,gone", "checks/broken.t", MENDED.replace("holds: pass", "kept up: pass"), "holds (as it was: passed; after the change: not reported)"},
+            {"per test", "checks/failing.t", FAILING + "  edited\n", "throwing (as it was: threw; after the change: passed)"},
+            {"lost", "checks/judged.t", JUDGED.replace("turned off: pass", "turned off: skip"), "turned off (as it was: passed; after the change: skipped)"},
+        };
+        for (String[] e : speaks) {
+            String path = e[1], was = Files.readString(repo.resolve(path));
+            write(repo, path, e[2]);
             String spoken = report(Map.of("selftest-runner", "true", "runs", "2"));
-            Check.mute(java.util.Set.of(e.getKey().split(",")));
+            Check.mute(java.util.Set.of(e[0].split(",")));
             String silent = report(Map.of("selftest-runner", "true", "runs", "2"));
             Check.mute(java.util.Set.of());
-            check("every difference: the rule '" + e.getKey() + "' says what it answers for, and without it the line for what no rule judged says it",
+            check("every difference: the rule '" + e[0] + "' says what it answers for, and without it the line for what no rule judged says " + e[3],
                     !spoken.contains(NO_RULE) && silent.contains("      " + path + "  [self test]\n")
-                    && silent.contains("\n        the reports of this file as it was and after the change differ in ways " + NO_RULE));
+                    && silent.contains("\n        the reports of this file as it was and after the change differ in ways " + NO_RULE + ": " + e[3]));
             write(repo, path, was);
         }
 
