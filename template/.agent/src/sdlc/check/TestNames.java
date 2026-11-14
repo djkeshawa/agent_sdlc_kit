@@ -51,11 +51,12 @@ public final class TestNames {
     /**
      * True when a script file builds test names while it runs (it.each, a template with ${...}, a
      * variable or a sum of strings as the name): its reported names cannot all be read from its
-     * text, so "this name is not declared" does not mean "this test is new".
+     * text, so "this name is not declared" does not mean "this test is new". The same holds for a
+     * file with a declaration that could not be read to its end.
      */
     public static boolean namesBuiltAtRunTime(String path, String text) {
         if (text == null || !Code.isScript(path)) return false;
-        return Declared.script(path, text).stream().anyMatch(item -> item.test() && item.generated());
+        return Declared.script(path, text).stream().anyMatch(item -> item.test() && item.generated() || item.unsure());
     }
 
     /** The value of a script string literal's inside, with its escapes (quotes, line break, tab, hexadecimal and Unicode forms) resolved; an escape it does not know stands for its character. */

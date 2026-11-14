@@ -287,13 +287,18 @@ public final class Contracts {
      * "Orders" and "orders" two channels.
      */
     public static String normalize(String op) {
-        String s = op.strip().replaceAll("\\s+", " ");
-        int sp = s.indexOf(' ');
-        if (sp > 0 && METHODS.contains(s.substring(0, sp).toLowerCase(Locale.ROOT))) {
-            return s.substring(0, sp).toUpperCase(Locale.ROOT) + " " + s.substring(sp + 1).replaceAll("\\{[^}/]*\\}", "{}");
+        String s = op.strip();
+        java.util.regex.Matcher m = HTTP_OPERATION.matcher(s);
+        if (m.matches() && METHODS.contains(m.group(1).toLowerCase(Locale.ROOT))) {
+            return m.group(1).toUpperCase(Locale.ROOT) + " " + m.group(2).replaceAll("\\{[^}/]*\\}", "{}");
         }
-        return s;
+        return s; // a message and its channel: as written, white space inside included
     }
+
+    private static final java.util.regex.Pattern HTTP_OPERATION = java.util.regex.Pattern.compile("(\\S+)\\s+(\\S.*)");
+
+    /** The mark of an allowance whose operations are written as normalize gives them. Older ones dropped a slash at the end and the case of messages. */
+    public static final String EXACT = "exact";
 
     /** A path a client calls (with or without {params}) matches a spec path template. */
     public static boolean pathMatches(String template, String called) {
@@ -397,6 +402,14 @@ public final class Contracts {
             }
             Set<String> add = new LinkedHashSet<>(Work.strings(entry.get("add")));
             Set<String> remove = new LinkedHashSet<>(Work.strings(entry.get("remove")));
+            boolean named = !remove.isEmpty() || add.stream().anyMatch(a -> !a.equals("*"));
+            if (named && !EXACT.equals(Work.str(allowance.get("operations")))) {
+                // written by an earlier version of the kit, which did not keep a slash at the end of a path or the case of a
+                // message: such a list cannot say which operation was meant
+                fails.add("The contract allowance " + allowanceRel + " was written by an earlier version of the kit and does not name its operations exactly. Write it again from the approved solution "
+                        + "(java .agent/Sdlc.java tasks create " + story + ") and commit it" + (ci ? "; in a pull request build it is read from " + onBase + ", so merge it there first, in a pull request of its own" : ""));
+                continue;
+            }
             boolean breaking = "true".equals(Work.str(entry.get("breaking")));
             for (Change ch : changes) {
                 String op = normalize(ch.operation());

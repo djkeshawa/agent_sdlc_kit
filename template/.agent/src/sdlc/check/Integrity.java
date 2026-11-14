@@ -87,8 +87,8 @@ public final class Integrity {
     // the @ of an annotation, and other members may stand between (it.concurrent.skip, test.skip.each).
     private static final Pattern SCRIPT_SWITCH = Pattern.compile(
             "\\b(?:it|test|describe|context|suite)(?:\\s*\\.\\s*\\w+)*?\\s*\\.\\s*(?:skip|todo|only)\\b|\\bx(?:it|test|describe|context)(?=\\s*\\()|\\bf(?:it|describe)(?=\\s*\\()");
-    private static final Pattern OTHER_SWITCH = Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*)*(?:Disabled|DisabledIf\\w*|Ignore)\\b|assume(?:True|That)\\s*\\(\\s*false\\s*\\)"
-            + "|assumeFalse\\s*\\(\\s*true\\s*\\)|@pytest\\.mark\\.skip|@unittest\\.skip|\\bt\\.Skip(?:Now)?(?=\\s*\\()");
+    private static final Pattern OTHER_SWITCH = Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*)*(?:Disabled|DisabledIf\\w*|Ignore)\\b|assume(?:True|That)\\s*\\(\\s*false\\s*[,)]"
+            + "|assumeFalse\\s*\\(\\s*true\\s*[,)]|\\bAssumptions\\s*\\.\\s*abort\\s*\\(|@pytest\\.mark\\.skip|@unittest\\.skip|\\bt\\.Skip(?:Now)?(?=\\s*\\()");
     private static final Pattern DECLARED_NEXT = Pattern.compile("\\b(?:def|func)\\s+(\\w+)");
 
     /**
@@ -112,15 +112,28 @@ public final class Integrity {
      * function that follows it. Comments and the insides of strings are not code.
      */
     public static List<Switch> switches(String path, String text) {
+        return switches(path, text, true);
+    }
+
+    /** As above. With placed false a test is named without the groups around it: for a file whose groups could not be read to their ends. */
+    private static List<Switch> switches(String path, String text, boolean placed) {
         List<Switch> out = new ArrayList<>();
         if (text == null) return out;
+        String code = Code.mask(path, text);
         if (Code.isScript(path) || isJava(path)) {
-            for (Declared.Item item : Code.isScript(path) ? Declared.script(path, text) : Declared.java(path, text)) {
-                for (String how : item.switches()) out.add(new Switch(how, item.where()));
+            for (Declared.Item item : declarations(path, text)) {
+                for (String how : item.switches()) out.add(new Switch(how, placed ? item.where() : item.name()));
             }
+            // Never fewer than the code holds. A switch the declarations did not account for (written on something this
+            // reading does not know as a test) is still a switch.
+            int inCode = 0;
+            for (Pattern p : Code.isScript(path) ? List.of(SCRIPT_SWITCH) : List.of(Declared.JAVA_OFF, Declared.JAVA_ASSUME)) {
+                Matcher m = p.matcher(code);
+                while (m.find()) inCode++;
+            }
+            for (int i = out.size(); i < inCode; i++) out.add(new Switch("skip or focus", UNPLACED));
             return out;
         }
-        String code = Code.mask(path, text);
         Matcher m = OTHER_SWITCH.matcher(code);
         while (m.find()) {
             Matcher next = DECLARED_NEXT.matcher(code).region(m.end(), Math.min(code.length(), m.end() + 800));
@@ -129,15 +142,35 @@ public final class Integrity {
         return out;
     }
 
+    private static final String UNPLACED = "something the reading could not tie to a test";
+
+    private static List<Declared.Item> declarations(String path, String text) {
+        return Code.isScript(path) ? Declared.script(path, text) : Declared.java(path, text);
+    }
+
+    /** True when a group or class of the file could not be read to its end: what stands in which group is then not known. */
+    private static boolean groupsUnsure(String path, String text) {
+        if (text == null || !(Code.isScript(path) || isJava(path))) return false;
+        return declarations(path, text).stream().anyMatch(item -> item.group() && item.unsure());
+    }
+
+    /** How many declarations of the file could not be read to their end. */
+    public static int unsure(String path, String text) {
+        if (text == null || !(Code.isScript(path) || isJava(path))) return 0;
+        return (int) declarations(path, text).stream().filter(Declared.Item::unsure).count();
+    }
+
     /**
      * The switches a file has now and did not have before. Each one is matched with one of the
      * same kind on the same test in the same place: a switch taken off one test does not make up
-     * for one put on another.
+     * for one put on another. Where the groups of either version could not be read, tests are
+     * matched by their own names only.
      */
     public static List<Switch> addedSwitches(String path, String before, String after) {
-        List<Switch> was = switches(path, before);
+        boolean placed = !groupsUnsure(path, before) && !groupsUnsure(path, after);
+        List<Switch> was = switches(path, before, placed);
         List<Switch> added = new ArrayList<>();
-        for (Switch s : switches(path, after)) if (!was.remove(s)) added.add(s);
+        for (Switch s : switches(path, after, placed)) if (!was.remove(s)) added.add(s);
         return added;
     }
 
@@ -161,6 +194,15 @@ public final class Integrity {
     /** True when a line holds one of the switches this class reads from whole files. */
     public static boolean builtInSwitch(String line) {
         return SCRIPT_SWITCH.matcher(line).find() || OTHER_SWITCH.matcher(line).find();
+    }
+
+    /**
+     * A line with its built-in switches taken out. What a configured pattern still finds in it is
+     * the repository's own (a helper of its own that skips, a comment directive) and is judged by
+     * the line; the built-in ones are judged from the whole file.
+     */
+    public static String withoutBuiltInSwitches(String line) {
+        return OTHER_SWITCH.matcher(SCRIPT_SWITCH.matcher(line).replaceAll(" ")).replaceAll(" ");
     }
 
     /** The places of that kind a file has now and did not have before. */
@@ -214,7 +256,7 @@ public final class Integrity {
     private final Set<Finding> out = new LinkedHashSet<>();
     /** Test files whose edit removed a test case; their assertion count is not compared. */
     private final Set<String> lostCases = new LinkedHashSet<>();
-    private Map<String, Set<String>> gained;
+    private Map<String, List<String>> gained;
 
     /**
      * The scan reads what the change wrote, so its work per line and per file is bounded. Nothing is
@@ -283,6 +325,9 @@ public final class Integrity {
             read.add(path);
             for (Switch s : addedSwitches(path, before(path), after(path))) problem(s.focuses() ? "test focused" : "test switched off", path,
                     s.focuses() ? "only this test runs, the others in the file are skipped: " + s.shown() : s.shown());
+            int unsure = unsure(path, after(path)) - unsure(path, before(path));
+            if (unsure > 0) note("could not be read to its end", path, unsure + (unsure == 1 ? " declaration of a test or group" : " declarations of tests or groups")
+                    + " could not be read to the end (the reader lost count of the brackets). Its switches are still counted; which group a test stands in is not known for this file");
             List<String> inText = addedSwitchesInText(path, before(path), after(path));
             if (!inText.isEmpty()) note("switch in a comment or a string", path, inText.size() + (inText.size() == 1 ? " place looks" : " places look")
                     + " like a skipped or focused test inside a comment or a string (" + inText.get(0) + "). That switches nothing off, unless the file is written so that the reading took code for text: look at it");
@@ -291,8 +336,9 @@ public final class Integrity {
         for (String hit : Checks.disabledTests(added)) {
             String code = code(hitLine(hit));
             if (!Checks.containsDisabled(code)) continue;
-            // a built-in switch in a file that was read above is judged there, with the file around it
-            if (read.contains(hitPath(hit)) && (SCRIPT_SWITCH.matcher(code).find() || OTHER_SWITCH.matcher(code).find())) continue;
+            // a built-in switch in a file that was read above is judged there, with the file around it; what else the
+            // repository's patterns find on the line is judged here
+            if (read.contains(hitPath(hit)) && !Checks.containsDisabled(withoutBuiltInSwitches(code))) continue;
             switchedOff(hitPath(hit), hitLine(hit));
         }
     }
@@ -419,6 +465,43 @@ public final class Integrity {
         }
     }
 
+    /** One declared test: where it stands, what it is called, and its text without the title. */
+    private record Case(String where, String title, String body) {}
+
+    /** The tests a file declares. For scripts and Java, read from the declarations; a title computed while the file runs is named by its expression. */
+    private static List<Case> cases(String path, String text) {
+        List<Case> out = new ArrayList<>();
+        if (text == null) return out;
+        if (!(Code.isScript(path) || isJava(path))) {
+            for (String name : TestNames.declared(path, text)) out.add(new Case(name, name, null));
+            return out;
+        }
+        for (Declared.Item item : declarations(path, text)) {
+            if (!item.test()) continue;
+            String body = null;
+            if (!item.unsure() && item.end() <= text.length() && item.body() <= item.end()) {
+                if (isJava(path)) {
+                    int annotation = text.lastIndexOf("@Test", item.start());
+                    String head = annotation >= 0 && item.start() - annotation < 600 ? text.substring(annotation, item.start()) : ""; // JUnit 4: @Test(expected = ...)
+                    body = head + text.substring(item.body(), Math.min(text.length(), item.end() + 1));
+                } else {
+                    body = text.substring(item.body(), item.end());
+                }
+            }
+            out.add(new Case(item.where(), item.name(), body));
+        }
+        return out;
+    }
+
+    /** The cases of one list that the other does not have, one for one, by where they stand. */
+    private static List<Case> without(List<Case> all, List<Case> taken) {
+        List<String> left = new ArrayList<>();
+        for (Case c : taken) left.add(c.where());
+        List<Case> out = new ArrayList<>();
+        for (Case c : all) if (!left.remove(c.where())) out.add(c);
+        return out;
+    }
+
     private void deletedTestFiles() {
         for (String path : change.paths("D")) {
             if (!isTestFile(path)) continue;
@@ -428,49 +511,51 @@ public final class Integrity {
                 note("test file moved", path, "the same file is now at " + twin);
                 continue;
             }
-            Set<String> names = TestNames.declared(path, was);
-            if (names.isEmpty() && !testNamed(path)) {
+            List<Case> cases = cases(path, was);
+            if (cases.isEmpty() && !testNamed(path)) {
                 note("test support file deleted", path, "it declares no test cases that a simple reading can find");
                 continue;
             }
             Set<String> lost = new LinkedHashSet<>();
             Set<String> to = new TreeSet<>();
-            for (String name : names) {
-                String dest = movedTo(name, path);
-                if (dest == null) lost.add(name);
+            for (Case c : cases) {
+                String dest = movedTo(c.title(), path);
+                if (dest == null) lost.add(c.title());
                 else to.add(dest);
             }
-            if (!names.isEmpty() && lost.isEmpty()) note("test file moved", path, "all " + names.size() + " of its test cases are now in " + String.join(", ", to));
-            else problem("test file deleted", path, names.isEmpty() ? "the file is gone"
-                    : lost.size() + " of its " + names.size() + " test cases are not found elsewhere in the change: " + String.join(", ", lost));
+            if (!cases.isEmpty() && lost.isEmpty()) note("test file moved", path, "all " + cases.size() + " of its test cases are now in " + String.join(", ", to));
+            else problem("test file deleted", path, cases.isEmpty() ? "the file is gone"
+                    : lost.size() + " of its " + cases.size() + " test cases are not found elsewhere in the change: " + String.join(", ", lost));
         }
     }
 
     private void removedTestCases() {
         for (String path : change.paths("M")) {
             if (!isTestFile(path)) continue;
-            Set<String> gone = new LinkedHashSet<>(TestNames.declared(path, before(path)));
-            gone.removeAll(TestNames.declared(path, after(path)));
+            List<Case> was = cases(path, before(path)), now = cases(path, after(path));
+            // by where each stands: a test of the same title in another group is another test
+            List<Case> gone = without(was, now);
             if (!gone.isEmpty()) lostCases.add(path);
-            List<String> lost = new ArrayList<>();
-            for (String name : gone) {
-                String dest = movedTo(name, path);
-                if (dest == null) lost.add(name);
-                else note("test moved", path, name + " is now in " + dest);
+            List<Case> lost = new ArrayList<>();
+            for (Case c : gone) {
+                String dest = movedTo(c.title(), path);
+                if (dest == null) lost.add(c);
+                else note("test moved", path, c.title() + " is now in " + dest);
             }
             if (lost.isEmpty()) continue;
             // a rename keeps the test's body under a new name; a new test with another body does not make up for one that is gone
-            Set<String> fresh = new LinkedHashSet<>(TestNames.declared(path, after(path)));
-            fresh.removeAll(TestNames.declared(path, before(path)));
+            List<Case> fresh = without(now, was);
             List<String> renamed = new ArrayList<>(), removed = new ArrayList<>();
-            for (String name : lost) {
-                String was = squeezed(body(path, before(path), name));
-                String now = was == null ? null : fresh.stream().filter(n -> was.equals(squeezed(body(path, after(path), n)))).findFirst().orElse(null);
-                if (now == null) {
-                    removed.add(name);
+            for (Case c : lost) {
+                String body = squeezed(c.body());
+                Case twin = body == null ? null : fresh.stream().filter(f -> body.equals(squeezed(f.body()))).findFirst().orElse(null);
+                // named by its title; by where it stands when the title alone would not tell it from another
+                boolean titleTells = now.stream().noneMatch(n -> n.title().equals(c.title())) && (twin == null || !twin.title().equals(c.title()));
+                if (twin == null) {
+                    removed.add(titleTells ? c.title() : c.where());
                 } else {
-                    renamed.add(name + " is now " + now);
-                    fresh.remove(now);
+                    renamed.add((titleTells ? c.title() : c.where()) + " is now " + (titleTells ? twin.title() : twin.where()));
+                    fresh.remove(twin);
                 }
             }
             if (!renamed.isEmpty()) note("test renamed", path, String.join(", ", renamed));
@@ -485,20 +570,21 @@ public final class Integrity {
         return s.isEmpty() ? null : s;
     }
 
-    /** The file the change added a test case of this name to, other than the one it left; null when there is none. */
-    private String movedTo(String name, String from) {
+    /** The file the change added a test case of this title to, other than the one it left; null when there is none. Each gained case answers once. */
+    private String movedTo(String title, String from) {
         if (gained == null) {
             gained = new TreeMap<>();
             for (String path : change.paths("AM")) {
                 if (!isTestFile(path)) continue;
-                Set<String> names = new LinkedHashSet<>(TestNames.declared(path, after(path)));
-                names.removeAll(TestNames.declared(path, before(path)));
-                gained.put(path, names);
+                List<String> titles = new ArrayList<>();
+                for (Case c : without(cases(path, after(path)), cases(path, before(path)))) titles.add(c.title());
+                gained.put(path, titles);
             }
         }
-        for (Map.Entry<String, Set<String>> e : gained.entrySet()) if (!e.getKey().equals(from) && e.getValue().contains(name)) return e.getKey();
+        for (Map.Entry<String, List<String>> e : gained.entrySet()) if (!e.getKey().equals(from) && e.getValue().remove(title)) return e.getKey();
         return null;
     }
+
 
     private void skipFlags() {
         // a pom is read as XML, whatever its line breaks; when it cannot be parsed, its added lines are read as text like any other build file
@@ -657,16 +743,14 @@ public final class Integrity {
     private void emptyTests() {
         for (String path : change.paths("AM")) {
             if (!isTestFile(path) || !(isJava(path) || isScript(path))) continue;
-            String now = after(path);
-            String was = before(path);
-            Set<String> old = TestNames.declared(path, was);
-            for (String name : TestNames.declared(path, now)) {
-                String body = body(path, now, name);
+            List<Case> was = cases(path, before(path));
+            for (Case c : cases(path, after(path))) {
+                String body = c.body();
                 if (body == null || asserts(path, body)) continue;
                 if (isScript(path) && !body.contains("=>") && !body.contains("function")) continue; // it.todo('x'): no body to read
-                boolean edited = old.contains(name);
-                if (edited && squash(body).equals(squash(body(path, was, name)))) continue;
-                note("appears to assert nothing", path, name + " (" + (edited ? "edited" : "new") + "): no assert, expect, verify or fail call that a simple reading can find");
+                Case old = was.stream().filter(w -> w.where().equals(c.where())).findFirst().orElse(null);
+                if (old != null && squash(body).equals(squash(old.body()))) continue;
+                note("appears to assert nothing", path, c.title() + " (" + (old != null ? "edited" : "new") + "): no assert, expect, verify or fail call that a simple reading can find");
             }
         }
     }
@@ -791,26 +875,6 @@ public final class Integrity {
         Matcher m = p.matcher(text);
         while (m.find()) n++;
         return n;
-    }
-
-    /** A test case's text: a Java method's annotations and body, or a script's whole it(...) call; null when it cannot be found. */
-    private static String body(String path, String text, String name) {
-        if (text == null) return null;
-        if (isJava(path)) {
-            Matcher m = Pattern.compile("\\bvoid\\s+" + Pattern.quote(name) + "\\s*\\(").matcher(text);
-            if (!m.find()) return null;
-            int open = text.indexOf('{', m.end());
-            int close = open < 0 ? -1 : closing(text, open, '{', '}');
-            if (close < 0) return null;
-            int annotation = text.lastIndexOf("@Test", m.start());
-            String head = annotation >= 0 && m.start() - annotation < 600 ? text.substring(annotation, m.start()) : ""; // JUnit 4: @Test(expected = ...)
-            return head + text.substring(open, close + 1);
-        }
-        Matcher m = Pattern.compile("\\b(?:it|test)(?:\\.\\w+)*\\s*\\(\\s*(['\"`])" + Pattern.quote(name) + "\\1").matcher(text);
-        if (!m.find()) return null;
-        int open = text.indexOf('(', m.start());
-        int close = closing(text, open, '(', ')');
-        return close < 0 ? null : text.substring(m.end(), close + 1); // without the name: a renamed test has the same body
     }
 
     /** The index of the bracket that closes the one at open, skipping strings and comments; -1 when there is none. */

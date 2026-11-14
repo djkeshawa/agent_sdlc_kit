@@ -279,6 +279,18 @@ final class IntegrityTests {
         write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\nconst example = `\nit\n  .skip('documentation example')\n`;\n");
         check("integrity: nor inside a template string that runs over several lines", problems(scan(repo)) == 0);
         check("integrity: but the place is said, as a note", count(scan(repo), "switch in a comment or a string") == 1);
+        // two groups with a test of the same title: taking one group away takes a test away
+        write(repo, "src/app.test.ts", "describe('A', () => {\n  it('works', () => { check(1) })\n})\ndescribe('B', () => {\n  it('works', () => { check(2) })\n})\n");
+        git(repo, "add", "-A");
+        git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "two groups");
+        write(repo, "src/app.test.ts", "describe('A', () => {\n  it('works', () => { check(1) })\n})\n");
+        check("integrity: a test removed from one of two groups that share its title is a test removed", only(scan(repo), Level.PROBLEM, "test removed", "src/app.test.ts", "B > works"));
+        write(repo, "src/app.test.ts", "describe('A', () => {\n  it('works', () => { check(1) })\n})\ndescribe('B', () => {\n  it.each([[1, 2]])('adds %i', async (a, b) => {\n    expect(a + b).toBe(3)\n  })\n})\n");
+        git(repo, "add", "-A");
+        git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a table of cases");
+        write(repo, "src/app.test.ts", "describe('A', () => {\n  it('works', () => { check(1) })\n})\ndescribe('B', () => {\n  it.each([[1, 2]])('sums %i', async (a, b) => {\n    expect(a + b).toBe(3)\n  })\n})\n");
+        check("integrity: a test with a table of cases that is only renamed is a rename", problems(scan(repo)) == 0 && only(scan(repo), Level.NOTE, "test renamed", "src/app.test.ts", "adds %i is now sums %i"));
+        git(repo, "reset", "-q", "--hard", "HEAD~2");
         // a folder the repository itself names as tests (paths.test), where the built-in idea of a test file does not reach
         write(repo, "specs/foo.ts", "it('a', () => { expect(1).toBe(1) })\n");
         git(repo, "add", "-A");
@@ -313,7 +325,37 @@ final class IntegrityTests {
                 "class ATest {\n  class X { @Test void works() {} }\n  class Y { @Disabled @Test void works() {} }\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > Y > works"))));
         check("integrity: a switch on something that is no void method is not lost", sdlc.check.Integrity.addedSwitches("ATest.java",
                 "class ATest {\n  @TestFactory Stream<DynamicTest> all() { return null; }\n}\n",
-                "class ATest {\n  @Disabled @TestFactory Stream<DynamicTest> all() { return null; }\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest"))));
+                "class ATest {\n  @Disabled @TestFactory Stream<DynamicTest> all() { return null; }\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > all"))));
+        check("integrity: an annotation moved onto the declaration before, which is no void method, is found", sdlc.check.Integrity.addedSwitches("ATest.java",
+                "class ATest {\n  @TestFactory Stream<DynamicTest> all() { return null; }\n  @Disabled @Test void works() {}\n}\n",
+                "class ATest {\n  @Disabled @TestFactory Stream<DynamicTest> all() { return null; }\n  @Test void works() {}\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > all"))));
+        check("integrity: an assumption that never holds is found with a reason after it too", sdlc.check.Integrity.addedSwitches("ATest.java",
+                "class ATest {\n  @Test void a() { run(); }\n}\n", "class ATest {\n  @Test void a() { assumeTrue(false, \"temporarily unsupported\"); run(); }\n}\n")
+                .equals(List.of(new sdlc.check.Integrity.Switch("assume", "ATest > a"))));
+        check("integrity: type arguments before the call do not hide the test", sdlc.check.Integrity.addedSwitches("a.test.ts",
+                "it.each<[number, number]>([[1, 2]])(\n  'adds %i', async (a, b) => { expect(a + b).toBe(3) }\n)\n",
+                "it.skip.each<[number, number]>([[1, 2]])(\n  'adds %i', async (a, b) => { expect(a + b).toBe(3) }\n)\n").equals(List.of(new sdlc.check.Integrity.Switch("skip", "adds %i"))));
+        String jsx = "('renders', () => {\n  render(<div>It's ready</div>);\n  expect(screen.getByText(\"It's ready\")).toBeVisible();\n});\n";
+        check("integrity: an apostrophe in the text of a JSX element does not hide the test around it",
+                sdlc.check.Integrity.addedSwitches("a.test.tsx", "it" + jsx, "it.skip" + jsx).equals(List.of(new sdlc.check.Integrity.Switch("skip", "renders")))
+                && sdlc.check.TestNames.counts("a.test.tsx", "it" + jsx).containsKey("renders") && sdlc.check.Integrity.unsure("a.test.tsx", "it" + jsx) == 0);
+        check("integrity: a skip moved between two tests whose titles are computed is found", sdlc.check.Integrity.addedSwitches("a.test.ts",
+                "it.skip(legacy, () => { expect(1).toBe(1) });\nit(critical, () => { expect(1).toBe(1) });\n",
+                "it(legacy, () => { expect(1).toBe(1) });\nit.skip(critical, () => { expect(1).toBe(1) });\n").equals(List.of(new sdlc.check.Integrity.Switch("skip", "?(critical)"))));
+        check("integrity: a skip on something the reading does not know as a test is still a skip",
+                sdlc.check.Integrity.addedSwitches("a.test.ts", "helpers.it('a', () => {})\n", "helpers.it.skip('a', () => {})\n").size() == 1);
+        check("integrity: a bracket the reader cannot close makes a declaration unsure, and its skip is kept",
+                sdlc.check.Integrity.unsure("a.test.ts", "it.skip('open', () => {\n  expect(f(1).toBe(1)\n") == 1
+                && sdlc.check.Integrity.addedSwitches("a.test.ts", "", "it.skip('open', () => {\n  expect(f(1).toBe(1)\n").size() == 1);
+        Config own = Ctx.cfg;
+        Ctx.cfg = Config.parse("stack: node\ntests:\n  disabledPatterns: [\"testWithDb\\\\.skip\", \"\\\\b(it|test)\\\\.skip\\\\(\"]\n");
+        try {
+            check("integrity: a repository's own switch on a line that also holds a built-in one is still the repository's to judge",
+                    sdlc.workflow.Checks.containsDisabled(sdlc.check.Integrity.withoutBuiltInSwitches("it.skip('legacy', a); testWithDb.skip('critical', b);"))
+                    && !sdlc.workflow.Checks.containsDisabled(sdlc.check.Integrity.withoutBuiltInSwitches("it.skip('legacy', a); testWithDb('critical', b);")));
+        } finally {
+            Ctx.cfg = own;
+        }
         check("integrity: the title of a test with a table of cases is the title, not the table", sdlc.check.Integrity.addedSwitches("a.test.ts",
                 "it.skip.each([['row']])('a', () => {})\nit.each([['row']])('b', () => {})\n", "it.each([['row']])('a', () => {})\nit.skip.each([['row']])('b', () => {})\n")
                 .equals(List.of(new sdlc.check.Integrity.Switch("skip", "b"))));

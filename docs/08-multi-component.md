@@ -209,7 +209,10 @@ files is compared with the base branch (OpenAPI 3 / 2 paths, AsyncAPI 2 / 3 mess
   operations its slice lists, and breaking changes only if the solution says `compatibility: breaking`.
   An operation is matched exactly: the method in any case and the path with its parameters
   unnamed, nothing else (`/orders` and `/orders/` are two operations, and so are two messages
-  that differ in case). It is protected, so agents cannot widen it. In a pull request build `check-pr` reads it from
+  that differ in case or in white space). It is protected, so agents cannot widen it.
+  An allowance written by a kit version before this rule lists operations in a looser form
+  and is refused with a message that says so: run `tasks create <STORY>` again to write it
+  from the approved solution, and merge it (to the base branch first, for CI). In a pull request build `check-pr` reads it from
   the base branch, so it is merged first, in a pull request of its own that architects review;
   the copy inside the pull request that changes the contract is not used.
 - `check-pr` and the PR gate fail an added or removed operation the allowance does not list,

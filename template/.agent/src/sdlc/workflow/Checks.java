@@ -184,7 +184,7 @@ public final class Checks {
         // configured patterns that are also built-in switches are judged below from the whole file, where a comment or a
         // string is known as one; the others (a repository's own marks, comment directives) are judged by the added line
         List<String> disabled = new ArrayList<>();
-        for (String hit : disabledTests(added)) if (!sdlc.check.Integrity.builtInSwitch(hit.substring(hit.indexOf(": ") + 2))) disabled.add(hit);
+        for (String hit : disabledTests(added)) if (containsDisabled(sdlc.check.Integrity.withoutBuiltInSwitches(hit.substring(hit.indexOf(": ") + 2)))) disabled.add(hit);
         // a switch that no added line shows (it, a line break, .skip; it.concurrent.skip): read from the whole file, before and
         // after, each with the test it stands on, so that one taken off a test does not make up for one put on another
         String branchPoint = Contracts.mergeBase(base);

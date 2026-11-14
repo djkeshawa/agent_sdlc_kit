@@ -61,12 +61,16 @@ final class Code {
                 blank(out, i + 3, end < 0 ? n : end);
                 i = end < 0 ? n : end + 3;
             } else if (c == '"' || c == '\'') {
-                // ends at its closing quote, or at the end of the line when there is none
+                // A string ends at its closing quote on the same line. A quote with none is not a string: it is an
+                // apostrophe in the text of a JSX element (It's ready), and what follows it on the line is code.
                 int j = i + 1;
                 while (j < n && text.charAt(j) != c && text.charAt(j) != '\n') j += text.charAt(j) == '\\' ? 2 : 1;
-                j = Math.min(j, n);
+                if (j >= n || text.charAt(j) != c) {
+                    i++;
+                    continue;
+                }
                 blank(out, i + 1, j);
-                i = j < n && text.charAt(j) == c ? j + 1 : j;
+                i = j + 1;
             } else if (c == '`' && script) {
                 if (text.indexOf('`', i + 1) < 0) {
                     i++; // no second backtick in the rest of the file: not a template string
