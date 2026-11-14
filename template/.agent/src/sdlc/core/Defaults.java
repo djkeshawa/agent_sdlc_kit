@@ -232,7 +232,7 @@ public final class Defaults {
               ask: [pom.xml, "**/pom.xml", .mvn/**, mvnw, mvnw.cmd, "**/src/main/resources/db/migration/**", "**/checkstyle*.xml", "**/spotbugs*.xml", "**/lombok.config"]
             tests:
               codeExtensions: [java, kt, groovy, scala]
-              disabledPatterns: ["@([\\\\w$]+\\\\.)*(Disabled|DisabledIf\\\\w*|Ignore)\\\\b", "assume(True|That)\\\\s*\\\\(\\\\s*false\\\\s*\\\\)", "assumeFalse\\\\s*\\\\(\\\\s*true\\\\s*\\\\)"]
+              disabledPatterns: ["@([\\\\w$]+\\\\.)*(Disabled|Ignore)\\\\b", "assume(True|That)\\\\s*\\\\(\\\\s*false\\\\s*\\\\)", "assumeFalse\\\\s*\\\\(\\\\s*true\\\\s*\\\\)"]
             """;
 
     static final String JAVA_GRADLE = """
@@ -253,7 +253,7 @@ public final class Defaults {
               ask: [build.gradle, "**/build.gradle", build.gradle.kts, "**/build.gradle.kts", "settings.gradle*", gradle/**, gradlew, gradlew.bat, "**/src/main/resources/db/migration/**"]
             tests:
               codeExtensions: [java, kt, groovy, scala]
-              disabledPatterns: ["@([\\\\w$]+\\\\.)*(Disabled|DisabledIf\\\\w*|Ignore)\\\\b", "assume(True|That)\\\\s*\\\\(\\\\s*false\\\\s*\\\\)", "assumeFalse\\\\s*\\\\(\\\\s*true\\\\s*\\\\)"]
+              disabledPatterns: ["@([\\\\w$]+\\\\.)*(Disabled|Ignore)\\\\b", "assume(True|That)\\\\s*\\\\(\\\\s*false\\\\s*\\\\)", "assumeFalse\\\\s*\\\\(\\\\s*true\\\\s*\\\\)"]
             """;
 
     static final String NODE = """

@@ -5,6 +5,7 @@ import static sdlc.selftest.Asserts.check;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Stream;
@@ -195,6 +196,9 @@ final class IntegrityTests {
         write(repo, "web/__tests__/util.ts", "export const three = () => 3;\n");
         write(repo, "src/test/resources/Sample.java.txt", "class Sample {\n    @Test void x() {}\n}\n");
         write(repo, "specs/cases.ts", "it('a', () => { expect(1).toBe(1) })\n");
+        write(repo, "web/__tests__/example.ts", "/*\nit('example')\n*/\nexport const value = 1;\n");
+        write(repo, "web/__tests__/doc.ts", "export const doc = `\nit('example', () => {})\n`;\n");
+        write(repo, "web/__tests__/real.ts", "/* the cases */\nconst s = `x`;\ndescribe('real', () => {\n  it('a', () => {})\n})\n");
         git(repo, "add", "-A");
         git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "script files in a test folder");
         Files.delete(repo.resolve("web/__tests__/cases.ts"));
@@ -202,7 +206,14 @@ final class IntegrityTests {
         Files.delete(repo.resolve("web/__tests__/util.ts"));
         Files.delete(repo.resolve("src/test/resources/Sample.java.txt"));
         Files.delete(repo.resolve("specs/cases.ts"));
+        Files.delete(repo.resolve("web/__tests__/example.ts"));
+        Files.delete(repo.resolve("web/__tests__/doc.ts"));
+        Files.delete(repo.resolve("web/__tests__/real.ts"));
         List<Finding> goneScripts = scan(repo);
+        check("integrity: a deleted helper whose example stands in a comment or a template string over several lines is a note; real tests after them are found",
+                only(goneScripts, Level.NOTE, "test support file deleted", "web/__tests__/example.ts", "only a comment or a string in it mentions a test")
+                && only(goneScripts, Level.NOTE, "test support file deleted", "web/__tests__/doc.ts", "only a comment or a string in it mentions a test")
+                && only(goneScripts, Level.PROBLEM, "test file deleted", "web/__tests__/real.ts", "the file is gone"));
         check("integrity: a deleted script file whose code calls describe or it is a test file deleted; one that does not is a support file",
                 only(goneScripts, Level.PROBLEM, "test file deleted", "web/__tests__/cases.ts", "the file is gone")
                 && only(goneScripts, Level.NOTE, "test support file deleted", "web/__tests__/util.ts", "no test cases"));
@@ -382,8 +393,10 @@ final class IntegrityTests {
                 && Integrity.lintedSwitch("  * @Disabled until PAY-12") && Integrity.lintedSwitch("assertTrue(ok); // it.skip later"));
         check("integrity: a switch over two lines, with a quote in a regular expression on one and a comment between its words on the other, is found",
                 Integrity.lintedSwitches(List.of("const r = /'/; it", "/**/.skip('a', () => {})")).equals(List.of("const r = /'/; it /**/.skip('a', () => {})")));
-        check("integrity: a block comment between the words of a switch does not hide it on a line whose quotes cannot be told",
-                Integrity.lintedSwitch("const r = /'/; it /* ' */ .skip('a', () => {})")
+        // the lint reads a line two ways only (audit round 3, the step back): a block comment between a switch's words on a line
+        // whose quotes cannot be told is not seen (the guide lists it); the run of the file is the guard
+        check("integrity: a block comment between a switch's words, after a quote in a regular expression, is not seen; a URL is no switch",
+                !Integrity.lintedSwitch("const r = /'/; it /* ' */ .skip('a', () => {})")
                 && !Integrity.lintedSwitch("const url = 'http://example.com/it'; expect(skip).toBe(1)"));
         // the lint is a helper, not a guard: a quote in a regular expression before a trailing comment between a switch's words, over two
         // lines, is not seen (the guide lists it); the run of the file is the guard
@@ -416,6 +429,9 @@ final class IntegrityTests {
                 Integrity.lintedSwitch("// comment\u2028it.skip('a', () => {});") && !Integrity.lintedSwitch("// comment it.skip('a', () => {});"));
         check("integrity: an assumption with a matcher or a computed condition is not a switch",
                 Integrity.lintedSwitches(List.of("    Assume.assumeThat(false, is(false));", "    assumeTrue(ready(false));", "    @DisplayName(\"x\")")).isEmpty());
+        honestUsers();
+        usualSpellings();
+        bounded();
         // L1-1: an unconditional assumption put beside a conditional one is a line the change adds
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("        assertEquals(0, 1 - 1);", "        if (Boolean.getBoolean(\"skip.integration\")) assumeTrue(false);\n        assertEquals(0, 1 - 1);"));
         git(repo, "add", "-A");
@@ -454,16 +470,22 @@ final class IntegrityTests {
         }
         git(repo, "reset", "-q", "--hard", "HEAD~2");
         reset(repo);
-        // one long added line is linted as it was written: a switch whose words stand far apart in white space is still one line
+        // an added line longer than the lint reads is not read, and the report says so: a note, its run judges the file
         write(repo, "src/test/java/demo/LongTest.java", "@" + " ".repeat(10_000) + "Disabled class LongTest {}\n");
-        check("integrity: a switch on one long added line is found, its white space whatever it is", count(scan(repo), "test switched off") == 1);
+        List<Finding> longLine = scan(repo);
+        check("integrity: a switch on an added line longer than the lint reads is not read; a note says the line was not read",
+                count(longLine, "test switched off") == 0 && only(longLine, Level.NOTE, "lines too long for the switch lint", "src/test/java/demo/LongTest.java", "1 added line is longer than 2000 characters"));
         write(repo, "src/test/java/demo/LongTest.java", "class LongTest { String s = \"" + "x".repeat(50_000) + "\"; }\n@Disabled class Other {}\n");
-        check("integrity: a long line beside a switch does not count as lines of its own", only(scan(repo), Level.PROBLEM, "test switched off", "src/test/java/demo/LongTest.java", "@Disabled class Other {}"));
+        List<Finding> beside = scan(repo);
+        check("integrity: a long line beside a switch does not hide it, and is said as not read",
+                only(beside, Level.PROBLEM, "test switched off", "src/test/java/demo/LongTest.java", "@Disabled class Other {}")
+                && only(beside, Level.NOTE, "lines too long for the switch lint", "src/test/java/demo/LongTest.java", "not read for switches"));
         Files.delete(repo.resolve("src/test/java/demo/LongTest.java"));
         write(repo, "web/long.test.ts", "it.".repeat(300_000) + "x;\nit\n" + "it.".repeat(300_000) + "x;\n");
         long linted = System.nanoTime();
         List<Finding> chain = scan(repo);
-        check("integrity: a very long added line of a test file does not keep the lint busy", (System.nanoTime() - linted) / 1_000_000 < 5000 && count(chain, "test switched off") == 0);
+        check("integrity: a very long added line of a test file does not keep the lint busy", (System.nanoTime() - linted) / 1_000_000 < 5000 && count(chain, "test switched off") == 0
+                && only(chain, Level.NOTE, "lines too long for the switch lint", "web/long.test.ts", "2 added lines are longer"));
         reset(repo);
         // a test file is never read whole by the scan, whatever it does: each whole read is seen
         java.util.Set<String> wholly = new java.util.TreeSet<>();
@@ -503,6 +525,143 @@ final class IntegrityTests {
         check("integrity: and deleting that file is a test file deleted, not a file too large to scan",
                 only(scan(repo), Level.PROBLEM, "test file deleted", "web/big.test.ts", "the file is gone") && count(scan(repo), "too large to scan") == 0);
         git(repo, "reset", "-q", "--hard", "HEAD~1");
+    }
+
+    /** Audit round 3, findings 1 and 2: what honest work writes is not a switch. */
+    private static void honestUsers() {
+        // a conditional skip is not a switch: platform, browser and environment conditions are ordinary
+        List<String> conditional = List.of("@pytest.mark.skipif(False, reason=\"supported\")", "@pytest.mark.skipif(sys.platform == \"win32\", reason=\"posix only\")",
+                "@unittest.skipUnless(True, \"supported\")", "@unittest.skipIf(sys.platform == 'win32', 'posix only')",
+                "test.skip(false, \"unsupported browser\");", "test.fixme(false, \"unsupported browser\");",
+                "test.skip(browserName === 'webkit', 'not on Safari');", "test.skip(({ browserName }) => browserName !== 'chromium', 'Chromium only');",
+                "test.fixme(isMobile)", "it.skipIf(process.platform === 'win32')('posix', () => {})", "it.runIf(ci)('in CI', () => {})",
+                "@DisabledOnOs(OS.WINDOWS)", "@DisabledIfEnvironmentVariable(named = \"CI\", matches = \"true\")", "@DisabledIfSystemProperty(named = \"x\", matches = \"y\")",
+                "@DisabledIf(\"isWindows\")", "@EnabledIf(\"isLinux\")", "@EnabledOnJre(JRE.JAVA_21)", "@DisabledForJreRange(min = JRE.JAVA_8)");
+        List<String> hits = conditional.stream().filter(Integrity::lintedSwitch).toList();
+        if (!hits.isEmpty()) System.out.println("    conditional skips reported: " + hits);
+        check("integrity: a conditional skip (skipif, skipUnless, Playwright's test.skip(condition, ...), @DisabledOnOs, @DisabledIf...) is not a switch", hits.isEmpty());
+        check("integrity: a conditional skip with a plain true for its condition is a switch",
+                Integrity.lintedSwitch("@pytest.mark.skipif(True, reason=\"later\")") && Integrity.lintedSwitch("@unittest.skipIf(True, \"later\")")
+                && Integrity.lintedSwitch("@unittest.skipUnless(False, \"later\")") && Integrity.lintedSwitch("test.skip(true, 'later');")
+                && Integrity.lintedSwitch("test.fixme(true)") && Integrity.lintedSwitch("@DisabledIf(\"true\")") && Integrity.lintedSwitch("@EnabledIf(\"false\")"));
+        check("integrity: a skip whose title is computed is a declaration, a switch",
+                Integrity.lintedSwitch("it.skip(name, () => {})") && Integrity.lintedSwitch("describe.skip(suite.title, function () {")
+                && Integrity.lintedSwitch("test.skip(`x ${n}`, async () => {})"));
+        // a method named abort is declared, not called
+        check("integrity: a method declared with the name abort, with a return type, modifiers or generics, is not a switch",
+                !Integrity.lintedSwitch("  abort(): void {}") && !Integrity.lintedSwitch("  abort(reason?: string): Promise<void> {")
+                && !Integrity.lintedSwitch("  public abort(): void {}") && !Integrity.lintedSwitch("  abort<T>(value: T): T {")
+                && !Integrity.lintedSwitch("  abort(): void;") && !Integrity.lintedSwitch("  async abort() {") && !Integrity.lintedSwitch("  fun abort(): Unit {}"));
+        check("integrity: abort called alone is a switch, also as a branch of a ternary",
+                Integrity.lintedSwitch("    abort();") && Integrity.lintedSwitch("    late ? abort() : run();"));
+        // names that hold the words of a switch
+        check("integrity: another object's fit, a function declared fit, and words that hold a switch's letters are not switches",
+                Integrity.lintedSwitches(List.of("    model.fit(X_train, y_train)", "    def fit(self, X, y):", "    fitAddon.fit();", "    const skipped = rows.filter(r => r.only);",
+                        "    expect(benefit).toBe(1);", "    const opts = { skip: 10, take: 5 };", "    it('paginates', async () => { await repo.find({ skip: true }) })",
+                        "    result = fit(data)", "  next() { this.skip(10); }")).isEmpty());
+        // a skip from inside a test under a condition, on its line or the added line above it
+        check("integrity: a skip from inside a test under a condition is not a switch",
+                Integrity.lintedSwitches(List.of("    if not has_gpu: pytest.skip(\"needs a GPU\")", "    if testing.Short() { t.Skip(\"short mode\") }",
+                        "    if (!process.env.DB) this.skip();", "    self.skipTest('x') if broken else None")).isEmpty()
+                && Integrity.lintedSwitches(List.of("    if not has_gpu:", "        pytest.skip(\"needs a GPU\")")).isEmpty()
+                && Integrity.lintedSwitches(List.of("\tif testing.Short() {", "\t\tt.Skipf(\"short mode: %s\", why)", "\t}")).isEmpty()
+                && Integrity.lintedSwitches(List.of("    except ImportError:", "        raise unittest.SkipTest(\"needs numpy\")")).isEmpty()
+                && Integrity.lintedSwitches(List.of("  if (browserName === 'webkit') {", "    test.skip();")).isEmpty()
+                && !Integrity.lintedSwitch("  if (!process.env.CI) test.skip(true, 'local only');"));
+        check("integrity: a switch chosen by a condition is not a switch; one kept for later use is",
+                !Integrity.lintedSwitch("const describeIf = process.env.DB ? describe : describe.skip;") && !Integrity.lintedSwitch("(isCI ? it.skip : it)('x', () => {});")
+                && Integrity.lintedSwitch("const later = it.skip;") && Integrity.lintedSwitch("test.skip(true, 'later');"));
+    }
+
+    /** Audit round 3, finding 4: the usual spellings, each beside an honest neighbour. */
+    private static void usualSpellings() {
+        check("integrity: Vitest's option object that skips, focuses or marks to do is a switch, over lines too",
+                Integrity.lintedSwitch("test('x', { skip: true }, () => {})") && Integrity.lintedSwitch("it('x', { only: true }, () => {})")
+                && Integrity.lintedSwitch("describe('x', { todo: true }, () => {})") && Integrity.lintedSwitch("test('x', { timeout: 100, skip: true }, async () => {})")
+                && Integrity.lintedSwitches(List.of("test('x', {", "  skip: true,", "}, () => {")).size() == 1
+                && !Integrity.lintedSwitch("test('x', { skip: false }, () => {})") && !Integrity.lintedSwitch("test('x', { timeout: 100 }, () => {})"));
+        check("integrity: xit.each, fit.each and xdescribe.each are switches",
+                Integrity.lintedSwitch("xit.each([[1]])('x', (a) => {})") && Integrity.lintedSwitch("fit.each([[1]])('x', (a) => {})")
+                && Integrity.lintedSwitch("xdescribe.each([[1]])('x', () => {})") && Integrity.lintedSwitch("fit('x', () => {})"));
+        check("integrity: pytest's skip mark in pytestmark and in marks=, and xfail that does not run, are switches",
+                Integrity.lintedSwitch("pytestmark = pytest.mark.skip(reason=\"later\")") && Integrity.lintedSwitch("pytestmark = [pytest.mark.slow, pytest.mark.skip]")
+                && Integrity.lintedSwitch("    pytest.param(1, marks=pytest.mark.skip(reason=\"later\")),") && Integrity.lintedSwitch("@pytest.mark.xfail(run=False)")
+                && Integrity.lintedSwitch("@pytest.mark.xfail(reason=\"bug 12\", run=False)") && Integrity.lintedSwitch("    pytest.param(2, marks=pytest.mark.xfail(run=False)),"));
+        check("integrity: a mark kept for later, an xfail that runs, and a conditional xfail are not",
+                !Integrity.lintedSwitch("skip_slow = pytest.mark.skip(reason=\"need --runslow\")") && !Integrity.lintedSwitch("@pytest.mark.xfail(reason=\"bug 12\")")
+                && !Integrity.lintedSwitch("@pytest.mark.xfail(sys.platform == \"win32\", run=False, reason=\"x\")")
+                && !Integrity.lintedSwitch("@pytest.mark.xfail(run=False, condition=sys.platform == \"win32\")") && !Integrity.lintedSwitch("pytestmark = pytest.mark.slow"));
+        check("integrity: Go's t.Skipf, and the skips from inside a test as statements of their own, are switches where unconditional",
+                Integrity.lintedSwitch("\tt.Skipf(\"later: %s\", reason)") && Integrity.lintedSwitch("\tt.SkipNow()") && Integrity.lintedSwitch("    pytest.skip(\"later\")")
+                && Integrity.lintedSwitch("        self.skipTest(\"later\")") && Integrity.lintedSwitch("        raise unittest.SkipTest(\"later\")")
+                && Integrity.lintedSwitch("    this.skip();") && Integrity.lintedSwitch("  it('x', function () { this.skip(); });")
+                && Integrity.lintedSwitch("def test_later(): pytest.skip(\"later\")") && Integrity.lintedSwitch("  test.skip();"));
+        check("integrity: the same words that are not such a statement are not",
+                !Integrity.lintedSwitch("    # pytest.skip(\"later\")") && !Integrity.lintedSwitch("    doc = 'pytest.skip(x)'") && !Integrity.lintedSwitch("    s = mocker.skip(1)")
+                && !Integrity.lintedSwitch("    result = pytest.importorskip(\"numpy\")"));
+        check("integrity: Mocha's specify, TestNG's enabled = false, Vitest's skipIf(true) and runIf(false), and Jasmine's pending() are switches",
+                Integrity.lintedSwitch("specify.skip('x', () => {})") && Integrity.lintedSwitch("xspecify('x', () => {})") && Integrity.lintedSwitch("  @Test(enabled = false)")
+                && Integrity.lintedSwitch("  @Test(description = \"x\", enabled = false)") && Integrity.lintedSwitch("it.skipIf(true)('x', () => {})")
+                && Integrity.lintedSwitch("describe.runIf(false)('x', () => {})") && Integrity.lintedSwitch("    pending('later');"));
+        check("integrity: their honest neighbours are not",
+                !Integrity.lintedSwitch("  @Test(enabled = true)") && !Integrity.lintedSwitch("  @Test(expected = IllegalStateException.class)") && !Integrity.lintedSwitch("it.skipIf(isWindows)('x', () => {})")
+                && !Integrity.lintedSwitch("describe.runIf(process.env.DB)('x', () => {})") && !Integrity.lintedSwitch("    const p = pending(order);")
+                && !Integrity.lintedSwitch("    if (!ready) pending('not ready');") && !Integrity.lintedSwitch("specify('x', () => {})"));
+        check("integrity: a pending test, its whole declaration on one line, is a switch; a test with a body is not",
+                Integrity.lintedSwitch("it('pending test');") && Integrity.lintedSwitch("  test(\"later\")") && !Integrity.lintedSwitch("it('works', () => {});")
+                && !Integrity.lintedSwitch("it('works', async () => {") && !Integrity.lintedSwitch("  it(name);"));
+    }
+
+    /**
+     * Audit round 3, findings 6, 7 and 8: lines that made the lint slow. Far above the audit's
+     * sizes they are refused by the bound; within it, the same shapes on many lines are read in
+     * work that grows as what is given grows. Work is counted (Integrity.lintWork), so a slow
+     * machine does not fail these.
+     */
+    private static void bounded() {
+        String comments = "const x = '" + "/* ".repeat(1_000_000) + "';";
+        String identifier = "const skip" + "x".repeat(40_000_000) + " = 1;";
+        StringBuilder words = new StringBuilder("const a = \"");
+        for (int i = 0; i < 300_000; i++) words.append('w').append(i).append("\\u000a");
+        String escapes = words.append("\";").toString();
+        List<String> huge = List.of(comments, identifier, escapes, escapes, escapes);
+        long before = Integrity.lintWork(), started = System.nanoTime();
+        List<String> found = Integrity.lintedSwitches(huge);
+        long spent = Integrity.lintWork() - before, ms = (System.nanoTime() - started) / 1_000_000;
+        check("integrity: lines far longer than the audit's slow ones are not read: no work, and each is counted as unread",
+                found.isEmpty() && Integrity.unlinted(huge) == 5 && spent == 0 && ms < 1000);
+        // the same shapes within the bound, and lines of nothing but calls: the work for twice the lines is about twice the work
+        StringBuilder near = new StringBuilder("const a = \"");
+        for (int i = 0; near.length() < 1980; i++) near.append('w').append(i).append("\\u000a");
+        List<String> shapes = List.of("const x = '" + "/* ".repeat(660) + "';", "const skip" + "x".repeat(1980) + " = 1;", near + "\";",
+                "abort(".repeat(330), "assumeTrue(x, ".repeat(140), "it.".repeat(660) + "x;", "@a.".repeat(660), "test.skip(".repeat(190), "marks=[".repeat(280),
+                "it('x', { skip: 1 }, ".repeat(95), "`${`".repeat(490), "'".repeat(1990), "\\u".repeat(990), "it.skip ".repeat(249), "@Test(".repeat(330),
+                "@pytest.mark.skipif(".repeat(99));
+        for (String shape : shapes) {
+            long once = work(Collections.nCopies(60, shape)), twice = work(Collections.nCopies(120, shape));
+            long chars = 120L * shape.length();
+            boolean linear = twice <= 2.2 * once && twice <= 400 * chars;
+            if (!linear) System.out.println("    lint work, 60 and 120 lines of " + shape.substring(0, 20) + "...: " + once + ", " + twice + " (" + chars + " characters)");
+            check("integrity: lines like " + shape.substring(0, 12).replace('\n', ' ') + "... are read in work linear in what is given", linear);
+        }
+        for (String shape : List.of("const skip", "/* ", "abort(", "it.", "w0\\u000a", "' ")) {
+            int n = 1990 / shape.length();
+            long half = work(List.of(shape.repeat(n / 2))), full = work(List.of(shape.repeat(n)));
+            check("integrity: one line of '" + shape + "' twice as long is about twice the work", full <= 2.4 * half + 2000);
+        }
+        // many short lines, as a large honest change has
+        List<String> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 200_000; i++) many.add(i % 7 == 0 ? "  it('adds " + i + "', () => {" : "    expect(sum(" + i + ", 1)).toBe(" + (i + 1) + ");" + (i % 10 == 0 ? " // skip nothing" : ""));
+        long manyStarted = System.nanoTime(), manyWork = work(many);
+        long manyChars = many.stream().mapToLong(String::length).sum();
+        check("integrity: two hundred thousand short added lines are linted in work linear in them, and soon",
+                manyWork <= 400 * manyChars && (System.nanoTime() - manyStarted) / 1_000_000 < 20_000);
+    }
+
+    private static long work(List<String> lines) {
+        long before = Integrity.lintWork();
+        Integrity.lintedSwitches(lines);
+        return Integrity.lintWork() - before;
     }
 
     private static void build(Path repo) throws IOException {
