@@ -27,6 +27,8 @@ import sdlc.check.JUnitXml.Status;
  *   fails-with WORD     fails by assertion where prod.txt holds the word, else passes: a test the change breaks
  *   breaks-once WORD    where it holds the word, fails in the first run in that checkout and passes in later ones; else passes
  *   skip-later          not reported in the first run in that checkout; skipped in later ones
+ *   pass-with WORD      passes where prod.txt holds the word; where it lacks it, the case does not exist (a row an enum of the code gives)
+ *   pass-later          not reported in the first run in that checkout; passes in later ones (a source that gives another number of rows each time)
  * A name is reported as a script's string would give it: \' is a quote. A name with %i in it is
  * reported twice, with 1 and with 2 in its place (it.each, a parameterized method). A line
  * without ": " is not a case: it stands for the test's body. A name is reported as it is written,
@@ -123,8 +125,10 @@ final class SelfTestRunner implements Runner {
                     boolean has = how.length > 1 && prod.contains(how[1]);
                     if (how[0].equals("skip-without") && has) continue; // a test declared only where the word is missing
                     if (how[0].equals("skip-later") && call == 1) continue; // a case a provider gives only from the second run on
+                    if (how[0].equals("pass-later") && call == 1) continue;
+                    if (how[0].equals("pass-with") && !has) continue; // a row the code gives only where it holds the word
                     Status s = switch (how[0]) {
-                        case "pass" -> Status.PASSED;
+                        case "pass", "pass-with", "pass-later" -> Status.PASSED;
                         case "fail" -> Status.FAILED;
                         case "skip", "skip-without", "skip-later" -> Status.SKIPPED;
                         case "skip-once" -> has && call == 1 ? Status.SKIPPED : Status.PASSED; // with the word: skipped only the first time

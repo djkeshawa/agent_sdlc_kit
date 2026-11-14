@@ -55,8 +55,7 @@ public final class Check {
                     + (w.runs() > 1 ? ", in " + w.runs() + " of " + w.runs() + " runs" : ""), false);
             failed |= section(out, w, Kind.PASSES_ON_BOTH, n -> n + (n == 1 ? " new test passes" : " new tests pass") + " before and after, so "
                     + (n == 1 ? "it does" : "they do") + " not test the change", false);
-            failed |= section(out, w, Kind.SKIPPED_NOW, n -> n + " ran before the change and " + (n == 1 ? "is" : "are") + " skipped now", true);
-            failed |= section(out, w, Kind.REMOVED, n -> n + (n == 1 ? " test was" : " tests were") + " removed: the edited file reports fewer tests than it had before the change", true);
+            failed |= section(out, w, Kind.NOT_RUN_NOW, n -> n + (n == 1 ? " test that ran before the change does" : " tests that ran before the change do") + " not run now", true);
             section(out, w, Kind.UNSTABLE, n -> n + " gave different results from run to run", true);
             section(out, w, Kind.UNKNOWN, n -> n + " could not be judged", true);
             if (w.verdicts().stream().anyMatch(Verdict::newCode)) {
@@ -175,7 +174,7 @@ public final class Check {
         List<String> commits = log.out().isBlank() ? List.of() : List.of(log.out().strip().split("\\R"));
         out.println("sdlc check --since " + opt.get("since") + ": " + commits.size() + " commit" + (commits.size() == 1 ? "" : "s") + " on this branch since " + window
                 + (commits.size() > max ? ", the newest " + max + " checked (--max N for more)" : ""));
-        long sensitive = 0, both = 0, unknown = 0, failing = 0, untested = 0, problems = 0, switchedOff = 0, removed = 0, takenAway = 0;
+        long sensitive = 0, both = 0, unknown = 0, failing = 0, untested = 0, problems = 0, notRun = 0, takenAway = 0;
         java.util.Set<Kind> least = java.util.EnumSet.noneOf(Kind.class); // kinds whose total is a least number
         int checked = 0;
         for (String line : commits) {
@@ -197,25 +196,22 @@ public final class Check {
                 part(parts, w, Kind.PASSES_ON_BOTH, "new, pass on both sides");
                 part(parts, w, Kind.FAILS_AFTER, "fail after");
                 part(parts, w, Kind.OLD_FAILS_AFTER, "passed before, fail as they were after, taken out");
-                part(parts, w, Kind.SKIPPED_NOW, "ran before, skipped after");
-                part(parts, w, Kind.REMOVED, "removed");
+                part(parts, w, Kind.NOT_RUN_NOW, "ran before, do not run after");
                 part(parts, w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE), "could not be judged");
                 part(parts, w, Kind.SKIPPED, "skipped");
                 out.println("    tests: " + (parts.isEmpty() ? onlyOld(w) : String.join("; ", parts)));
                 for (Verdict v : w.verdicts()) {
                     String which = v.file() + "  " + (v.name().isEmpty() ? v.detail() : v.name());
                     if (v.kind() == Kind.PASSES_ON_BOTH) out.println("        does not test the change: " + which);
-                    else if (v.kind() == Kind.SKIPPED_NOW) out.println("        ran before, skipped after: " + which);
-                    else if (v.kind() == Kind.REMOVED) out.println("        removed: " + which);
+                    else if (v.kind() == Kind.NOT_RUN_NOW) out.println("        ran before, do not run after: " + which);
                     else if (v.kind() == Kind.OLD_FAILS_AFTER) out.println("        passed before, fails as it was after, taken out: " + which);
                 }
-                for (Kind k : List.of(Kind.PASSES_ON_BOTH, Kind.SKIPPED_NOW, Kind.REMOVED, Kind.OLD_FAILS_AFTER)) if (w.atLeast(k)) least.add(k);
+                for (Kind k : List.of(Kind.PASSES_ON_BOTH, Kind.NOT_RUN_NOW, Kind.OLD_FAILS_AFTER)) if (w.atLeast(k)) least.add(k);
                 sensitive += w.count(Kind.SENSITIVE);
                 both += w.count(Kind.PASSES_ON_BOTH);
                 failing += w.count(Kind.FAILS_AFTER);
                 unknown += w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE);
-                switchedOff += w.count(Kind.SKIPPED_NOW);
-                removed += w.count(Kind.REMOVED);
+                notRun += w.count(Kind.NOT_RUN_NOW);
                 takenAway += w.count(Kind.OLD_FAILS_AFTER);
             }
             for (Finding x : findings) {
@@ -232,8 +228,8 @@ public final class Check {
             out.println("  " + (least.contains(Kind.PASSES_ON_BOTH) ? "at least " : "") + both
                     + (both == 1 ? " new test passes on both sides, so does not test its commit" : " new tests pass on both sides, so do not test their commit"));
             out.println("  " + unknown + " could not be judged; " + failing + " fail after their commit");
-            out.println("  " + (least.contains(Kind.SKIPPED_NOW) ? "at least " : "") + switchedOff + (switchedOff == 1 ? " test ran before its commit and " : " tests ran before their commit and ")
-                    + (switchedOff == 1 ? "is" : "are") + " skipped after it; " + (least.contains(Kind.REMOVED) ? "at least " : "") + removed + (removed == 1 ? " test was" : " tests were") + " removed");
+            out.println("  " + (least.contains(Kind.NOT_RUN_NOW) ? "at least " : "") + notRun + (notRun == 1 ? " test ran before its commit and does" : " tests ran before their commit and do")
+                    + " not run after it");
             out.println("  " + (least.contains(Kind.OLD_FAILS_AFTER) ? "at least " : "") + takenAway + (takenAway == 1 ? " test passed before its commit, fails on it as it was, and was" : " tests passed before their commit, fail on it as they were, and were")
                     + " taken out of the way");
             out.println("  " + untested + " commit" + (untested == 1 ? "" : "s") + " add or edit no test this version can run");
@@ -245,9 +241,10 @@ public final class Check {
     /**
      * --stop-hook: for an agent's Stop hook (Claude Code: exit code 2 keeps the agent working, and
      * what is on stderr is the reason it is given). It blocks on what the agent can fix and is
-     * certain: a changed test that fails, a new test that passes with or without the change, a test
-     * that ran before the change and is skipped after it, tests removed, a test switched off, an
-     * old test that fails on the change as it was and was taken out of the way. Never on "could
+     * certain: a changed test that fails, a new test that passes with or without the change, tests
+     * that ran before the change and do not run after it (deleted, switched off or hidden), an
+     * old test that fails on the change as it was and was taken out of the way, a problem of the
+     * integrity scan. Never on "could
      * not be judged", nor on a note. Says nothing when all is well.
      *
      * The host says on stdin whether the agent is already continuing because of a stop hook
@@ -274,8 +271,7 @@ public final class Check {
             else if (v.kind() == Kind.OLD_FAILS_AFTER) reasons.add("passed before your change, fails on your code as it was, and your change took it out of the way: " + test + " (" + v.detail() + ")");
             else if (v.kind() == Kind.PASSES_ON_BOTH) reasons.add(whole ? "new tests pass with and without your change, so they do not test it: " + file
                     : "passes with and without your change, so it does not test it: " + test);
-            else if (v.kind() == Kind.SKIPPED_NOW) reasons.add(whole ? "tests that ran before your change do not run now: " + file : "ran before your change and is skipped now: " + test);
-            else if (v.kind() == Kind.REMOVED) reasons.add(whole ? "tests removed: " + file : "removed: " + test + " (the file had it before your change)");
+            else if (v.kind() == Kind.NOT_RUN_NOW) reasons.add("tests that ran before your change do not run now: " + file);
         }
         for (Finding f : Integrity.scan(change)) if (f.level() == Finding.Level.PROBLEM) reasons.add(f.kind() + ": " + f.path() + (f.detail().isBlank() ? "" : " (" + f.detail().strip() + ")"));
         if (reasons.isEmpty()) return 0;

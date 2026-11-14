@@ -174,15 +174,15 @@ final class MandateFlowTests {
         // a test that ran before is switched off, another is gone: the witness is violated
         write(repo, "tests/other.t", "on: skip\n");
         String weakened = verdict();
-        check("mandate: a test that ran before the change and is skipped now violates the witness",
-                weakened.contains("violated  the change's own tests: 1 fails before it and passes after it") && weakened.contains("tests/other.t: the file runs 0 of its tests where it ran 2 before the change, and skips 1 where it skipped 0 (skipped now under a name that ran before: on): "
-                        + "at least 1 test that ran does not run now") && code == 1);
-        // beside a name skipped now, which may stand for any number of tests, a test gone is not counted as removed: the switch-off is what fails
-        check("mandate: and the test gone beside it could not be judged as removed", !weakened.contains("was removed") && weakened.contains("1 of the change's tests could not be judged"));
+        check("mandate: a test that ran before the change and is skipped now violates the witness, and so does the test gone beside it: both counted, in one line",
+                weakened.contains("violated  the change's own tests: 1 fails before it and passes after it") && weakened.contains("; at least 2 ran before it and do not run now   [")
+                && weakened.contains("tests/other.t: the file as it was passed 2 of its tests, and after the change it runs 0: at least 2 tests that ran before the change do not run now "
+                        + "(no longer reported: goes; skipped now under a name that ran before: on)") && code == 1);
+        check("mandate: and nothing of that file is left could not be judged", !weakened.contains("could not be judged"));
         write(repo, "tests/other.t", "on: pass\n");
         String gone = verdict();
-        check("mandate: a test that is gone, said of its file, violates the witness", gone.contains("violated  the change's own tests") && gone.contains("tests/other.t: the file no "
-                + "longer reports 1 test under the name it had (goes), and reports none under a name it did not have: at least 1 test was removed") && code == 1);
+        check("mandate: a test that is gone, said of its file, violates the witness", gone.contains("violated  the change's own tests") && gone.contains("tests/other.t: the file as it "
+                + "was passed 2 of its tests, and after the change it runs 1: at least 1 test that ran before the change does not run now (no longer reported: goes)") && code == 1);
         // one test gone and one new: a rename and a test deleted and another written look alike in the reports
         write(repo, "tests/other.t", "on: pass\nreturns: pass\n");
         String renamed = verdict();
@@ -210,11 +210,11 @@ final class MandateFlowTests {
         write(repo, "tests/three.t", "z: pass\n");
         String twoRemoved = verdict();
         check("mandate: two tests removed are counted as two", twoRemoved.contains("violated  the change's own tests: 1 fails before it and passes after it (0 approved with the mandate, "
-                + "1 written with the change); at least 2 were removed   [") && code == 1);
+                + "1 written with the change); at least 2 ran before it and do not run now   [") && code == 1);
         write(repo, "tests/three.t", "x: pass\ny: pass\nz: pass\n");
         write(repo, "tests/other.t", "on: skip\ngoes: skip\n");
         String twoOff = verdict();
-        check("mandate: two tests switched off are counted as two", twoOff.contains("written with the change); at least 2 ran before it and are skipped now   [") && code == 1);
+        check("mandate: two tests switched off are counted as two", twoOff.contains("written with the change); at least 2 ran before it and do not run now   [") && code == 1);
         write(repo, "tests/other.t", "on: pass\ngoes: pass\nnew one: pass\nnew two: pass\n");
         String twoIdle = verdict();
         check("mandate: two new tests that pass on both sides are counted as two", twoIdle.contains("written with the change); at least 2 new tests pass on both sides   [") && code == 1);

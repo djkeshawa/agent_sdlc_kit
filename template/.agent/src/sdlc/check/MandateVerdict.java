@@ -166,7 +166,7 @@ final class MandateVerdict {
             // 5. the witness
             Witness.Result w = Witness.run(change, runners, runs, timeout, sides);
             long sensitive = w.count(Kind.SENSITIVE), both = w.count(Kind.PASSES_ON_BOTH), failing = w.count(Kind.FAILS_AFTER);
-            long switchedOff = w.count(Kind.SKIPPED_NOW), removed = w.count(Kind.REMOVED) + w.count(Kind.OLD_FAILS_AFTER);
+            long notRun = w.count(Kind.NOT_RUN_NOW), takenAway = w.count(Kind.OLD_FAILS_AFTER);
             long preApproved = w.verdicts().stream().filter(v -> v.kind() == Kind.SENSITIVE && m.locked().containsKey(v.file())).count();
             detail = new ArrayList<>();
             for (Witness.Verdict v : w.verdicts()) {
@@ -174,9 +174,7 @@ final class MandateVerdict {
                 boolean whole = v.name().isEmpty();
                 if (v.kind() == Kind.PASSES_ON_BOTH) detail.add(v.file() + (whole ? ": " + v.detail() : "  " + v.name() + ": passes before and after, so it does not test the change"));
                 else if (v.kind() == Kind.FAILS_AFTER || v.kind() == Kind.OLD_FAILS_AFTER) detail.add(v.file() + (whole ? "" : "  " + v.name()) + ": " + v.detail());
-                else if (v.kind() == Kind.SKIPPED_NOW) detail.add(v.file() + (whole ? ": " + v.detail()
-                        : "  " + v.name() + ": ran before the change and is skipped now" + (v.detail().isBlank() ? "" : " (" + v.detail() + ")")));
-                else if (v.kind() == Kind.REMOVED) detail.add(v.file() + (whole ? ": " + v.detail() : "  " + v.name() + ": the file had it before the change, and it is gone"));
+                else if (v.kind() == Kind.NOT_RUN_NOW) detail.add(v.file() + ": " + v.detail());
             }
             for (Witness.Verdict v : w.verdicts()) {
                 if (v.kind() == Kind.SENSITIVE) detail.add(v.file() + "  " + v.name() + ": fails before, passes after (" + (m.locked().containsKey(v.file()) ? "a test approved with the mandate" : "a test written with the change") + ")");
@@ -189,20 +187,19 @@ final class MandateVerdict {
             List<String> wrong = new ArrayList<>();
             count(wrong, w, Kind.FAILS_AFTER, " fails after it", " fail after it");
             count(wrong, w, Kind.PASSES_ON_BOTH, " new test passes on both sides", " new tests pass on both sides");
-            count(wrong, w, Kind.SKIPPED_NOW, " ran before it and is skipped now", " ran before it and are skipped now");
-            count(wrong, w, Kind.REMOVED, " was removed", " were removed");
+            count(wrong, w, Kind.NOT_RUN_NOW, " ran before it and does not run now", " ran before it and do not run now");
             count(wrong, w, Kind.OLD_FAILS_AFTER, " passed before it, fails on it as it was and was taken out of the way", " passed before it, fail on it as they were and were taken out of the way");
             String what = w.verdicts().isEmpty() ? "the change adds or edits no test this version can run"
                     : "the change's own tests: " + sensitive + (sensitive == 1 ? " fails" : " fail") + " before it and " + (sensitive == 1 ? "passes" : "pass") + " after it"
                             + (sensitive > 0 ? " (" + preApproved + " approved with the mandate, " + (sensitive - preApproved) + " written with the change)" : "")
                             + (wrong.isEmpty() ? "" : "; " + String.join("; ", wrong));
-            State st = both + failing + switchedOff + removed > 0 ? State.VIOLATED : undecided > 0 || !w.unsupported().isEmpty() || sensitive == 0 ? State.UNKNOWN : State.SATISFIED;
+            State st = both + failing + notRun + takenAway > 0 ? State.VIOLATED : undecided > 0 || !w.unsupported().isEmpty() || sensitive == 0 ? State.UNKNOWN : State.SATISFIED;
             lines.add(new Line(st, what, false, detail));
         }
         return new Result(scope, outside, approval, lines, unresolved);
     }
 
-    /** "at least 2 were removed": a kind's count of tests, when there are any. */
+    /** "at least 2 ran before it and do not run now": a kind's count of tests, when there are any. */
     private static void count(List<String> parts, Witness.Result w, Kind kind, String one, String many) {
         long n = w.count(kind);
         if (n > 0) parts.add((w.atLeast(kind) ? "at least " : "") + n + (n == 1 ? one : many));

@@ -83,29 +83,34 @@ or the test configuration changed, those lines are `unknown`, because a changed 
 any test pass.
 
 The last line, the change's own tests, is `violated` when a new test passes before and after the
-change, a changed test fails after it, a test that ran before the change is skipped now, tests
-were removed, or a test that passed before the change fails as it was on the change, in every
-run, and was taken out of the way in every run after it that the check made. The line says how many tests stand
-behind each of these, "at least N" where the counts of a file prove only a least number. Which
-tests are new, ran before or are gone is read from a run of each edited test file as it was, on
-the commit the branch started from; whether the change broke a test it took away, from a run of
-that file as it was on the code after the change (see
+change, a changed test fails after it, tests that ran before the change do not run now (an
+edited test file runs fewer tests after the change than passed in it as it was, in every run,
+whatever became of them: deleted, skipped or hidden), or a test that passed before the change
+fails as it was on the change, in every run, and was taken out of the way in every run after it
+that the check made. The line says how many tests stand behind each of these, "at least N" where
+the counts of a file prove only a least number. Which tests are new, ran before or are gone is
+read from a run of each edited test file as it was, on the commit the branch started from;
+whether the change broke a test it took away, and how many of its old tests the change of the
+code (not of the tests) took, from a run of that file as it was on the code after the change (see
 [sdlc check](09-check.md#which-tests-are-new-gone-or-switched-off)). A test is known by its exact
 name, and what names cannot tell is decided by counting the tests of each file; a count says how
-many, never which, so these verdicts name the file. A count is taken only from reports that list
-every test it rests on: a test that failed or threw may stand for a fault outside the tests, a
-skipped case for any number of tests (an ignored class, a disabled factory), and a report with no
-test at all for a class stopped in its set-up. So tests removed are counted only where both
-reports hold no failure, report a test, and skip each case as often under its name as the other;
-new tests only where the report as it was does so; tests that ran and are skipped now only where
-neither report holds a failure; and old tests taken out of the way only where no report
-after the change holds one. What only such a report would prove is `unknown`, and so is an old
+many, never which, so these verdicts name the file. Tests that ran and do not run now need no
+list of the tests after the change: each test that passed as it was ran, and a test hidden in a
+skipped case or an empty report does not run. They are not said where the file as it was
+reported a test that failed or threw (a choice: that file did not pass). Other counts are taken
+only from reports that list every test they rest on: a test that failed or threw may stand for a
+fault outside the tests, a skipped case for any number of tests (an ignored class, a disabled
+factory), and a report with no test at all for a class stopped in its set-up. So new tests are
+counted only where the report as it was holds no failure, reports a test and skips each case as
+often under its name as the other, and old tests taken out of the way only where no report after
+the change holds a failure. What only such a report would prove is `unknown`, and so is an old
 test the run of its file as it was, on the code after the change, could not judge (it did not
 compile, load or report it). Where the counts cannot tell two stories apart, one of them fine (a test renamed, or
 one deleted and another written; an old test the change breaks, renamed and rewritten for the
-new behaviour, or taken out and a new test written), or runs disagree, the line is `unknown`,
-not `violated`, and a review decides. A test replaced by another under its own name, in a file
-whose list of tests stayed the same, is not seen (see the limits of
+new behaviour, or taken out and a new test written; a row the change of the code took away), or
+runs disagree, the line is `unknown`, not `violated`, and a review decides. A test replaced by
+another under its own name, in a file whose list of tests stayed the same, is not seen (see the
+limits of
 [sdlc check](09-check.md#limits)).
 
 The command fails (exit code 1) for `OUTSIDE` or a `violated` line. `AMENDED` and `unknown` do
