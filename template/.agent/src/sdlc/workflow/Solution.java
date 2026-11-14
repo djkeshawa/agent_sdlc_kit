@@ -71,7 +71,7 @@ public final class Solution {
         for (Object o : Json.list(root.get("contracts"))) {
             Map<String, Object> c = Json.map(o);
             contracts.add(new Contract(Work.str(c.get("provider")).strip().toLowerCase(Locale.ROOT), Work.str(c.get("api")).strip().toLowerCase(Locale.ROOT),
-                    Work.strings(c.get("add")), Work.strings(c.get("remove")), Work.str(c.getOrDefault("compatibility", "additive")).strip().toLowerCase(Locale.ROOT)));
+                    Work.exact(c.get("add")), Work.exact(c.get("remove")), Work.str(c.getOrDefault("compatibility", "additive")).strip().toLowerCase(Locale.ROOT)));
         }
         List<String> ord = new ArrayList<>();
         for (String s : Work.strings(root.get("order"))) ord.add(s.toLowerCase(Locale.ROOT));

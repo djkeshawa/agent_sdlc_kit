@@ -400,8 +400,9 @@ public final class Contracts {
                 fails.add("Contract " + api + " (" + file + ") changed, but the " + lane + " lane of " + story + " allows no change to it" + (lane.equals("patch") ? " (raise the LLD's lane, get it approved, tasks create again)" : ""));
                 continue;
             }
-            Set<String> add = new LinkedHashSet<>(Work.strings(entry.get("add")));
-            Set<String> remove = new LinkedHashSet<>(Work.strings(entry.get("remove")));
+            // exactly as the allowance holds them: an operation is not trimmed on its way in (see normalize)
+            Set<String> add = new LinkedHashSet<>(Work.exact(entry.get("add")));
+            Set<String> remove = new LinkedHashSet<>(Work.exact(entry.get("remove")));
             boolean named = !remove.isEmpty() || add.stream().anyMatch(a -> !a.equals("*"));
             if (named && !EXACT.equals(Work.str(allowance.get("operations")))) {
                 // written by an earlier version of the kit, which did not keep a slash at the end of a path or the case of a

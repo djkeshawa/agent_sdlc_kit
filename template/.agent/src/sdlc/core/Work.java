@@ -103,6 +103,17 @@ public final class Work {
         return out;
     }
 
+    /**
+     * The texts of a list exactly as they are written, white space at their ends included. For
+     * values that are compared byte for byte, such as the operations of a contract: a trimmed
+     * "orders " would allow a change to "orders", which is another channel.
+     */
+    public static List<String> exact(Object o) {
+        List<String> out = new ArrayList<>();
+        if (o instanceof List<?> l) for (Object x : l) if (x != null && !x.toString().isEmpty()) out.add(x.toString());
+        return out;
+    }
+
     public static String str(Object o) {
         return o == null ? "" : o.toString();
     }

@@ -512,6 +512,9 @@ final class MultiRepoTests {
         Store.write(allow, Store.map("operations", "exact", "story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds"), "remove", List.of(), "breaking", false))));
         check("contracts: an operation the slice lists passes", Contracts.prPolicy("PROJ-80", base, changed).fails().isEmpty());
         Store.write(allow, Store.map("story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds"), "remove", List.of(), "breaking", false))));
+        check("contracts: an operation in an allowance is taken as written, a space at its end included",
+                Work.exact(List.of("message A on orders ", "GET /a")).equals(List.of("message A on orders ", "GET /a"))
+                && !Contracts.normalize(Work.exact(List.of("message A on orders ")).get(0)).equals(Contracts.normalize("message A on orders")));
         check("contracts: an allowance written before operations were kept exactly is refused, with the way to write it again",
                 Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("earlier version of the kit") && f.contains("tasks create PROJ-80")));
         Store.write(allow, Store.map("operations", "exact", "story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds/"), "remove", List.of(), "breaking", false))));
