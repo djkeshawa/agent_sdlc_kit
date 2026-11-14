@@ -178,7 +178,6 @@ final class MandateVerdict {
                         : "  " + v.name() + ": ran before the change and is skipped now" + (v.detail().isBlank() ? "" : " (" + v.detail() + ")")));
                 else if (v.kind() == Kind.REMOVED) detail.add(v.file() + (whole ? ": " + v.detail() : "  " + v.name() + ": the file had it before the change, and it is gone"));
             }
-            for (Witness.Verdict v : w.verdicts()) if (v.kind() == Kind.RENAMED) detail.add(v.file() + ": " + v.detail());
             for (Witness.Verdict v : w.verdicts()) {
                 if (v.kind() == Kind.SENSITIVE) detail.add(v.file() + "  " + v.name() + ": fails before, passes after (" + (m.locked().containsKey(v.file()) ? "a test approved with the mandate" : "a test written with the change") + ")");
             }

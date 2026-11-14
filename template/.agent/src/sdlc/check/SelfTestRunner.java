@@ -28,8 +28,8 @@ import sdlc.check.JUnitXml.Status;
  *   skip-later          not reported in the first run in that checkout; skipped in later ones
  * A name is reported as a script's string would give it: \' is a quote. A name with %i in it is
  * reported twice, with 1 and with 2 in its place (it.each, a parameterized method). A line
- * without ": " is not a case: it stands for the test's body. A name such as "check(int)[3]" is a
- * run of a parameterized test, as Surefire names it, except in a file named *.vitest.t. A name
+ * without ": " is not a case: it stands for the test's body. A name is reported as it is written,
+ * brackets and all: what a name means is never read from its shape. A name
  * "demo.Outer$A::works" is the case "works" of the class demo.Outer$A, as Surefire reports a
  * method of a nested class; any other case's suite is its file.
  * A changed shared.lock in a test's folder or above it is a setup both sides share. Like a build,
@@ -52,12 +52,6 @@ final class SelfTestRunner implements Runner {
     @Override
     public boolean support(String path) {
         return path.endsWith(".t");
-    }
-
-    /** A file named *.vitest.t names its tests as Vitest does (a title is a test, brackets and all); any other as Surefire does. */
-    @Override
-    public Invocation invocation(JUnitXml.Case c) {
-        return c.suite().endsWith(".vitest.t") ? null : Runners.surefireInvocation(c.name());
     }
 
     @Override

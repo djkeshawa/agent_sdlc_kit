@@ -29,20 +29,6 @@ interface Runner {
     }
 
     /**
-     * When this runner's report names the case as one run of a parameterized test by its place
-     * among that test's runs, the test and the place; null when the case's name is a test of its
-     * own. Only the runner knows how its tool names cases: Surefire adds a place in brackets to
-     * each run of a parameterized method, Vitest keeps a test's title as it is written, brackets
-     * and all. Null is the safe answer: a name taken whole is never merged with another test.
-     */
-    default Invocation invocation(JUnitXml.Case c) {
-        return null;
-    }
-
-    /** One run of a parameterized test: the test as the report names it ("check(int)"), and the place the report gives this run (3 of "check(int)[3]"). */
-    record Invocation(String test, int place) {}
-
-    /**
      * Removes what earlier runs in this checkout built from test sources, so that the next run
      * sees only the sources that are there now. Without it, a test file that was taken away may
      * still be on the class path as a compiled class.

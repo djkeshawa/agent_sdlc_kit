@@ -62,7 +62,6 @@ public final class Check {
                 out.println("      A test of code that did not exist before the change cannot fail there for the right reason, so it is not counted either way.");
             }
             section(out, w, Kind.SKIPPED, n -> n + (n == 1 ? " is" : " are") + " skipped", false);
-            section(out, w, Kind.RENAMED, n -> "Note: tests under another group or in another file (" + n + (n == 1 ? " note" : " notes") + ")", true);
             long old = w.count(Kind.EXISTING_PASSES_ON_BOTH);
             if (old > 0) out.println("  " + old + " test" + (old == 1 ? "" : "s") + " that " + (old == 1 ? "was" : "were") + " already in the edited files " + (old == 1 ? "passes" : "pass") + " before and after (not counted)");
             long off = w.count(Kind.EXISTING_SKIPPED);
