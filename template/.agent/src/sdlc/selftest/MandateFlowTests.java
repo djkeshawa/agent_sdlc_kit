@@ -54,6 +54,7 @@ final class MandateFlowTests {
     private static void flow(Path repo) throws IOException {
         write(repo, "prod.txt", "v1\n");
         write(repo, "tests/keep.t", "stays: pass\n");
+        write(repo, "tests/other.t", "on: pass\ngoes: pass\n");
         git(repo, "init", "-q", "-b", "main");
         commit(repo, "base");
         Ctx.init(repo);
@@ -166,6 +167,19 @@ final class MandateFlowTests {
         String missing = verdict();
         check("mandate: a scenario that is not found is unknown, not passed", missing.contains("unknown   scenarios found, ran and passed: 0 of 1") && missing.contains("was not found among the tests that ran"));
         write(repo, "tests/fix.t", "fixed: needs fixed\n");
+
+        // a test that ran before is switched off, another is gone: the witness is violated
+        write(repo, "tests/other.t", "on: skip\n");
+        String weakened = verdict();
+        check("mandate: a test that ran before the change and is skipped now violates the witness",
+                weakened.contains("violated  the change's own tests: 1 fails before it and passes after it") && weakened.contains("tests/other.t  on: ran before the change and is skipped now") && code == 1);
+        check("mandate: and so does a test that is gone", weakened.contains("tests/other.t  goes: the file had it before the change, and it is gone"));
+        write(repo, "tests/other.t", "on: pass\nreturns: pass\n");
+        String replaced = verdict();
+        check("mandate: a test renamed or replaced is a note, and the new test is judged on its own",
+                replaced.contains("tests/other.t: 1 test is no longer reported under its name and 1 new one is: renamed or replaced")
+                && replaced.contains("tests/other.t  returns: passes before and after, so it does not test the change") && code == 1);
+        write(repo, "tests/other.t", "on: pass\ngoes: pass\n");
 
         // what must stay true breaks
         write(repo, "prod.txt", "v1\nfixed\nbroken\n");

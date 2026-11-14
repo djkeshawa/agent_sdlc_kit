@@ -166,12 +166,16 @@ final class MandateVerdict {
             // 5. the witness
             Witness.Result w = Witness.run(change, runners, runs, timeout, sides);
             long sensitive = w.count(Kind.SENSITIVE), both = w.count(Kind.PASSES_ON_BOTH), failing = w.count(Kind.FAILS_AFTER);
+            long switchedOff = w.count(Kind.SKIPPED_NOW), removed = w.count(Kind.REMOVED);
             long preApproved = w.verdicts().stream().filter(v -> v.kind() == Kind.SENSITIVE && m.locked().containsKey(v.file())).count();
             detail = new ArrayList<>();
             for (Witness.Verdict v : w.verdicts()) {
                 if (v.kind() == Kind.PASSES_ON_BOTH) detail.add(v.file() + "  " + v.name() + ": passes before and after, so it does not test the change");
                 else if (v.kind() == Kind.FAILS_AFTER) detail.add(v.file() + "  " + v.name() + ": " + v.detail());
+                else if (v.kind() == Kind.SKIPPED_NOW) detail.add(v.file() + "  " + v.name() + ": ran before the change and is skipped now");
+                else if (v.kind() == Kind.REMOVED) detail.add(v.file() + "  " + v.name() + ": the file had it before the change, and it is gone");
             }
+            for (Witness.Verdict v : w.verdicts()) if (v.kind() == Kind.RENAMED) detail.add(v.file() + ": " + v.detail());
             for (Witness.Verdict v : w.verdicts()) {
                 if (v.kind() == Kind.SENSITIVE) detail.add(v.file() + "  " + v.name() + ": fails before, passes after (" + (m.locked().containsKey(v.file()) ? "a test approved with the mandate" : "a test written with the change") + ")");
             }
@@ -182,7 +186,7 @@ final class MandateVerdict {
             String what = w.verdicts().isEmpty() ? "the change adds or edits no test this version can run"
                     : "the change's own tests: " + sensitive + (sensitive == 1 ? " fails" : " fail") + " before it and " + (sensitive == 1 ? "passes" : "pass") + " after it"
                             + (sensitive > 0 ? " (" + preApproved + " approved with the mandate, " + (sensitive - preApproved) + " written with the change)" : "");
-            State st = both + failing > 0 ? State.VIOLATED : undecided > 0 || !w.unsupported().isEmpty() || sensitive == 0 ? State.UNKNOWN : State.SATISFIED;
+            State st = both + failing + switchedOff + removed > 0 ? State.VIOLATED : undecided > 0 || !w.unsupported().isEmpty() || sensitive == 0 ? State.UNKNOWN : State.SATISFIED;
             lines.add(new Line(st, what, false, detail));
         }
         return new Result(scope, outside, approval, lines, unresolved);
