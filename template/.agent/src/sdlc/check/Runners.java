@@ -172,7 +172,7 @@ public final class Runners {
                     if (!mine.isEmpty()) out.put(f, new FileRun(mine, null));
                     else if (unreadable != null) out.put(f, FileRun.failed("its report cannot be read (" + unreadable + ")"));
                     else if (p.code() == 124) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
-                    else if (text.contains("COMPILATION ERROR") || text.contains("Compilation failure")) out.put(f, FileRun.failed("does not compile"));
+                    else if (text.contains("COMPILATION ERROR") || text.contains("Compilation failure")) out.put(f, FileRun.broken(Witness.DOES_NOT_COMPILE));
                     else if (p.code() == 127) out.put(f, FileRun.failed("Maven could not be started (" + tail(text, 1) + ")"));
                     else out.put(f, FileRun.failed("did not run (Maven exit " + p.code() + ": " + firstError(text) + ")"));
                 }
@@ -196,7 +196,7 @@ public final class Runners {
                     if (!Files.isRegularFile(pom)) continue;
                     String rel = above.isEmpty() ? dir : dir.substring(above.length() + 1);
                     try {
-                        if (Pattern.compile("<module>\\s*(\\./)?" + Pattern.quote(rel) + "/?\\s*</module>").matcher(Files.readString(pom)).find()) listedBy = above;
+                        if (Pattern.compile("<module>\\s*(\\./)?" + Pattern.quote(rel) + "/?\\s*</module>").matcher(Integrity.withoutComments(Files.readString(pom))).find()) listedBy = above;
                     } catch (IOException e) {
                         // an unreadable pom lists nothing
                     }
@@ -321,7 +321,8 @@ public final class Runners {
                         else if (unreadable != null) out.put(f, FileRun.failed("its report cannot be read (" + unreadable + ")"));
                         else if (p.code() == 124) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
                         else if (p.code() == 127) out.put(f, FileRun.failed("node could not be started (is Node.js on the PATH?)"));
-                        else out.put(f, FileRun.failed("did not run (vitest exit " + p.code() + ": " + tail(p.out() + "\n" + p.err(), 3).replaceAll("\\s+", " ") + ")"));
+                        // vitest ran and gave this file no result: the file did not load (a syntax error, an import that fails)
+                        else out.put(f, FileRun.broken("did not load (vitest exit " + p.code() + ": " + tail(p.out() + "\n" + p.err(), 3).replaceAll("\\s+", " ") + ")"));
                     }
                 } finally {
                     try {

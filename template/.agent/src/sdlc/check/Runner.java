@@ -19,9 +19,23 @@ interface Runner {
     Map<String, FileRun> run(Path checkout, List<String> files, int timeoutSeconds);
 
     /** What happened to one test file: its cases, or why none could be read. */
-    record FileRun(List<JUnitXml.Case> cases, String problem) {
+    /**
+     * What happened to one test file: its cases, or why none could be read. broken says the reason
+     * is the code itself (it does not compile, it does not load); otherwise the reason is the
+     * surroundings (no build tool, a timeout, a name that cannot be passed on), and nothing is
+     * known about the code.
+     */
+    record FileRun(List<JUnitXml.Case> cases, String problem, boolean broken) {
+        FileRun(List<JUnitXml.Case> cases, String problem) {
+            this(cases, problem, false);
+        }
+
         static FileRun failed(String problem) {
-            return new FileRun(List.of(), problem);
+            return new FileRun(List.of(), problem, false);
+        }
+
+        static FileRun broken(String problem) {
+            return new FileRun(List.of(), problem, true);
         }
     }
 }

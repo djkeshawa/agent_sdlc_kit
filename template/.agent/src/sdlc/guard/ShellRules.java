@@ -186,13 +186,22 @@ public final class ShellRules {
         List<String> words = c.words();
         for (int i = 0; i < words.size(); i++) {
             String w = words.get(i).replace('\\', '/');
-            // the packaged tool is on the PATH as plain `sdlc`: recognised only as the command itself, not as an argument
-            // (a path that merely ends in /sdlc is some script: the ordinary script rules judge it)
-            boolean packaged = i == 0 && w.equals("sdlc");
-            if (!(packaged || w.endsWith("Sdlc.java") || w.endsWith("bin/sdlc") || w.endsWith("sdlc.cmd") || w.equals("sdlc.Main"))) continue;
+            // Three cases. The kit's own launcher under .agent/, and the packaged tool as the plain command `sdlc`, are the tool:
+            // their sensitive commands are refused and the rest is allowed. Anything else that carries the tool's name (a script
+            // called sdlc somewhere, `env sdlc ...`) is not vouched for: its sensitive commands are refused all the same, and the
+            // ordinary rules judge the rest.
+            boolean kit = w.endsWith(".agent/Sdlc.java") || w.endsWith(".agent/bin/sdlc") || w.endsWith(".agent/bin/sdlc.cmd") || w.equals("sdlc.Main");
+            boolean plain = w.equals("sdlc") && i == 0;
+            boolean named = w.equals("sdlc") || w.endsWith("/sdlc") || w.endsWith("sdlc.cmd") || w.endsWith("Sdlc.java");
+            if (!(kit || plain || named)) continue;
+            boolean vouched = kit || plain;
+            // the word sdlc as an argument (a folder, a search term) is not the tool. Judged on the words as written:
+            // the list this loop walks has lost its leading wrappers, but not the value of a wrapper's option (env -u PATH sdlc)
+            int written = c.raw().size() - (words.size() - i);
+            if (!vouched && !w.contains("/") && i > 0 && !wrappersOnly(c.raw().subList(0, Math.max(0, written)))) continue;
             String sub = i + 1 < words.size() ? words.get(i + 1) : "";
             String sub2 = i + 2 < words.size() ? words.get(i + 2) : "";
-            if (i > 1 && words.subList(1, i).stream().anyMatch(o -> o.startsWith("-"))) { // the launcher may be the first word
+            if (kit && i > 1 && words.subList(1, i).stream().anyMatch(o -> o.startsWith("-"))) { // the launcher may be the first word
                 return Decision.deny("Java options (`" + brief(String.join(" ", words.subList(1, i))) + "`) change how the guard's tool runs. Run it plainly: java .agent/Sdlc.java <command>");
             }
             if (sub.equals("hook") || sub.equals("git-hook")) return Decision.deny("hooks are run by the IDE and git, not by hand.");
@@ -200,9 +209,24 @@ public final class ShellRules {
             if (sub.equals("review") && sub2.equals("record")) return g.gate.recordReview();
             if (sub.equals("tests") && sub2.equals("lock")) return Decision.deny("locking acceptance tests is QE's approval; a human runs tests lock.");
             if (sub.equals("eval")) return Decision.deny("the scoping eval is collected and scored by a human (its report shows the ground truth); agents only answer cases with /eval-scoping.");
-            return Decision.allow();
+            if (vouched) return Decision.allow();
         }
         return null;
+    }
+
+    private static final Set<String> BEFORE_A_COMMAND = Set.of("env", "command", "exec", "nohup", "time", "nice", "sudo", "doas", "stdbuf", "timeout", "builtin", "xargs");
+
+    /** True when every word is a command wrapper (env, exec, ...), one of its options or values, or a NAME=value: what follows is still the command. */
+    private static boolean wrappersOnly(List<String> before) {
+        for (int k = 0; k < before.size(); k++) {
+            String w = before.get(k).replace('\\', '/');
+            String name = w.substring(w.lastIndexOf('/') + 1);
+            if (BEFORE_A_COMMAND.contains(name) || w.startsWith("-") || w.contains("=")) continue;
+            if (k > 0 && before.get(k - 1).startsWith("-")) continue; // the value of an option: env -u PATH, timeout -s KILL
+            if (name.matches("\\d+[smhd]?")) continue; // timeout 30, nice 10
+            return false;
+        }
+        return true;
     }
 
     private Decision machine(ShellCommand c) {

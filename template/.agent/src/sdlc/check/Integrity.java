@@ -124,8 +124,13 @@ public final class Integrity {
     private final Set<String> lostCases = new LinkedHashSet<>();
     private Map<String, Set<String>> gained;
 
-    /** The scan reads what the change wrote. A line or a file beyond these sizes is cut or left out, so no input can keep it busy. */
+    /**
+     * The scan reads what the change wrote, so its work per line and per file is bounded. Nothing is
+     * dropped for that: a long line is scanned in overlapping pieces, and a file too large to read
+     * is reported, as a problem when it is a test or a build file.
+     */
     private static final int MAX_LINE = 2000;
+    private static final int OVERLAP = 300;
     private static final int MAX_FILE = 2_000_000;
 
     private Integrity(Change change) {
@@ -136,7 +141,17 @@ public final class Integrity {
 
     private static Map<String, List<String>> capped(Map<String, List<String>> lines) {
         Map<String, List<String>> out = new LinkedHashMap<>();
-        lines.forEach((path, list) -> out.put(path, list.stream().map(l -> l.length() > MAX_LINE ? l.substring(0, MAX_LINE) : l).toList()));
+        lines.forEach((path, list) -> {
+            List<String> pieces = new ArrayList<>();
+            for (String l : list) {
+                if (l.length() <= MAX_LINE) {
+                    pieces.add(l);
+                    continue;
+                }
+                for (int at = 0; at < l.length(); at += MAX_LINE - OVERLAP) pieces.add(l.substring(at, Math.min(l.length(), at + MAX_LINE)));
+            }
+            out.put(path, pieces);
+        });
         return out;
     }
 
@@ -178,17 +193,60 @@ public final class Integrity {
         }
     }
 
-    private static final Pattern STRING = Pattern.compile("\"(?:[^\"\\\\]|\\\\.)*+\"|'(?:[^'\\\\]|\\\\.)*+'|`(?:[^`\\\\]|\\\\.)*+`");
-
     /**
-     * A line with what is not code taken out: a comment line is empty, and the inside of each
-     * string is dropped. "@Disabled" in a test's expected text, or it.skip( in a comment, switches
-     * nothing off.
+     * A line with what is not code taken out: comments are dropped and the inside of each string is
+     * emptied, so "@Disabled" in a test's expected text or it.skip( in a comment switches nothing
+     * off. Code that follows a comment on the same line stays, and so does code inside ${...} of a
+     * template string. Where the line cannot be read with confidence (a quote that never closes),
+     * the rest is kept as it is: a doubtful line is scanned, not skipped.
      */
     static String code(String line) {
         String t = line.stripLeading();
-        if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*") || t.startsWith("#")) return "";
-        return STRING.matcher(line).replaceAll("\"\"");
+        if (t.startsWith("*/")) t = t.substring(2);
+        else if (t.startsWith("*") || t.startsWith("#")) return ""; // inside a block comment; a comment of a script or a Python file
+        StringBuilder out = new StringBuilder();
+        int i = 0;
+        while (i < t.length()) {
+            char c = t.charAt(i);
+            if (c == '/' && i + 1 < t.length() && t.charAt(i + 1) == '/') break;
+            if (c == '/' && i + 1 < t.length() && t.charAt(i + 1) == '*') {
+                int end = t.indexOf("*/", i + 2);
+                if (end < 0) break;
+                i = end + 2;
+                out.append(' ');
+                continue;
+            }
+            if (c == '"' || c == '\'' || c == '`') {
+                int end = closing(t, i);
+                if (end < 0) return out.append(t, i, t.length()).toString();
+                out.append(c);
+                if (c == '`') {
+                    // what a template string computes is code
+                    for (int at = t.indexOf("${", i); at >= 0 && at < end; at = t.indexOf("${", at + 2)) {
+                        int close = t.indexOf('}', at);
+                        if (close < 0 || close > end) break;
+                        out.append(' ').append(t, at + 2, close).append(' ');
+                    }
+                }
+                out.append(c);
+                i = end + 1;
+                continue;
+            }
+            out.append(c);
+            i++;
+        }
+        return out.toString();
+    }
+
+    /** The index of the quote that closes the string starting at from, or -1. */
+    private static int closing(String t, int from) {
+        char quote = t.charAt(from);
+        for (int i = from + 1; i < t.length(); i++) {
+            char c = t.charAt(i);
+            if (c == '\\') i++;
+            else if (c == quote) return i;
+        }
+        return -1;
     }
 
     private void switchedOff(String path, String line) {
@@ -208,7 +266,11 @@ public final class Integrity {
         sdlc.core.Config own = sdlc.core.Ctx.cfg;
         try {
             // without the kit's configuration the scanner would know one stack's file types only
-            if (!java.nio.file.Files.isRegularFile(sdlc.core.Ctx.root.resolve(".agent/sdlc.yml"))) sdlc.core.Ctx.cfg = EVERY_LANGUAGE;
+            // (in a pull request build only the base branch's configuration counts: the checkout's own file is the change's to add)
+            boolean configured = sdlc.core.Trusted.inCi()
+                    ? sdlc.core.Git.refExists(sdlc.core.Trusted.baseRef()) && sdlc.core.Trusted.config(sdlc.core.Trusted.baseRef()) != null
+                    : java.nio.file.Files.isRegularFile(sdlc.core.Ctx.root.resolve(".agent/sdlc.yml"));
+            if (!configured) sdlc.core.Ctx.cfg = EVERY_LANGUAGE;
             hits = Checks.secrets(added);
         } finally {
             sdlc.core.Ctx.cfg = own;
@@ -260,11 +322,30 @@ public final class Integrity {
                 else note("test moved", path, name + " is now in " + dest);
             }
             if (lost.isEmpty()) continue;
-            String what = lost.size() + (lost.size() == 1 ? " test case" : " test cases") + " removed or renamed: " + String.join(", ", lost);
-            // as many tests as before: names changed, nothing was dropped. Fewer: something is gone.
-            if (TestNames.of(path, after(path)).size() >= TestNames.of(path, before(path)).size()) note("test renamed or replaced", path, what);
-            else problem("test removed", path, what);
+            // a rename keeps the test's body under a new name; a new test with another body does not make up for one that is gone
+            Set<String> fresh = new LinkedHashSet<>(TestNames.of(path, after(path)));
+            fresh.removeAll(TestNames.of(path, before(path)));
+            List<String> renamed = new ArrayList<>(), removed = new ArrayList<>();
+            for (String name : lost) {
+                String was = squeezed(body(path, before(path), name));
+                String now = was == null ? null : fresh.stream().filter(n -> was.equals(squeezed(body(path, after(path), n)))).findFirst().orElse(null);
+                if (now == null) {
+                    removed.add(name);
+                } else {
+                    renamed.add(name + " is now " + now);
+                    fresh.remove(now);
+                }
+            }
+            if (!renamed.isEmpty()) note("test renamed", path, String.join(", ", renamed));
+            if (!removed.isEmpty()) problem("test removed", path, removed.size() + (removed.size() == 1 ? " test case" : " test cases") + " removed or replaced: " + String.join(", ", removed));
         }
+    }
+
+    /** A test's body with its white space squeezed out, or null when there is none to compare. */
+    private static String squeezed(String body) {
+        if (body == null) return null;
+        String s = body.replaceAll("\\s+", "");
+        return s.isEmpty() ? null : s;
     }
 
     /** The file the change added a test case of this name to, other than the one it left; null when there is none. */
@@ -310,12 +391,14 @@ public final class Integrity {
             org.w3c.dom.NodeList all = SafeXml.parse(pom).getElementsByTagName("*");
             for (int i = 0; i < all.getLength(); i++) {
                 org.w3c.dom.Element e = (org.w3c.dom.Element) all.item(i);
-                if (e.getElementsByTagName("*").getLength() > 0 || !e.getTextContent().trim().equalsIgnoreCase("true")) continue;
                 String name = e.getTagName();
-                String shown = "<" + name + ">true</" + name + ">";
-                if (name.matches("skipTests|skipITs|maven\\.test\\.skip")) out.put(shown, "tests skipped by the build");
-                else if (name.matches("testFailureIgnore|maven\\.test\\.failure\\.ignore")) out.put(shown, "test failures ignored by the build");
-                else if (name.equals("skip")) {
+                boolean skip = name.matches("skipTests|skipITs|maven\\.test\\.skip"), ignore = name.matches("testFailureIgnore|maven\\.test\\.failure\\.ignore");
+                if (!(skip || ignore || name.equals("skip")) || hasChildElement(e) || !e.getTextContent().trim().equalsIgnoreCase("true")) continue;
+                // where the setting sits is part of what it is: the same line in another profile is another setting
+                String shown = "<" + name + ">true</" + name + "> in " + where(e);
+                if (skip) out.put(shown, "tests skipped by the build");
+                else if (ignore) out.put(shown, "test failures ignored by the build");
+                else {
                     String plugin = plugin(e);
                     if (plugin != null) out.put(plugin + " is told to skip: " + shown, "tests skipped by the build");
                 }
@@ -324,6 +407,29 @@ public final class Integrity {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private static boolean hasChildElement(org.w3c.dom.Element e) {
+        for (org.w3c.dom.Node c = e.getFirstChild(); c != null; c = c.getNextSibling()) if (c instanceof org.w3c.dom.Element) return true;
+        return false;
+    }
+
+    /** Where a setting sits in the pom: "properties", "profile ci, properties", "build, plugin maven-surefire-plugin". */
+    private static String where(org.w3c.dom.Element e) {
+        List<String> parts = new ArrayList<>();
+        for (org.w3c.dom.Node p = e.getParentNode(); p instanceof org.w3c.dom.Element parent; p = p.getParentNode()) {
+            String tag = parent.getTagName();
+            if (tag.equals("profile") || tag.equals("plugin") || tag.equals("execution")) {
+                String label = "";
+                for (org.w3c.dom.Node c = parent.getFirstChild(); c != null; c = c.getNextSibling()) {
+                    if (c instanceof org.w3c.dom.Element child && (child.getTagName().equals("id") || child.getTagName().equals("artifactId")) && label.isEmpty()) label = child.getTextContent().trim();
+                }
+                parts.add(0, (tag + " " + label).trim());
+            } else if (tag.equals("properties") || tag.equals("build") || tag.equals("pluginManagement") || tag.equals("reporting")) {
+                parts.add(0, tag);
+            }
+        }
+        return parts.isEmpty() ? "the pom" : String.join(", ", parts);
     }
 
     /** "Surefire" or "Failsafe" when the element sits in that plugin's block, else null. */
@@ -504,16 +610,20 @@ public final class Integrity {
     // ---------------- reading ----------------
 
     private String before(String path) {
-        return beforeText.computeIfAbsent(path, p -> text(change.before(p)));
+        return beforeText.computeIfAbsent(path, p -> text(p, change.before(p)));
     }
 
     private String after(String path) {
-        return afterText.computeIfAbsent(path, p -> text(change.after(p)));
+        return afterText.computeIfAbsent(path, p -> text(p, change.after(p)));
     }
 
-    /** A file too large to read counts as not there. */
-    private static String text(String content) {
-        return content == null || content.length() > MAX_FILE ? null : content;
+    /** A file too large to read is left unread, and the report says so: silence would read as "nothing found". */
+    private String text(String path, String content) {
+        if (content == null || content.length() <= MAX_FILE) return content;
+        String detail = "larger than " + MAX_FILE / 1_000_000 + " MB, so the scan did not read it";
+        if (isTestFile(path) || buildOrScript(path)) problem("too large to scan", path, detail);
+        else note("too large to scan", path, detail);
+        return null;
     }
 
     private static Pattern assertion(String path) {
@@ -608,7 +718,7 @@ public final class Integrity {
     }
 
     /** The text with its XML comments taken out, in one pass. An unclosed comment runs to the end. */
-    private static String withoutComments(String xml) {
+    static String withoutComments(String xml) {
         StringBuilder out = new StringBuilder(xml.length());
         int at = 0;
         while (true) {

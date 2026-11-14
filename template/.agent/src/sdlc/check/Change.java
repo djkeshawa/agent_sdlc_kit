@@ -124,7 +124,9 @@ public final class Change {
                 }
             }));
             // every later git command of this run can read what the snapshot wrote there
-            Proc.ENV.merge("GIT_ALTERNATE_OBJECT_DIRECTORIES", dir.toString(), (a, b) -> a + java.io.File.pathSeparator + b);
+            String inherited = System.getenv("GIT_ALTERNATE_OBJECT_DIRECTORIES");
+            Proc.ENV.merge("GIT_ALTERNATE_OBJECT_DIRECTORIES", (inherited == null || inherited.isBlank() ? "" : inherited + java.io.File.pathSeparator) + dir,
+                    (a, b) -> a + java.io.File.pathSeparator + dir);
             objects = dir;
         }
         return objects;

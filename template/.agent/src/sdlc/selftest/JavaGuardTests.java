@@ -133,6 +133,12 @@ final class JavaGuardTests {
         expect("packaged tool: locking tests by agent", shell("sdlc tests lock PROJ-1"), Decision.Kind.DENY);
         expect("packaged tool: hook by hand", shell("sdlc hook pre-tool-use"), Decision.Kind.DENY);
         check("a script that is merely named sdlc is not waved through as the tool", shell("./sdlc status").kind() != Decision.Kind.ALLOW && shell("/tmp/sdlc status").kind() != Decision.Kind.ALLOW);
+        check("nor is one in a folder named bin", shell("/tmp/bin/sdlc status").kind() != Decision.Kind.ALLOW && shell("sh /tmp/bin/sdlc status").kind() != Decision.Kind.ALLOW);
+        expect("a script named sdlc cannot run the tool's protected commands either", shell("/tmp/bin/sdlc setup"), Decision.Kind.DENY);
+        expect("the packaged tool behind env: setup", shell("/usr/bin/env sdlc setup"), Decision.Kind.DENY);
+        expect("the packaged tool behind env with options: setup", shell("env -u PATH sdlc setup"), Decision.Kind.DENY);
+        expect("the packaged tool behind exec: locking tests", shell("exec sdlc tests lock PROJ-1"), Decision.Kind.DENY);
+        expect("the kit's launcher is still the tool", shell("sh .agent/bin/sdlc status"), Decision.Kind.ALLOW);
         expect("packaged tool: check ok", shell("sdlc check"), Decision.Kind.ALLOW);
         expect("a folder named sdlc is not the tool", shell("ls sdlc setup"), Decision.Kind.ALLOW);
         expect("compile into build", shell("javac -d .agent/.build /tmp/Evil.java"), Decision.Kind.DENY);

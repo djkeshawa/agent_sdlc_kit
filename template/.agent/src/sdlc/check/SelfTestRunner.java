@@ -52,7 +52,7 @@ final class SelfTestRunner implements Runner {
                 for (String line : Files.readAllLines(checkout.resolve(f))) {
                     String[] how = line.contains(": ") ? line.substring(line.indexOf(": ") + 2).trim().split(" ") : new String[0];
                     if (how.length > 1 && how[0].equals("compile-needs") && !prod.contains(how[1])) {
-                        for (String all : files) out.put(all, FileRun.failed(Witness.DOES_NOT_COMPILE));
+                        for (String all : files) out.put(all, FileRun.broken(Witness.DOES_NOT_COMPILE));
                         return out;
                     }
                 }

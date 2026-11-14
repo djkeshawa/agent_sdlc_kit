@@ -86,7 +86,7 @@ final class Witness {
         // One test of new code stops every test of its module from compiling before the change. Those files are
         // then run one at a time, each with the other changed tests put back as the base has them.
         Set<String> alone = new LinkedHashSet<>();
-        for (String f : files) if (before.get(f) != null && before.get(f).problem() != null && before.get(f).problem().contains(DOES_NOT_COMPILE)) alone.add(f);
+        for (String f : files) if (before.get(f) != null && before.get(f).broken()) alone.add(f);
         if (alone.size() < 2 || alone.size() > MAX_ALONE) alone.clear();
         for (String f : alone) before.put(f, runAlone(change, runner, files, f, base, timeout));
         // candidates: failed before by assertion, passed after. They are run again to rule out a test that fails at random.
@@ -95,8 +95,8 @@ final class Witness {
             FileRun a = after.get(f), b = before.get(f);
             Set<String> existing = TestNames.of(f, change.before(f));
             if (a == null || a.problem() != null) {
-                // not compiling is the change's own failure; a missing build tool, a timeout or a name that cannot be passed on is not
-                boolean broken = a != null && a.problem().contains(DOES_NOT_COMPILE);
+                // code that does not compile or load is the change's own failure; a missing build tool, a timeout or a name that cannot be passed on is not
+                boolean broken = a != null && a.broken();
                 out.add(new Verdict(f, "", broken ? Kind.FAILS_AFTER : Kind.UNKNOWN, (broken ? "after the change it " : "could not be run after the change: ") + (a == null ? "no result" : a.problem()), runner.name()));
                 continue;
             }

@@ -203,11 +203,22 @@ final class IntegrityTests {
         reset(repo);
 
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("void subtracts()", "void minus()"));
-        check("integrity: a renamed test case is a note: the file has as many tests as before", problems(scan(repo)) == 0
-                && only(scan(repo), Level.NOTE, "test renamed or replaced", "src/test/java/demo/CalcTest.java", "1 test case removed or renamed: subtracts"));
+        check("integrity: a test renamed with its body unchanged is a note", problems(scan(repo)) == 0
+                && only(scan(repo), Level.NOTE, "test renamed", "src/test/java/demo/CalcTest.java", "subtracts is now minus"));
+        reset(repo);
+        write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replaceFirst("(?s)    @Test\\s+void subtracts\\(\\) \\{.*?\\n    \\}\\n", "    @Test\n    void minus() {\n    }\n"));
+        check("integrity: a test replaced by an empty one under another name is a removal, not a rename",
+                only(scan(repo), Level.PROBLEM, "test removed", "src/test/java/demo/CalcTest.java", "1 test case removed or replaced: subtracts"));
         reset(repo);
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replaceFirst("(?s)    @Test\\s+void subtracts\\(\\) \\{.*?\\n    \\}\\n", ""));
-        check("integrity: a test case that is gone is a problem", only(scan(repo), Level.PROBLEM, "test removed", "src/test/java/demo/CalcTest.java", "1 test case removed or renamed: subtracts"));
+        check("integrity: a test case that is gone is a problem", only(scan(repo), Level.PROBLEM, "test removed", "src/test/java/demo/CalcTest.java", "1 test case removed or replaced: subtracts"));
+        reset(repo);
+        write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("    private int helper", "    /* flaky */ @Disabled(\"later\") @Test void off() {}\n    private int helper"));
+        check("integrity: @Disabled after a comment on the same line is still found", count(scan(repo), "test switched off") == 1);
+        reset(repo);
+        write(repo, "src/app.test.ts", "it('a', () => { expect(1).toBe(1) })\nconst s = `${it.skip('b', () => {})}`\n");
+        check("integrity: it.skip( inside the ${...} of a template string is code", count(scan(repo), "test switched off") == 1);
+        Files.delete(repo.resolve("src/app.test.ts"));
         reset(repo);
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("    private int helper", "    // a note about @Disabled and it.skip( in a comment\n    String s = \"@Disabled\";\n    private int helper"));
         check("integrity: @Disabled in a comment or a string switches nothing off", problems(scan(repo)) == 0);
@@ -215,8 +226,19 @@ final class IntegrityTests {
         write(repo, "pom.xml", POM.replace("</project>", "<build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId><configuration><skip>true</skip></configuration></plugin></plugins></build>\n<properties><skipTests>\n  true\n</skipTests></properties></project>"));
         List<Finding> compact = scan(repo);
         check("integrity: skip settings are found in a pom whatever its line breaks", count(compact, "tests skipped by the build") == 2
-                && compact.stream().anyMatch(f -> f.detail().equals("Surefire is told to skip: <skip>true</skip>"))
-                && compact.stream().anyMatch(f -> f.detail().equals("<skipTests>true</skipTests>")));
+                && compact.stream().anyMatch(f -> f.detail().startsWith("Surefire is told to skip: <skip>true</skip> in build, plugin maven-surefire-plugin"))
+                && compact.stream().anyMatch(f -> f.detail().equals("<skipTests>true</skipTests> in properties")));
+        reset(repo);
+        String inProfile = POM.replace("</project>", "<profiles><profile><id>quick</id><properties><skipTests>true</skipTests></properties></profile></profiles></project>");
+        write(repo, "pom.xml", inProfile);
+        git(repo, "add", "-A");
+        git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a profile that skips tests");
+        write(repo, "pom.xml", inProfile.replace("</project>", "<properties><skipTests>true</skipTests></properties></project>"));
+        check("integrity: the same skip setting added outside the profile that already had it is a new setting",
+                scan(repo).stream().anyMatch(f -> f.level() == Level.PROBLEM && f.detail().equals("<skipTests>true</skipTests> in properties")));
+        git(repo, "reset", "-q", "--hard", "HEAD~1");
+        write(repo, "package.json", "{\"scripts\": {\"lint\": \"" + "x".repeat(5000) + "\", \"test\": \"vitest run || true\"}}\n");
+        check("integrity: what follows a very long stretch of a line is still scanned", count(scan(repo), "test failures ignored by the build") >= 1);
         reset(repo);
         write(repo, "package.json", "{\"scripts\": {\"test\": \"vitest run" + " ".repeat(20000) + "|| true\"}}\n");
         long started = System.nanoTime();
