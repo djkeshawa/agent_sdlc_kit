@@ -1231,9 +1231,12 @@ final class Witness {
      *
      * One row for the file: with the counts, and what the reports show (names no longer
      * reported, names skipped now, names reported for the first time), never one name as the
-     * test lost. It is said from every run of the file, so it answers for every difference of the
-     * file's reports (see reconcile). The guide lists what moves the count: two tests merged into
-     * one is one test that ran and does not run now, and is said so.
+     * test lost. It is said from every run of the file: a row that fails the check, or says the
+     * file's reports differ from run to run, answers for every difference of the file's reports
+     * (see reconcile); a row that could not be judged answers for the differences between the file
+     * as it was and after the change only, so that one from run to run beside it is still said.
+     * The guide lists what moves the count: two tests merged into one is one test that ran and
+     * does not run now, and is said so.
      */
     private static List<Verdict> lost(String f, Names n, Seen seen, Fourth fourth, long t, long u, Set<String> spoke, String by) {
         List<FileRun> olds = seen.of(Side.OLD, f), afters = seen.of(Side.AFTER, f);
@@ -1283,7 +1286,7 @@ final class Witness {
                 // on the code after the change the file as it was runs no more tests than it does now: the change of the code may have taken all of them
                 if (fourth.unclear().containsKey(f)) return List.of();
                 return List.of(new Verdict(f, "", Kind.UNKNOWN, head + ". But as it was, on the code after the change, the file runs " + r4 + ", no more than it runs now, so the change "
-                        + "of the code, not of the tests, may have taken " + (total == 1 ? "it" : "them") + t4, by, (int) (total - t), Cover.FILE));
+                        + "of the code, not of the tests, may have taken " + (total == 1 ? "it" : "them") + t4, by, (int) (total - t), Cover.LIST));
             }
             StringBuilder d = new StringBuilder(head);
             if (most > total) d.append(", and up to ").append(most).append(" in some runs: what the file reports is not the same in every run");
@@ -1300,7 +1303,7 @@ final class Witness {
             // fewer run than passed as it was in every run only where the cases that passed when the build ran them again count
             return List.of(new Verdict(f, "", Kind.UNKNOWN, counts + ", and passed " + (minP0 - minR0) + " more only when the build ran " + (minP0 - minR0 == 1 ? "it" : "them") + " again"
                     + shows + ": a case that passed only when run again may be a set-up that failed and then passed, not a test, so whether a test that ran does not run now "
-                    + "is not known", by, (int) (withAgain - t), Cover.FILE));
+                    + "is not known", by, (int) (withAgain - t), Cover.LIST));
         }
         // fewer run than passed as it was in some runs only, beyond the old tests said: unstable
         if (!whole || most - t - u > 0) {

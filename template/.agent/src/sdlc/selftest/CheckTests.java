@@ -1483,6 +1483,13 @@ final class CheckTests {
                 retriedMuted.contains("1 could not be judged\n      checks/retry.t  [self test]\n        the reports of this file as it was and after the change differ in ways " + NO_RULE
                         + ": flaky (as it was: passed only when the build ran it again; after the change: skipped). Whether this test was lost, switched off, broken or replaced is not known\n")
                 && code == 0);
+        // the same, where the steady test is not reported in the repeat run after the change: the line that could not be judged speaks of the
+        // list as it was and after the change, and the repeat that lost the steady test is said beside it
+        write(repo, "checks/retry.t", "steady: gone-later fixed\nflaky: skip\n");
+        String retriedRepeat = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("every difference: beside the line of a retried test switched off, a test a repeat run does not report is said unstable",
+                retriedRepeat.contains("passed 1 more only when the build ran it again") && retriedRepeat.contains("\n        the file was reported differently from run to run, in "
+                        + "ways " + NO_RULE + ": steady (after the change: passed, not reported)\n") && code == 0);
         write(repo, "checks/retry.t", RETRY);
 
         // CR3-4: a class set-up that threw every time the build ran it, in place of three tests, mended: not three new tests, and not a pass of the
