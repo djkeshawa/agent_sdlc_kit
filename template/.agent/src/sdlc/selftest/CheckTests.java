@@ -467,6 +467,14 @@ final class CheckTests {
         String one = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: a test the file had, where it reports no new one, was removed",
                 one.contains("1 test was removed: the edited file reports fewer tests than it had before the change\n      checks/judged.t  [self test]\n        goes too\n") && code == 1);
+        // a file whose cases come from a source that gives another number each time: the counts of a repeat run differ, so nothing is removed for certain
+        write(repo, "checks/judged.t", JUDGED.replace("goes too: pass\n", "") + "late: skip-later\n");
+        String recounted = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("check: a file that reports another number of tests in a repeat run is unstable, not a removal",
+                recounted.contains("1 gave different results from run to run\n      checks/judged.t  [self test]\n        the file had 1 test that it does not report now (goes too), "
+                        + "and reports none that it did not have, but what the file reports, after the change or as it was, is not the same in every run\n")
+                && !recounted.contains("removed") && code == 0);
+        write(repo, "checks/judged.t", JUDGED.replace("goes too: pass\n", ""));
         reasons.reset();
         try {
             System.setErr(new PrintStream(reasons, true, StandardCharsets.UTF_8));

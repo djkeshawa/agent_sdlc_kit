@@ -275,11 +275,13 @@ final class Witness {
             restore(change, runner, base, files);
         }
         List<String> sensitive = new ArrayList<>(candidates.keySet());
+        // files whose skips may say a test is switched off, or whose counts say tests were removed: their old and after runs are made again
         List<String> switched = new ArrayList<>(skips.keySet());
+        for (Map.Entry<String, Names> e : named.entrySet()) if (e.getValue().gone().size() > e.getValue().fresh().size() && !switched.contains(e.getKey())) switched.add(e.getKey());
         Set<String> again = new LinkedHashSet<>(sensitive);
         again.addAll(switched);
         Map<String, String> unstable = new LinkedHashMap<>(); // key -> why
-        Set<String> unsteady = new LinkedHashSet<>(); // files whose skips said another thing in a repeat run
+        Set<String> unsteady = new LinkedHashSet<>(), recounted = new LinkedHashSet<>(); // files whose skips, and whose counts of gone and fresh cases, said another thing in a repeat run
         for (int i = 1; i < runs && !again.isEmpty(); i++) {
             Map<String, FileRun> a = runner.run(head.dir, new ArrayList<>(again), timeout);
             if (!sensitive.isEmpty()) {
@@ -300,7 +302,9 @@ final class Witness {
                 // the whole decision is made again from the complete reports of this run, on both sides
                 Map<String, FileRun> o = runner.run(sides.old().dir, switched, timeout);
                 for (String f : switched) {
-                    if (!signature(skips.get(f)).equals(said(o.get(f), a.get(f), f, by))) unsteady.add(f);
+                    List<String> first = signature(skips.getOrDefault(f, List.of()), named.get(f)), now = said(o.get(f), a.get(f), f, by);
+                    if (now == null || !first.subList(0, first.size() - 1).equals(now.subList(0, now.size() - 1))) unsteady.add(f);
+                    if (now == null || !first.get(first.size() - 1).equals(now.get(now.size() - 1))) recounted.add(f);
                 }
             }
         }
@@ -320,7 +324,7 @@ final class Witness {
         }
         Set<String> counted = new LinkedHashSet<>(); // files of which the counts say that fewer tests run
         for (Map.Entry<String, List<Verdict>> s : skips.entrySet()) if (s.getValue().stream().anyMatch(v -> v.name().isEmpty() && v.kind() == Kind.SKIPPED_NOW)) counted.add(s.getKey());
-        out.addAll(gone(named, fourth, counted, taken, judged, by));
+        out.addAll(gone(named, fourth, counted, taken, judged, recounted, by));
         for (Map.Entry<String, List<Verdict>> s : skips.entrySet()) {
             String f = s.getKey();
             for (Verdict v : s.getValue()) {
@@ -596,14 +600,18 @@ final class Witness {
         return parts.isEmpty() ? "" : " (" + String.join("; ", parts) + ")";
     }
 
-    /** The answer of a file's skips in another run, to compare with the first: kind, name and count of each verdict. Null when a run gave no result. */
+    /** What another run says of a file, to compare with the first (see signature). Null when a run gave no result. */
     private static List<String> said(FileRun old, FileRun after, String f, String by) {
         if (old == null || old.problem() != null || after == null || after.problem() != null) return null;
-        return signature(skips(f, names(old.cases(), after.cases()), by).answer());
+        Names n = names(old.cases(), after.cases());
+        return signature(skips(f, n, by).answer(), n);
     }
 
-    private static List<String> signature(List<Verdict> answer) {
-        return answer.stream().map(v -> v.kind() + "\n" + v.name() + "\n" + v.tests()).toList();
+    /** What a repeat run must say again: each verdict of the skips (kind, name, count), and last, how many cases are gone and fresh (see gone). */
+    private static List<String> signature(List<Verdict> answer, Names n) {
+        List<String> out = new ArrayList<>(answer.stream().map(v -> v.kind() + "\n" + v.name() + "\n" + v.tests()).toList());
+        out.add(n.gone().size() + " gone, " + n.fresh().size() + " fresh");
+        return out;
     }
 
     /** The cases' names, each with its suite where two of them share a name (nested classes with a method of one name). */
@@ -682,20 +690,24 @@ final class Witness {
      * Sound under any naming: the file reports G - F fewer cases than it did (each name it reports
      * on both sides has as many cases on each), so at least G - F cases it had are not there. A
      * test that is skipped is still reported, so these were taken out. With F = 0 every gone name
-     * is one of them.
+     * is one of them. A file whose cases come from a source that gives another number each time
+     * would say so too: such a file is run again (both ways, with the repeat runs of the skips),
+     * and where the counts differ it is unstable instead.
      *
      * Before all of these, the fourth run (see fourth): a gone test that passed before the change
      * and fails as it was on the code after it was broken by the change and taken out of the way,
      * whatever the counts say. A gone test of which the runs disagree on that is unstable.
      */
-    private static List<Verdict> gone(Map<String, Names> named, Fourth fourth, Set<String> counted, Set<String> taken, Set<String> judged, String by) {
+    private static List<Verdict> gone(Map<String, Names> named, Fourth fourth, Set<String> counted, Set<String> taken, Set<String> judged, Set<String> recounted, String by) {
         List<Verdict> out = new ArrayList<>();
         for (Map.Entry<String, Names> e : named.entrySet()) {
             String f = e.getKey();
             List<JUnitXml.Case> lost = e.getValue().gone(), fresh = e.getValue().fresh();
             int g = lost.size(), nf = fresh.size();
             if (g == 0) continue;
-            if (nf == 0) {
+            if (g > nf && recounted.contains(f)) {
+                out.add(new Verdict(f, "", Kind.UNSTABLE, had(lost, fresh) + ", but what the file reports, after the change or as it was, is not the same in every run", by, g - nf));
+            } else if (nf == 0) {
                 for (JUnitXml.Case c : lost) if (!taken.contains(f + "\n" + c.name())) out.add(new Verdict(f, c.name(), Kind.REMOVED, "", by));
             } else if (g > nf) {
                 out.add(new Verdict(f, "", Kind.REMOVED, had(lost, fresh) + ": at least " + (g - nf) + (g - nf == 1 ? " was" : " were") + " removed, and which cannot be told", by, g - nf));
@@ -782,7 +794,7 @@ final class Witness {
         List<JUnitXml.Case> both = new ArrayList<>(gone);
         both.addAll(fresh);
         return "the file had " + tests(gone.size()) + " that it does not report now (" + shortList(shown(gone, both)) + "), and reports "
-                + fresh.size() + " that it did not have (" + shortList(shown(fresh, both)) + ")";
+                + (fresh.isEmpty() ? "none" : fresh.size()) + " that it did not have" + (fresh.isEmpty() ? "" : " (" + shortList(shown(fresh, both)) + ")");
     }
 
     private static String tests(long n) {
