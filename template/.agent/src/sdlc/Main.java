@@ -66,7 +66,10 @@ public final class Main {
 
             tasks create|list <STORY>            Jira sub-tasks from the approved LLD's work breakdown
             task start <TASK> | task finish      scope edits to the task, move Jira
-            verify | trace [<STORY>] | check-pr [--title "..."]
+            check [--base REF] [--runs N] [--no-run]   the change in front of you, nothing to configure: its tests before and after it
+            check --since 30d [--max N]          the same, replayed over the recent commits of this branch
+            check --stop-hook                    for an agent's Stop hook: keeps the agent working while a new test proves nothing
+            verify | trace [<STORY>] | check-pr [--title "..."] [--story KEY]
             review record <TASK> --file <report> | qa record [<STORY>] --file <report>
             ci status|failures|wait [--pr N]     read the PR's Jenkins and SonarQube results
             sync [<STORY>]                       move Jira tickets to match the work
@@ -186,6 +189,7 @@ public final class Main {
         String c0 = a[0];
         String c1 = a.length > 1 ? a[1] : "";
         Map<String, String> opt = Checks.options(a, 1);
+        if (c0.equals("check")) return sdlc.check.Check.run(opt); // needs no configuration and no tracker
         Workflow w = new Workflow(new Jira(Ctx.cfg), new Confluence(Ctx.cfg), Console.TERMINAL); // the one place that says the tracker is Jira and the wiki is Confluence
         return switch (c0) {
             case "hook" -> Hooks.run(c1, stdin, hookFormat(a), w.sync);
@@ -199,7 +203,7 @@ public final class Main {
             case "analyse", "analyze" -> Analyse.facts();
             case "verify" -> Verify.run();
             case "trace" -> Trace.run(pos(a, 1));
-            case "check-pr" -> Checks.printPolicy(Checks.prPolicy(opt.get("title"), true));
+            case "check-pr" -> Checks.printPolicy(Checks.prPolicy(opt.get("title"), true, opt.getOrDefault("story", "")));
             case "docs" -> switch (c1) {
                 case "find" -> w.docs.printFind(need(a, 2, "KEY"));
                 case "pull" -> w.docs.pull(need(a, 2, "KEY"));
@@ -326,9 +330,27 @@ public final class Main {
     }
 
     /**
-     * When started from the compiled copy (.agent/.build) and a source file is newer (after a git
-     * pull), re-run through the bootstrap, which recompiles. Rules are never out of date.
+     * When started from the compiled copy (.agent/.build) and the sources differ from the ones it
+     * was built from (after a git pull or an upgrade), re-run through the bootstrap, which
+     * recompiles. Rules are never out of date.
      */
+    /**
+     * SHA-256 over the path and content of every source file, as Sdlc.java computes it. Content, not
+     * timestamps: sources copied in with old timestamps (cp -p, rsync -a, an archive) still count as a change.
+     */
+    static String fingerprint(Path src) throws IOException, java.security.NoSuchAlgorithmException {
+        java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+        try (Stream<Path> files = Files.walk(src)) {
+            for (Path p : files.filter(f -> f.toString().endsWith(".java")).sorted().toList()) {
+                md.update(src.relativize(p).toString().replace('\\', '/').getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                md.update((byte) 0);
+                md.update(Files.readAllBytes(p));
+                md.update((byte) 0);
+            }
+        }
+        return java.util.HexFormat.of().formatHex(md.digest());
+    }
+
     private static Integer rerunIfStale(String[] args) {
         if (Boolean.getBoolean("sdlc.bootstrapped")) return null;
         try {
@@ -339,12 +361,13 @@ public final class Main {
             Path stamp = build.resolve(".stamp");
             Path src = build.getParent().resolve("src");
             if (!Files.exists(stamp) || !Files.isDirectory(src)) return null;
-            long built = Files.getLastModifiedTime(stamp).toMillis();
-            boolean stale;
-            try (Stream<Path> files = Files.walk(src)) {
-                stale = files.filter(p -> p.toString().endsWith(".java")).anyMatch(p -> p.toFile().lastModified() > built);
+            boolean fresh;
+            try {
+                fresh = Files.readString(stamp).trim().equals(fingerprint(src));
+            } catch (Exception e) {
+                fresh = false; // the bootstrap then compiles, or fails loudly
             }
-            if (!stale) return null;
+            if (fresh) return null;
             List<String> cmd = new ArrayList<>(List.of(Ctx.javaBinary(), build.getParent().resolve("Sdlc.java").toString()));
             cmd.addAll(List.of(args));
             return new ProcessBuilder(cmd).inheritIO().start().waitFor();

@@ -50,6 +50,12 @@ public final class Config {
         return fromLayers(asMap(Yaml.parse(orgYaml), "org.yml"), asMap(Yaml.parse(repoYaml), "sdlc.yml"));
     }
 
+    /** The configuration from the text of its two files; the organisation layer may be missing (null). */
+    public static Config fromText(String orgYaml, String repoYaml) {
+        Map<String, Object> org = orgYaml == null || orgYaml.isBlank() ? new LinkedHashMap<>() : asMap(Yaml.parse(orgYaml), "org.yml");
+        return fromLayers(org, asMap(Yaml.parse(repoYaml), "sdlc.yml"));
+    }
+
     public static Config parse(String yaml) {
         return fromUser(asMap(Yaml.parse(yaml), "sdlc.yml"));
     }

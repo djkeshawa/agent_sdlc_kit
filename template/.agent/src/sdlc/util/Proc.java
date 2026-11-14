@@ -13,13 +13,27 @@ import java.util.concurrent.TimeUnit;
 public record Proc(int code, String out, String err) {
     public static final boolean WINDOWS = System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("win");
 
+    /** Variables added to the environment of every child process of this run. */
+    public static final java.util.Map<String, String> ENV = new java.util.concurrent.ConcurrentHashMap<>();
+
     public static Proc run(Path dir, String... cmd) {
         return runWithInput(dir, null, 120, cmd);
     }
 
     public static Proc runWithInput(Path dir, String stdin, int timeoutSeconds, String... cmd) {
+        return runWithEnv(dir, java.util.Map.of(), stdin, timeoutSeconds, cmd);
+    }
+
+    /** As runWithInput, with environment variables added to (an empty value removes one from) the child's environment. */
+    public static Proc runWithEnv(Path dir, java.util.Map<String, String> env, String stdin, int timeoutSeconds, String... cmd) {
         try {
-            Process p = new ProcessBuilder(cmd).directory(dir.toFile()).start();
+            ProcessBuilder pb = new ProcessBuilder(cmd).directory(dir.toFile());
+            pb.environment().putAll(ENV);
+            env.forEach((k, v) -> {
+                if (v == null || v.isEmpty()) pb.environment().remove(k);
+                else pb.environment().put(k, v);
+            });
+            Process p = pb.start();
             // stdin on its own thread, so a large output cannot block the input
             Thread writer = new Thread(() -> {
                 try (OutputStream o = p.getOutputStream()) {
@@ -41,9 +55,10 @@ public record Proc(int code, String out, String err) {
                 p.destroyForcibly();
                 return new Proc(124, out.toString(StandardCharsets.UTF_8), "timeout after " + timeoutSeconds + " s");
             }
-            readOut.join();
-            readErr.join();
-            writer.join();
+            // a background child of the command may keep the pipes open after it exits: do not wait for it for ever
+            readOut.join(5000);
+            readErr.join(5000);
+            writer.join(5000);
             return new Proc(p.exitValue(), out.toString(StandardCharsets.UTF_8), err.toString(StandardCharsets.UTF_8));
         } catch (IOException e) {
             return new Proc(127, "", e.toString());

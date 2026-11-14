@@ -81,6 +81,7 @@ agent_sdlc_kit/
 | 6 | [Guardrails reference and limits](docs/06-guardrails-reference.md) | read once |
 | 7 | [Troubleshooting](docs/07-troubleshooting.md) | when needed |
 | 8 | [Features across several components and repositories](docs/08-multi-component.md) - scoping eval, catalog, solution design, contracts, locked and hold-out tests | when you need it |
+| 9 | [`sdlc check`](docs/09-check.md) - the change in front of you, with nothing to configure: do its own tests notice it? | 10 min |
 
 ## Quick start (if you already know the tools)
 

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Launcher of the packaged sdlc tool. It runs the tool with the Java runtime that ships next to it,
+# against the repository of the current working directory. No JDK or Java on the PATH is needed.
+self=$0
+while [ -h "$self" ]; do # follow symlinks, e.g. ~/.local/bin/sdlc -> /opt/sdlc/bin/sdlc
+  link=$(readlink "$self")
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname -- "$self")/$link ;;
+  esac
+done
+home=$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd -P)
+# Short-lived command-line runs: serial GC and the C1 compiler start fastest.
+exec "$home/runtime/bin/java" -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Djava.awt.headless=true \
+  -jar "$home/lib/sdlc.jar" "$@"

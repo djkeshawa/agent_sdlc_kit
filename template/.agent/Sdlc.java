@@ -46,10 +46,28 @@ public class Sdlc {
 
     static boolean stale(Path src, Path build) throws IOException {
         Path stamp = build.resolve(".stamp");
-        if (!Files.exists(stamp)) return true;
-        long built = Files.getLastModifiedTime(stamp).toMillis();
-        try (Stream<Path> files = Files.walk(src)) {
-            return files.filter(p -> p.toString().endsWith(".java")).anyMatch(p -> p.toFile().lastModified() > built);
+        return !Files.exists(stamp) || !Files.readString(stamp).trim().equals(fingerprint(src));
+    }
+
+    /**
+     * SHA-256 over the path and content of every source file. Content, not timestamps: sources
+     * copied in with old timestamps (cp -p, rsync -a, an archive) still count as a change.
+     * sdlc.Main.fingerprint computes the same value for the fast launchers.
+     */
+    static String fingerprint(Path src) throws IOException {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            try (Stream<Path> files = Files.walk(src)) {
+                for (Path p : files.filter(f -> f.toString().endsWith(".java")).sorted().toList()) {
+                    md.update(src.relativize(p).toString().replace('\\', '/').getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    md.update((byte) 0);
+                    md.update(Files.readAllBytes(p));
+                    md.update((byte) 0);
+                }
+            }
+            return java.util.HexFormat.of().formatHex(md.digest());
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
         }
     }
 
@@ -87,7 +105,7 @@ public class Sdlc {
             for (Path old : s.filter(p -> p.toString().endsWith(".class") && !fresh.contains(p)).toList()) Files.deleteIfExists(old);
         }
         delete(tmp);
-        Files.writeString(build.resolve(".stamp"), String.valueOf(System.currentTimeMillis()));
+        Files.writeString(build.resolve(".stamp"), fingerprint(src));
         return true;
     }
 

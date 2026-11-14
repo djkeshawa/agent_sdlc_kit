@@ -14,6 +14,7 @@ import java.util.regex.Pattern;
 
 import sdlc.core.Ctx;
 import sdlc.core.Git;
+import sdlc.core.Trusted;
 import sdlc.core.Work;
 import sdlc.util.Glob;
 import sdlc.util.Json;
@@ -110,31 +111,76 @@ public final class Checks {
     }
 
     public static Result prPolicy(String title, boolean withTrace) {
+        return prPolicy(title, withTrace, "");
+    }
+
+    /**
+     * The pull request policy. In a pull request build (the CI event names the base branch) the
+     * rules are those of the base branch's tip, not of the checkout: a pull request cannot loosen
+     * the rules it is judged by. declaredStory is the story the pull request says it belongs to.
+     */
+    public static Result prPolicy(String title, boolean withTrace, String declaredStory) {
+        sdlc.core.Config own = Ctx.cfg;
+        try {
+            return policy(title, withTrace, declaredStory);
+        } finally {
+            Ctx.cfg = own;
+        }
+    }
+
+    private static Result policy(String title, boolean withTrace, String declaredStory) {
         List<String> passes = new ArrayList<>(), fails = new ArrayList<>(), warns = new ArrayList<>();
         String base = Git.base();
+        String shown = Trusted.shortName(base);
         String branch = Git.branch();
         if (!Git.refExists(base)) {
-            fails.add("Base " + base + " is missing locally: run git fetch origin");
+            fails.add("Base " + shown + " is missing locally: run git fetch origin");
             return new Result(passes, fails, warns);
+        }
+        if (!Proc.run(Ctx.root, "git", "merge-base", base, "HEAD").ok()) {
+            // without a common ancestor every diff below would fail or be empty, and an empty diff passes every rule
+            fails.add("This checkout has no commit in common with " + shown + " (a shallow clone?): fetch more history, e.g. git fetch --unshallow");
+            return new Result(passes, fails, warns);
+        }
+        boolean ci = Trusted.inCi();
+        if (ci) {
+            sdlc.core.Config trusted;
+            try {
+                trusted = Trusted.config(base);
+            } catch (RuntimeException e) {
+                fails.add("The rules on " + shown + " (.agent/sdlc.yml) cannot be read: " + e.getMessage());
+                return new Result(passes, fails, warns);
+            }
+            if (trusted == null) {
+                warns.add(shown + " has no .agent/sdlc.yml, so this pull request's own rules were used (a first installation; a tech lead reviews it)");
+            } else {
+                Ctx.cfg = trusted;
+                passes.add("The rules are read from " + shown + ", not from this pull request");
+            }
         }
         check(branch.matches(Ctx.cfg.str("git.branchPattern", ".*")), "Branch '" + branch + "' matches the naming rule", passes, fails);
         if (title != null) {
             Matcher km = Ctx.cfg.keyPattern().matcher(title);
             check(km.find(), "PR title '" + title + "' names a Jira issue of " + Ctx.cfg.projectKeys(), passes, fails);
         }
-        List<String> subjects = Git.lines(Proc.run(Ctx.root, "git", "log", "--no-merges", "--format=%s", base + "..HEAD").out());
+        Proc log = Proc.run(Ctx.root, "git", "log", "--no-merges", "--format=%s", base + "..HEAD");
+        if (!log.ok()) throw new sdlc.core.UsageException("git log failed (" + log.err().strip() + ")");
+        List<String> subjects = Git.lines(log.out());
         List<String> bad = subjects.stream().filter(s -> !s.matches(Ctx.cfg.str("git.commitPattern", ".*")) && !s.startsWith("fixup! ") && !s.startsWith("Revert \"")).toList();
         check(bad.isEmpty(), "All " + subjects.size() + " commit subjects follow the format" + (bad.isEmpty() ? "" : ": bad -> " + bad), passes, fails);
         // --no-renames: a rename is a deletion plus an addition, so a moved file cannot hide where it came from
-        List<String> files = Git.lines(Proc.run(Ctx.root, "git", "diff", "--name-only", "--no-renames", "--diff-filter=ACMR", base + "...HEAD").out());
-        List<String> everyChange = Git.lines(Proc.run(Ctx.root, "git", "diff", "--name-only", "--no-renames", base + "...HEAD").out());
+        List<String> files = Git.changed("--diff-filter=ACMR", base + "...HEAD");
+        List<String> everyChange = Git.changed(base + "...HEAD");
         check(!testsMissing(files), "Main code changes come with test changes", passes, fails);
-        Map<String, List<String>> added = Git.addedLines(Proc.run(Ctx.root, "git", "diff", "--unified=0", "--no-color", "--no-ext-diff", base + "...HEAD").out());
+        Map<String, List<String>> added = Git.addedLines(Git.patch(base + "...HEAD"));
         List<String> disabled = disabledTests(added);
         check(disabled.isEmpty(), "No test was disabled or focused" + (disabled.isEmpty() ? "" : ": " + disabled), passes, fails);
         List<String> secrets = secrets(added);
         check(secrets.isEmpty(), "No secrets added" + (secrets.isEmpty() ? "" : ": " + secrets), passes, fails);
-        String story = Work.currentStory();
+        // .sdlc/ is one machine's working state. In a pull request build it is the pull request's to write, so it is not read.
+        List<String> state = everyChange.stream().filter(f -> f.startsWith(".sdlc/")).toList();
+        check(state.isEmpty(), "No local state (.sdlc/) is committed" + (state.isEmpty() ? "" : ": " + state), passes, fails);
+        String story = ci ? "" : Work.currentStory();
         List<String> outside = story.isEmpty() ? null : outsideScope(story, everyChange);
         if (outside != null) {
             check(outside.isEmpty(), "Changed code stays inside the allowed paths of " + story + "'s tasks"
@@ -145,12 +191,43 @@ public final class Checks {
         List<String> loosened = sdlc.core.Locks.loosened(Ctx.root, Contracts.mergeBase(base));
         if (!loosened.isEmpty()) {
             if (lockOnly(everyChange, Contracts.mergeBase(base))) warns.add("acceptance test locks of the base branch changed in a lock-only pull request: " + loosened + " (QE leads review it, CODEOWNERS)");
-            else fails.add("Locked acceptance tests keep the lock they have on " + base + ": " + loosened
+            else fails.add("Locked acceptance tests keep the lock they have on " + shown + ": " + loosened
                     + " (QE changes a lock in its own pull request that holds only the lock files and their tests)");
+        }
+        // a lock the base branch gained or changed after this branch left it: the branch's own lock files do not know it
+        String mergeBase = Contracts.mergeBase(base);
+        Map<String, sdlc.core.Locks.Entry> atBranchPoint = sdlc.core.Locks.lockedAt(Ctx.root, mergeBase, new ArrayList<>());
+        List<String> lockedOnBase = new ArrayList<>(), relocked = new ArrayList<>();
+        List<String> damagedOnBase = new ArrayList<>();
+        Map<String, sdlc.core.Locks.Entry> onBase = sdlc.core.Locks.lockedAt(Ctx.root, base, damagedOnBase);
+        if (!damagedOnBase.isEmpty()) fails.add("Lock files on " + shown + " cannot be read, so its locked tests cannot be checked: " + damagedOnBase);
+        for (sdlc.core.Locks.Entry e : onBase.values()) {
+            sdlc.core.Locks.Entry before = atBranchPoint.get(e.path());
+            if (before != null && before.hash().equals(e.hash())) continue; // the checks above cover it
+            if (!everyChange.contains(e.path())) continue;
+            java.nio.file.Path f = Ctx.root.resolve(e.path());
+            String content;
+            try {
+                content = java.nio.file.Files.isRegularFile(f) ? sdlc.core.Locks.hash(java.nio.file.Files.readAllBytes(f)) : "";
+            } catch (java.io.IOException ex) {
+                content = "";
+            }
+            if (content.equals(e.hash())) continue;
+            // QE's own pull request locks the test again: its lock file names the content it now has
+            sdlc.core.Locks.Entry own = sdlc.core.Locks.locked(Ctx.root).get(e.path());
+            (own != null && own.hash().equals(content) ? relocked : lockedOnBase).add(e.path() + " (" + e.story() + ")");
+        }
+        if (!relocked.isEmpty()) {
+            if (lockOnly(everyChange, base)) warns.add("tests locked on " + shown + " are locked again in a lock-only pull request: " + relocked + " (QE leads review it, CODEOWNERS)");
+            else lockedOnBase.addAll(relocked);
+        }
+        if (!lockedOnBase.isEmpty()) {
+            fails.add("This pull request changes tests that " + shown + " has locked since the branch was made: " + lockedOnBase
+                    + " (the code must pass them as QE locked them; update the branch from " + shown + ")");
         }
         List<String> lockChanges = everyChange.stream().filter(f -> f.startsWith(sdlc.core.Locks.DIR + "/")).toList();
         if (!lockChanges.isEmpty() && loosened.isEmpty()) warns.add("acceptance test locks added: " + lockChanges + " (a QE lead reviews them, CODEOWNERS)");
-        Contracts.Policy contracts = Contracts.prPolicy(story.isEmpty() ? storyFromBranch(branch) : story, base, files);
+        Contracts.Policy contracts = Contracts.prPolicy(story.isEmpty() ? declaredStory(declaredStory, branch, fails, warns) : story, base, files);
         passes.addAll(contracts.passes());
         fails.addAll(contracts.fails());
         warns.addAll(contracts.warns());
@@ -175,6 +252,28 @@ public final class Checks {
         locked.addAll(sdlc.core.Locks.lockedAt(Ctx.root, ref, new ArrayList<>()).keySet());
         List<String> tests = Ctx.cfg.list("paths.test");
         return changed.stream().allMatch(f -> f.startsWith(sdlc.core.Locks.DIR + "/") || locked.contains(f) && Glob.any(tests, f));
+    }
+
+    /**
+     * The story a pull request is checked against where no local state exists: the one it declares
+     * (check-pr --story), else the key in its branch name. The author picks the branch name, so in
+     * a pull request build that fallback is a warning.
+     */
+    public static String declaredStory(String declared, String branch, List<String> fails, List<String> warns) {
+        String fromBranch = storyFromBranch(branch);
+        String d = declared == null ? "" : declared.trim();
+        if (d.isEmpty()) {
+            if (!fromBranch.isEmpty() && Trusted.inCi()) {
+                warns.add("the story " + fromBranch + " is taken from the branch name, which the author chooses: pass check-pr --story <KEY> from the pull request");
+            }
+            return fromBranch;
+        }
+        if (!Ctx.cfg.keyPattern().matcher(d).matches()) {
+            fails.add("--story " + d + " is not an issue key of " + Ctx.cfg.projectKeys());
+            return "";
+        }
+        if (!fromBranch.isEmpty() && !fromBranch.equals(d)) fails.add("The pull request declares " + d + " but its branch names " + fromBranch + ": one story per pull request");
+        return d;
     }
 
     /** The Jira key in a branch name (feature/PAY-101-refunds -> PAY-101): the story in CI, where no local state exists. */

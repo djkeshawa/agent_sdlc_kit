@@ -129,6 +129,24 @@ final class JavaGuardTests {
         expect("hook through the launcher run directly", shell(".agent/bin/sdlc hook pre-tool-use"), Decision.Kind.DENY);
         expect("config apply by agent", shell("java .agent/Sdlc.java config apply"), Decision.Kind.DENY);
         expect("status ok", shell("java .agent/Sdlc.java status"), Decision.Kind.ALLOW);
+        expect("packaged tool: setup by agent", shell("sdlc setup"), Decision.Kind.DENY);
+        expect("packaged tool: locking tests by agent", shell("sdlc tests lock PROJ-1"), Decision.Kind.DENY);
+        expect("packaged tool: hook by hand", shell("sdlc hook pre-tool-use"), Decision.Kind.DENY);
+        check("a script that is merely named sdlc is not waved through as the tool", shell("./sdlc status").kind() != Decision.Kind.ALLOW && shell("/tmp/sdlc status").kind() != Decision.Kind.ALLOW);
+        check("nor is one in a folder named bin", shell("/tmp/bin/sdlc status").kind() != Decision.Kind.ALLOW && shell("sh /tmp/bin/sdlc status").kind() != Decision.Kind.ALLOW);
+        expect("a script named sdlc cannot run the tool's protected commands either", shell("/tmp/bin/sdlc setup"), Decision.Kind.DENY);
+        expect("the packaged tool behind env: setup", shell("/usr/bin/env sdlc setup"), Decision.Kind.DENY);
+        expect("the packaged tool behind env with options: setup", shell("env -u PATH sdlc setup"), Decision.Kind.DENY);
+        expect("the packaged tool behind exec: locking tests", shell("exec sdlc tests lock PROJ-1"), Decision.Kind.DENY);
+        expect("the kit's launcher is still the tool", shell("sh .agent/bin/sdlc status"), Decision.Kind.ALLOW);
+        check("a script handed the launcher as an argument is not the tool", shell("sh payload.sh .agent/bin/sdlc status").kind() != Decision.Kind.ALLOW
+                && shell("java Payload.java .agent/Sdlc.java status").kind() != Decision.Kind.ALLOW);
+        expect("the launcher through ksh: approving a mandate's cousin, locking tests", shell("ksh .agent/bin/sdlc tests lock PROJ-1"), Decision.Kind.DENY);
+        expect("writing over the kit's launcher is a write, not a run of the tool", shell("cp payload .agent/bin/sdlc"), Decision.Kind.DENY);
+        expect("nor over its bootstrap", shell("cp payload .agent/Sdlc.java"), Decision.Kind.DENY);
+        check("moving a file onto the launcher is not allowed either", shell("mv /tmp/x .agent/bin/sdlc").kind() != Decision.Kind.ALLOW);
+        expect("packaged tool: check ok", shell("sdlc check"), Decision.Kind.ALLOW);
+        expect("a folder named sdlc is not the tool", shell("ls sdlc setup"), Decision.Kind.ALLOW);
         expect("compile into build", shell("javac -d .agent/.build /tmp/Evil.java"), Decision.Kind.DENY);
         expect("curl asks", shell("curl https://example.com"), Decision.Kind.ASK);
         expect("sudo", shell("sudo apt install x"), Decision.Kind.DENY);
