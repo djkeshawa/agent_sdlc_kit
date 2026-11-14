@@ -226,8 +226,9 @@ public final class Integrity {
     private static final Pattern SCRIPT_THRESHOLD = Pattern.compile("[\"']?\\b(lines|branches|functions|statements)[\"']?\\s*:\\s*(\\d+(?:\\.\\d+)?)");
 
     private final Change change;
-    /** The added lines as the change wrote them; added holds the same lines in pieces of bounded length. */
+    /** The added and removed lines as the change wrote them; added and removed hold the same lines in pieces of bounded length. */
     private final Map<String, List<String>> whole;
+    private final Map<String, List<String>> wholeRemoved;
     private final Map<String, List<String>> added;
     private final Map<String, List<String>> removed;
     private final Map<String, String> beforeText = new HashMap<>();
@@ -235,8 +236,9 @@ public final class Integrity {
     private final Set<Finding> out = new LinkedHashSet<>();
     /**
      * The scan reads what the change wrote, so its work per line and per file is bounded. Nothing is
-     * dropped for that: a long line is scanned in overlapping pieces, and a file too large to read
-     * is reported, as a problem when it is a test or a build file.
+     * dropped for that: a long line is scanned in overlapping pieces. Test files are read by the
+     * lines the change adds and removes, never whole; only build and configuration files are read
+     * whole (a pom, package.json, a coverage configuration), and one too large to read is reported.
      */
     private static final int MAX_LINE = 2000;
     private static final int OVERLAP = 300;
@@ -246,7 +248,8 @@ public final class Integrity {
         this.change = change;
         this.whole = change.addedLines();
         this.added = capped(whole);
-        this.removed = capped(change.removedLines());
+        this.wholeRemoved = change.removedLines();
+        this.removed = capped(wholeRemoved);
     }
 
     private static Map<String, List<String>> capped(Map<String, List<String>> lines) {
@@ -431,21 +434,27 @@ public final class Integrity {
             + "|@\\s*(?:[\\w$]+\\s*\\.\\s*)*(?:Test|ParameterizedTest|RepeatedTest|TestFactory|TestTemplate)\\b");
 
     /**
-     * True when a test file looks like it declares tests: a line of its code calls it, test,
-     * describe or their kin, defines a test function (Python, Go), or carries a JUnit test
-     * annotation. A lint of lines: which tests the file held is not read.
+     * True when the lines of a deleted test file look like they declare tests: a line calls it,
+     * test, describe or their kin, defines a test function (Python, Go), or carries a JUnit test
+     * annotation, read as the switch lint reads a line (seen). A lint of lines: which tests the
+     * file held is not read.
      */
-    private static boolean declaresTests(String text) {
-        if (text == null) return false;
-        for (String line : text.split("\\R")) if (seen(line, l -> TEST_CALL.matcher(l).find())) return true;
+    private static boolean declaresTests(List<String> lines) {
+        for (String line : lines) if (seen(line, l -> TEST_CALL.matcher(l).find())) return true;
         return false;
     }
 
+    /**
+     * A deleted test file is read by the lines the change removes, which are all of its lines. It
+     * moved when a file the change adds has exactly those lines; it is a test file deleted when it
+     * is named like a test file or a line of it declares tests; otherwise it is a support file
+     * (a fixture, a helper).
+     */
     private void deletedTestFiles() {
         for (String path : change.paths("D")) {
             if (!isTestFile(path)) continue;
-            String was = before(path);
-            String twin = was == null ? null : change.paths("A").stream().filter(a -> was.equals(after(a))).findFirst().orElse(null);
+            List<String> was = wholeRemoved.getOrDefault(path, List.of());
+            String twin = change.paths("A").stream().filter(a -> was.equals(whole.getOrDefault(a, List.of()))).findFirst().orElse(null);
             if (twin != null) note("test file moved", path, "the same file is now at " + twin);
             else if (testNamed(path) || declaresTests(was)) problem("test file deleted", path, "the file is gone");
             else note("test support file deleted", path, "it declares no test cases that a simple reading can find");
@@ -606,12 +615,17 @@ public final class Integrity {
 
     // ---------------- notes ----------------
 
+    /**
+     * A plain count, not a reading of tests: the calls that look like assertions on the lines an
+     * edit of a Java or script test file removes, against those on the lines it adds. Comments and
+     * strings count as written.
+     */
     private void fewerAssertions() {
         for (String path : change.paths("M")) {
             if (!isTestFile(path) || !(isJava(path) || isScript(path))) continue;
-            int was = count(assertion(path), before(path));
-            int now = count(assertion(path), after(path));
-            if (now < was) note("fewer assertions", path, was + " assertions before, " + now + " after");
+            int was = count(assertion(path), wholeRemoved.getOrDefault(path, List.of()));
+            int now = count(assertion(path), whole.getOrDefault(path, List.of()));
+            if (now < was) note("fewer assertions", path, "the lines the change removes hold " + was + (was == 1 ? " assertion" : " assertions") + ", the lines it adds " + now);
         }
     }
 
@@ -703,11 +717,14 @@ public final class Integrity {
         return afterText.computeIfAbsent(path, p -> text(p, change.after(p)));
     }
 
-    /** A file too large to read is left unread, and the report says so: silence would read as "nothing found". */
+    /**
+     * A file too large to read is left unread, and the report says so: silence would read as
+     * "nothing found". Only build and configuration files are read whole (before, after).
+     */
     private String text(String path, String content) {
         if (content == null || content.length() <= MAX_FILE) return content;
         String detail = "larger than " + MAX_FILE / 1_000_000 + " MB, so the scan did not read it";
-        if (isTestFile(path) || buildOrScript(path)) problem("too large to scan", path, detail);
+        if (buildOrScript(path)) problem("too large to scan", path, detail);
         else note("too large to scan", path, detail);
         return null;
     }
@@ -716,11 +733,12 @@ public final class Integrity {
         return isJava(path) ? JAVA_ASSERT : SCRIPT_ASSERT;
     }
 
-    private static int count(Pattern p, String text) {
-        if (text == null) return 0;
+    private static int count(Pattern p, List<String> lines) {
         int n = 0;
-        Matcher m = p.matcher(text);
-        while (m.find()) n++;
+        for (String line : lines) {
+            Matcher m = p.matcher(line);
+            while (m.find()) n++;
+        }
         return n;
     }
 

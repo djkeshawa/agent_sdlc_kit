@@ -403,8 +403,22 @@ final class IntegrityTests {
         reset(repo);
 
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("        assertEquals(3, 1 + 2);\n", ""));
-        check("integrity: fewer assertions in an edited test file is a note", only(scan(repo), Level.NOTE, "fewer assertions", "src/test/java/demo/CalcTest.java", "3 assertions before, 2 after"));
+        check("integrity: fewer assertions in an edited test file is a note, counted on the lines the change removes and adds",
+                only(scan(repo), Level.NOTE, "fewer assertions", "src/test/java/demo/CalcTest.java", "the lines the change removes hold 1 assertion, the lines it adds 0"));
         reset(repo);
+
+        // L1-11: a test file is never read whole, so its size does not matter: only the lines the change adds and removes are read
+        String fixture = "const rows = [\n" + ("  { a: 1, b: 2, c: 'some fixture text to make the file large' },\n").repeat(40_000) + "];\nit('reads', () => { expect(rows.length).toBe(40000) });\n";
+        write(repo, "web/big.test.ts", fixture);
+        git(repo, "add", "-A");
+        git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a large fixture");
+        write(repo, "web/big.test.ts", "// rows of the export\n" + fixture);
+        List<Finding> large = scan(repo);
+        check("integrity: a comment added to a script test that holds a 2 MB fixture is nothing to report", fixture.length() > 2_000_000 && large.isEmpty());
+        Files.delete(repo.resolve("web/big.test.ts"));
+        check("integrity: and deleting that file is a test file deleted, not a file too large to scan",
+                only(scan(repo), Level.PROBLEM, "test file deleted", "web/big.test.ts", "the file is gone") && count(scan(repo), "too large to scan") == 0);
+        git(repo, "reset", "-q", "--hard", "HEAD~1");
     }
 
     private static void build(Path repo) throws IOException {
