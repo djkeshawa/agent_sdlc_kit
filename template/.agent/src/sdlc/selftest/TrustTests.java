@@ -235,15 +235,25 @@ final class TrustTests {
         check("trust: a script test switched off on an added line fails, and so does one written over two lines",
                 Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No test was disabled or focused") && f.contains("web.test.ts: it.skip('later'") && f.contains("web.test.ts: it .skip('sooner'")));
 
-        // text that looks like a skipped test, inside a string: no failure, but a warning
+        // a Java test file is linted by the lines the change adds, as a script test file is
+        git(repo, "switch", "-q", "-c", "feature/PROJ-18-java", "origin/main");
+        write(repo, "src/test/java/OffTest.java", "class OffTest {\n  @Disabled(\"later\")\n  @Test void later() {}\n  @Test void sooner() { assumeTrue(false); }\n}\n");
+        write(repo, "src/main/java/A.java", "class A { int f; }\n");
+        commit(repo, "feat(PROJ-18): switch Java tests off");
+        Ctx.init(repo);
+        check("trust: a Java test switched off on an added line fails, by the line",
+                Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No test was disabled or focused") && f.contains("OffTest.java: @Disabled(\"later\")")
+                        && f.contains("OffTest.java: @Test void sooner() { assumeTrue(false); }")));
+
+        // text that looks like a skipped test, inside a text block over several lines: the lint reads lines, so it fails (on the safe side)
         git(repo, "switch", "-q", "-c", "feature/PROJ-16-example", "origin/main");
         write(repo, "src/test/java/DocsTest.java", "class DocsTest {\n  String example = \"\"\"\n      @Disabled\n      \"\"\";\n  @Test void real() { assertNotNull(example); }\n}\n");
         write(repo, "src/main/java/A.java", "class A { int d; }\n");
         commit(repo, "feat(PROJ-16): a test about source text");
         Ctx.init(repo);
         Checks.Result example = Checks.prPolicy(null, false);
-        check("trust: a skip inside a string of a test file does not fail the pull request, and is named for the reviewer",
-                example.fails().stream().noneMatch(f -> f.contains("No test was disabled or focused")) && example.warns().stream().anyMatch(w -> w.contains("DocsTest.java") && w.contains("inside a comment or a string")));
+        check("trust: a skip inside a text block of a test file fails the pull request, by its line: the lint does not know a text over several lines",
+                example.fails().stream().anyMatch(f -> f.contains("No test was disabled or focused") && f.contains("DocsTest.java: @Disabled")));
 
         // a branch with no commit in common with the base: every diff would be empty or fail
         git(repo, "switch", "-q", "--orphan", "feature/PROJ-13-orphan");

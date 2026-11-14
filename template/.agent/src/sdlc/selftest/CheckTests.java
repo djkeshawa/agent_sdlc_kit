@@ -101,9 +101,6 @@ final class CheckTests {
         Files.writeString(xml, "<testsuite><testcase name=\"again\" classname=\"a\"><flakyFailure type=\"java.lang.AssertionError\">x</flakyFailure></testcase></testsuite>");
         check("check: a case the build ran again is flaky, not passed", sdlc.check.JUnitXml.read(xml).get(0).status() == sdlc.check.JUnitXml.Status.FLAKY);
         Files.delete(xml);
-        check("check: test names are read from Java", sdlc.check.TestNames.of("ATest.java",
-                "class ATest { @Test void one() {} @ParameterizedTest @ValueSource(ints = {1, 2}) void two(int n) {} void helper() {} }").equals(java.util.Set.of("one", "two")));
-        check("check: but not from a script: its run says which tests it has", sdlc.check.TestNames.of("a.test.ts", "describe('x', () => { it('adds', () => {}) })").isEmpty());
         check("check: a reported name is matched to the declared one", sdlc.check.TestNames.plain("ATest.java", "two(int)[1]").equals("two")
                 && sdlc.check.TestNames.plain("a.test.ts", "x > nested > adds").equals("adds"));
     }

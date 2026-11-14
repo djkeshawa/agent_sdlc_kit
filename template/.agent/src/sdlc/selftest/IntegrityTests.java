@@ -168,8 +168,7 @@ final class IntegrityTests {
                     private int helper"""));
         write(repo, "web/sum.test.ts", SUM_TEST + "\nit('multiplies', () => {\n  const x = 2 * 2;\n});\n");
         List<Finding> empty = scan(repo);
-        check("integrity: a new Java test with no assertion is a note that says appears", only(empty, Level.NOTE, "appears to assert nothing", "src/test/java/demo/CalcTest.java", "divides (new)"));
-        check("integrity: a new script test is not read for its assertions: its run judges it", empty.stream().noneMatch(f -> f.path().equals("web/sum.test.ts")) && problems(empty) == 0);
+        check("integrity: a new test, Java or script, is not read for its assertions: its run judges it", empty.isEmpty());
         reset(repo);
 
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("    @Test\n    void subtracts", "    @Disabled\n    @Test\n    void subtracts"));
@@ -211,20 +210,15 @@ final class IntegrityTests {
         Files.delete(repo.resolve("src/test/java/demo/CalcTest.java"));
         write(repo, "src/test/java/demo/calc/CalcTest.java", CALC_TEST.replace("package demo;", "package demo.calc;"));
         List<Finding> movedEdited = scan(repo);
-        check("integrity: a test file moved with its tests intact is a note", problems(movedEdited) == 0
-                && only(movedEdited, Level.NOTE, "test file moved", "src/test/java/demo/CalcTest.java", "all 2 of its test cases are now in src/test/java/demo/calc/CalcTest.java"));
+        check("integrity: a Java test file moved and edited on the way is a test file deleted", only(movedEdited, Level.PROBLEM, "test file deleted", "src/test/java/demo/CalcTest.java", "the file is gone"));
         reset(repo);
 
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("void subtracts()", "void minus()"));
-        check("integrity: a test renamed with its body unchanged is a note", problems(scan(repo)) == 0
-                && only(scan(repo), Level.NOTE, "test renamed", "src/test/java/demo/CalcTest.java", "subtracts is now minus"));
-        reset(repo);
-        write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replaceFirst("(?s)    @Test\\s+void subtracts\\(\\) \\{.*?\\n    \\}\\n", "    @Test\n    void minus() {\n    }\n"));
-        check("integrity: a test replaced by an empty one under another name is a removal, not a rename",
-                only(scan(repo), Level.PROBLEM, "test removed", "src/test/java/demo/CalcTest.java", "1 test case removed or replaced: subtracts"));
+        check("integrity: a Java test renamed is not read from the source: nothing is said (its run judges it)", scan(repo).isEmpty());
         reset(repo);
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replaceFirst("(?s)    @Test\\s+void subtracts\\(\\) \\{.*?\\n    \\}\\n", ""));
-        check("integrity: a test case that is gone is a problem", only(scan(repo), Level.PROBLEM, "test removed", "src/test/java/demo/CalcTest.java", "1 test case removed or replaced: subtracts"));
+        List<Finding> gone = scan(repo);
+        check("integrity: nor is a Java test removed: no problem is said (its run judges it)", problems(gone) == 0 && count(gone, "test removed") == 0);
         reset(repo);
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("    private int helper", "    /* flaky */ @Disabled(\"later\") @Test void off() {}\n    private int helper"));
         check("integrity: @Disabled after a comment on the same line is still found", count(scan(repo), "test switched off") == 1);
@@ -333,106 +327,43 @@ final class IntegrityTests {
             Ctx.cfg = before;
         }
         git(repo, "reset", "-q", "--hard", "HEAD~1");
-        check("integrity: an annotation is read with the method it stands on",
-                sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n  @Test void b() {}\n}\n", "class ATest {\n  @Test void a() {}\n  @ Disabled\n  @Test void b() {}\n}\n")
-                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > b"))));
-        check("integrity: a disabled method moved between two nested classes is found", sdlc.check.Integrity.addedSwitches("ATest.java",
-                "class ATest {\n  class X { @Disabled @Test void works() {} }\n  class Y { @Test void works() {} }\n}\n",
-                "class ATest {\n  class X { @Test void works() {} }\n  class Y { @Disabled @Test void works() {} }\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > Y > works"))));
-        check("integrity: a switch on something that is no void method is not lost", sdlc.check.Integrity.addedSwitches("ATest.java",
-                "class ATest {\n  @TestFactory Stream<DynamicTest> all() { return null; }\n}\n",
-                "class ATest {\n  @Disabled @TestFactory Stream<DynamicTest> all() { return null; }\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > all"))));
-        check("integrity: an annotation moved onto the declaration before, which is no void method, is found", sdlc.check.Integrity.addedSwitches("ATest.java",
-                "class ATest {\n  @TestFactory Stream<DynamicTest> all() { return null; }\n  @Disabled @Test void works() {}\n}\n",
-                "class ATest {\n  @Disabled @TestFactory Stream<DynamicTest> all() { return null; }\n  @Test void works() {}\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > all"))));
-        check("integrity: an assumption that never holds is found with a reason after it too", sdlc.check.Integrity.addedSwitches("ATest.java",
-                "class ATest {\n  @Test void a() { run(); }\n}\n", "class ATest {\n  @Test void a() { assumeTrue(false, \"temporarily unsupported\"); run(); }\n}\n")
-                .equals(List.of(new sdlc.check.Integrity.Switch("assume", "ATest > a"))));
-        // files as people write them: the reader must follow each to its end, and find every test and every switch
-        String junit = """
-                package demo;
-
-                import static org.junit.jupiter.api.Assertions.assertEquals;
-
-                class RefundsTest {
-                    private static final char QUOTE = '"';
-                    private static final char TICK = '\\'';
-                    record Case(int paid, int refunded) {}
-
-                    @Test
-                    @DisplayName("what's left (after a refund)")
-                    void subtracts() {
-                        assertEquals(3, new Refunds().left(5, 2), () -> "paid " + 5);
-                    }
-
-                    @ParameterizedTest(name = "{0} -> {1}")
-                    @CsvSource(textBlock = \"\"\"
-                            1, 2   # it's (a row
-                            3, 4
-                            \"\"\")
-                    void table(int paid, int left) throws Exception {
-                        assertEquals(left, paid + 1);
-                    }
-
-                    @Nested
-                    class Partial {
-                        @Disabled("until PAY-12 (the bank's fix)")
-                        @Test
-                        void roundsDown() {}
-
-                        @TestFactory
-                        Stream<DynamicTest> all() { return Stream.of(); }
-                    }
-                }
-                """;
-        check("reader: a JUnit file with nested classes, a text block, records and character literals is read to its end",
-                !sdlc.check.Integrity.unsure("src/test/java/demo/RefundsTest.java", junit)
-                && sdlc.check.TestNames.counts("src/test/java/demo/RefundsTest.java", junit).keySet().equals(java.util.Set.of("subtracts", "table", "roundsDown"))
-                && sdlc.check.Integrity.switches("src/test/java/demo/RefundsTest.java", junit).equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "RefundsTest > Partial > roundsDown"))));
-        // round 8
-        check("integrity: the reason before the condition (JUnit 4) and an imported abort are found too", sdlc.check.Integrity.addedSwitches("ATest.java",
-                "class ATest {\n  @Test void a() { run(); }\n  @Test void b() { run(); }\n}\n",
-                "import static org.junit.jupiter.api.Assumptions.abort;\nclass ATest {\n  @Test void a() { Assume.assumeTrue(\"temporarily unsupported\", false); run(); }\n  @Test void b() { abort(\"later\"); run(); }\n}\n")
-                .equals(List.of(new sdlc.check.Integrity.Switch("assume", "ATest > a"), new sdlc.check.Integrity.Switch("assume", "ATest > b"))));
-        // Java switches are judged by the declaration they stand on, whatever lines the change wrote
-        String plain = "class ATest {\n  @Test\n  void a() {}\n\n  @Test\n  void b() {}\n}\n";
-        check("integrity: @Disabled added to an existing Java test is found by the declaration it stands on",
-                sdlc.check.Integrity.addedSwitches("ATest.java", plain, plain.replace("  @Test\n  void b", "  @Disabled(\"flaky\")\n  @Test\n  void b"))
-                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > b"))));
-        check("integrity: a switch on a line the change did not touch is new when the change puts it onto a test",
-                sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Disabled\n  void helper() {}\n}\n", "class ATest {\n  @Disabled\n  @Test void helper() {}\n}\n")
-                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > helper")))
-                && sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Disabled\n  int unused;\n  @Test void a() {}\n}\n", "class ATest {\n  @Disabled\n  @Test void a() {}\n}\n")
-                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > a"))));
-        check("integrity: a switch word moved to a test of the same name in another class is a new switch, however the lines are cut",
-                sdlc.check.Integrity.addedSwitches("ATest.java",
-                        "class ATest {\n  class X {\n    @Disabled\n    @Test void works() {}\n  }\n  class Y {\n    @Test void works() {}\n  }\n}\n",
-                        "class ATest {\n  class X {\n    @Test void works() {}\n  }\n  class Y {\n    @Disabled\n    @Test void works() {}\n  }\n}\n")
-                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > Y > works"))));
-        StringBuilder large = new StringBuilder("class ATest {\n");
-        for (int i = 0; i < 2500; i++) large.append("  @Test\n  void t").append(i).append("() {}\n");
-        String big = large.append("}\n").toString().replace("  @Test\n  void t1()", "  @Disabled\n  @Test\n  void t1()");
-        String reformatted = big.replace("\n  ", "\n    ");
-        check("integrity: in a large reformatted Java file a switch moved from one test to another is found, and the reformatting alone adds none",
-                sdlc.check.Integrity.addedSwitches("ATest.java", big, reformatted.replace("    @Disabled\n    @Test\n    void t1()", "    @Test\n    void t1()")
-                        .replace("    @Test\n    void t2()", "    @Disabled\n    @Test\n    void t2()")).equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > t2")))
-                && sdlc.check.Integrity.addedSwitches("ATest.java", big, reformatted).isEmpty());
-        check("integrity: a Java test moved within its class with its switch is not a new switch; one renamed while switched off is",
-                sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n  @Test void b() {}\n}\n",
-                        "class ATest {\n  @Test void b() {}\n  @Disabled @Test void a() {}\n}\n").isEmpty()
-                && sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n}\n", "class ATest {\n  @Disabled @Test void c() {}\n}\n")
-                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > c"))));
-        check("integrity: a switch moved between two overloads of one test method is found",
-                sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Disabled\n  @Test void a() {}\n  @ParameterizedTest @ValueSource(ints = 1)\n  void a(int n) {}\n}\n",
-                        "class ATest {\n  @Test void a() {}\n  @Disabled\n  @ParameterizedTest @ValueSource(ints = 1)\n  void a(int n) {}\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > a"))));
-        check("integrity: in a Java file the reader cannot follow to its end, declarations are known by their names alone",
-                sdlc.check.Integrity.unsure("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n  @Test void b() {\n}\n")
-                && sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Test void a() {}\n  @Test void b() {\n}\n", "class ATest {\n  @Disabled @Test void a() {}\n  @Test void b() {\n}\n").size() == 1);
-        check("integrity: an assumption with a matcher is not a test switched off", sdlc.check.Integrity.addedSwitches("ATest.java",
-                "class ATest {\n  @Test void a() { run(); }\n}\n", "class ATest {\n  @Test void a() { Assume.assumeThat(false, is(false)); assumeTrue(ready(false)); run(); }\n}\n").isEmpty());
-        check("integrity: a test that gains @Disabled is still a declared test, and one that loses it is not a new one",
-                sdlc.check.TestNames.counts("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n}\n").equals(sdlc.check.TestNames.counts("ATest.java", "class ATest {\n  @Test void a() {}\n}\n"))
-                && sdlc.check.TestNames.counts("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n}\n").containsKey("a"));
+        // Java test files are linted by the lines the change adds, as every other test file is
+        check("integrity: the lint finds @Disabled, @Ignore and an assumption that never holds on added Java lines",
+                Integrity.lintedSwitches(List.of("  @Disabled(\"flaky\")", "  @org.junit.Ignore", "    assumeTrue(false, \"later\");", "    Assume.assumeTrue(\"later\", false);",
+                        "  @ org.junit.jupiter.api . Disabled", "    assumeFalse(true);", "    Assumptions.abort(\"later\");"))
+                        .equals(List.of("@Disabled(\"flaky\")", "@org.junit.Ignore", "assumeTrue(false, \"later\");", "Assume.assumeTrue(\"later\", false);",
+                                "@ org.junit.jupiter.api . Disabled", "assumeFalse(true);", "Assumptions.abort(\"later\");")));
+        check("integrity: an annotation written over two added lines is found, joined",
+                Integrity.lintedSwitches(List.of("  @", "  Disabled", "  @Test void later() {}")).equals(List.of("@ Disabled")));
+        check("integrity: an assumption with a matcher or a computed condition is not a switch",
+                Integrity.lintedSwitches(List.of("    Assume.assumeThat(false, is(false));", "    assumeTrue(ready(false));", "    @DisplayName(\"x\")")).isEmpty());
+        // L1-1: an unconditional assumption put beside a conditional one is a line the change adds
+        write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("        assertEquals(0, 1 - 1);", "        if (Boolean.getBoolean(\"skip.integration\")) assumeTrue(false);\n        assertEquals(0, 1 - 1);"));
+        git(repo, "add", "-A");
+        git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a conditional assumption");
+        write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("        assertEquals(0, 1 - 1);", "        if (Boolean.getBoolean(\"skip.integration\")) assumeTrue(false);\n        assumeTrue(false);\n        assertEquals(0, 1 - 1);"));
+        check("integrity: a second assumption that never holds, beside a conditional one, is found by its added line",
+                only(scan(repo), Level.PROBLEM, "test switched off", "src/test/java/demo/CalcTest.java", "assumeTrue(false);") && count(scan(repo), "test switched off") == 1);
+        git(repo, "reset", "-q", "--hard", "HEAD~1");
+        // L1-4: overloads that change places. The diff shows one of them moved: its lines are added lines. When that is the one
+        // switched off, its @Disabled line is reported (the lint reads lines, not tests); when it is the other one, nothing is.
+        String shortOff = "class OrderTest {\n    @Disabled\n    @Test\n    void a() {}\n\n    @ParameterizedTest\n    @ValueSource(strings = {\"x\", \"y\"})\n    void a(String s) {\n        assertNotNull(s);\n        assertFalse(s.isEmpty());\n    }\n}\n";
+        String shortOffSwapped = "class OrderTest {\n    @ParameterizedTest\n    @ValueSource(strings = {\"x\", \"y\"})\n    void a(String s) {\n        assertNotNull(s);\n        assertFalse(s.isEmpty());\n    }\n\n    @Disabled\n    @Test\n    void a() {}\n}\n";
+        String longOff = shortOff.replace("    @Disabled\n    @Test\n    void a() {}\n", "").replace("    @ParameterizedTest\n", "    @Disabled\n    @ParameterizedTest\n")
+                .replace("class OrderTest {\n", "class OrderTest {\n    @Test\n    void a() {}\n");
+        String longOffSwapped = "class OrderTest {\n    @Disabled\n    @ParameterizedTest\n    @ValueSource(strings = {\"x\", \"y\"})\n    void a(String s) {\n        assertNotNull(s);\n        assertFalse(s.isEmpty());\n    }\n    @Test\n    void a() {}\n}\n";
+        write(repo, "src/test/java/demo/OrderTest.java", shortOff);
+        git(repo, "add", "-A");
+        git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "overloads");
+        write(repo, "src/test/java/demo/OrderTest.java", shortOffSwapped);
+        check("integrity: overloads that change places, where the diff shows the switched-off one moved: its @Disabled line is reported",
+                only(scan(repo), Level.PROBLEM, "test switched off", "src/test/java/demo/OrderTest.java", "@Disabled"));
+        write(repo, "src/test/java/demo/OrderTest.java", longOff);
+        git(repo, "add", "-A");
+        git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "overloads, the other one off");
+        write(repo, "src/test/java/demo/OrderTest.java", longOffSwapped);
+        check("integrity: overloads that change places, where the diff shows the other one moved: nothing is reported", problems(scan(repo)) == 0);
+        git(repo, "reset", "-q", "--hard", "HEAD~2");
         Config own = Ctx.cfg;
         Ctx.cfg = Config.parse("stack: node\ntests:\n  disabledPatterns: [\"testWithDb\\\\.skip\", \"\\\\b(it|test)\\\\.skip\\\\(\"]\n");
         try {
@@ -442,8 +373,6 @@ final class IntegrityTests {
         } finally {
             Ctx.cfg = own;
         }
-        check("integrity: words of a switch inside a comment or a string of a Java test are counted, so a change that adds them is said",
-                sdlc.check.Integrity.addedSwitchesInText("ATest.java", "class ATest {\n  @Test void a() {}\n}\n", "class ATest {\n  // @Disabled until later\n  @Test void a() {}\n}\n").equals(List.of("@Disabled")));
         git(repo, "reset", "-q", "--hard", "HEAD~2");
         reset(repo);
         write(repo, "package.json", "{\"scripts\": {\"test\": \"vitest run" + " ".repeat(20000) + "|| true\"}}\n");
