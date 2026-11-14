@@ -64,7 +64,11 @@ Three parts:
 
 A test is **new** when the run of its file as it was, on the commit your branch started from,
 did not report a test of the same name in the same class or file. The test framework says which
-tests a file has; the check does not read the test files' text for this.
+tests a file has; the check does not read the test files' text for this. For the runs of a
+parameterized test named by their place, the test is the method, not the place: a row put in
+among the arguments moves later runs to new places, so when the file as it was ran the method,
+every run of it is an existing test. A method that still runs, fewer times than before, is not
+removed; it could not be judged, as the reports do not say which arguments were taken out.
 
 **What a good result does not mean.** The tests and the code come from the same author. A test
 that fails before and passes after shows the test notices the change. It is not evidence that

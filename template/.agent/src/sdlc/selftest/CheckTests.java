@@ -551,6 +551,30 @@ final class CheckTests {
         check("check: a test deleted and another added elsewhere is a removal, not a rename",
                 swapped.contains("1 test was removed") && swapped.contains("        goes\n") && swapped.contains("        arrives\n") && !swapped.contains("Note:") && code == 1);
 
+        // a row put in among the arguments of a parameterized test: every later run has another place, and the last has none
+        // in the file as it was. The test (the method) is what is new or not, never a place.
+        write(repo, "checks/named.t", NAMED.replace("rejectsNull(String)[%i]: pass\n", "rejectsNull(String)[1]: pass\nrejectsNull(String)[2]: pass\nrejectsNull(String)[3]: pass\n"));
+        String rows = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a run of a parameterized test the file as it was ran is not a new test, whatever its place",
+                !rows.contains("new test") && rows.contains("10 tests that were already in the edited files pass before and after (not counted)") && code == 0);
+        write(repo, "checks/named.t", NAMED.replace("rejectsNull(String)[%i]: pass\n", "rejectsNull(String)[1]: pass\nrejectsNull(String)[2]: pass\nrejectsNull(String)[3]: pass\n"
+                + "rejectsBlank(String)[1]: pass\nrejectsBlank(String)[2]: pass\n"));
+        String newMethod = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: the runs of a parameterized test the file as it was did not have are new",
+                newMethod.contains("2 new tests pass before and after, so they do not test the change\n      checks/named.t  [self test]\n        rejectsBlank(String)[1]\n        rejectsBlank(String)[2]\n") && code == 1);
+        // renamed, and a row added: the runs of the renamed test are not new either
+        write(repo, "checks/named.t", NAMED.replace("rejectsNull(String)[%i]: pass\n", "refusesNull(String)[%i]: pass\nrefusesNull(String)[3]: pass\n"));
+        String renamedRows = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a run of a renamed parameterized test is not new, whatever its place",
+                renamedRows.contains("2 tests were renamed") && !renamedRows.contains("new test") && !renamedRows.contains("removed") && code == 0);
+        // a row taken out: the test still runs, so it was not removed, and which arguments went cannot be told
+        write(repo, "checks/named.t", NAMED.replace("rejectsNull(String)[%i]: pass\n", "rejectsNull(String)[1]: pass\n"));
+        String fewerRows = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a parameterized test that runs fewer times than before is not removed, and could not be judged",
+                !fewerRows.contains("removed") && fewerRows.contains("\n        rejectsNull(String): ran 2 times in the file as it was and runs 1 times now. "
+                        + "The report names its runs only by their place, so it cannot be told which arguments were taken out\n") && code == 0);
+        write(repo, "checks/named.t", NAMED);
+
         // every test of the file removed: the file runs and has none
         write(repo, "checks/named.t", "  nothing left\n");
         String emptied = report(Map.of("selftest-runner", "true", "runs", "1"));
@@ -599,14 +623,19 @@ final class CheckTests {
         check("check: an invocation switched off is not made up for by a new one that runs: it could not be judged, in every run",
                 paid.contains("could not be judged\n") && paid.contains("\n        params(int): 2 of 3 are skipped after the change and 1 of 2 before it, while 1 run where 1 ran before. "
                         + "The report names its cases only by their place, so it cannot be told whether a skipped case was added or a case that ran was switched off and another one added\n")
-                && !paid.contains("skipped now") && !paid.contains("from run to run"));
+                && !paid.contains("skipped now") && !paid.contains("from run to run") && !paid.contains("new test"));
         // a skipped case added in front of cases that all ran: the same
         write(repo, "checks/named.t", NAMED.replace("rejectsNull(String)[%i]: pass\n", "rejectsNull(String)[1]: pass\nrejectsNull(String)[2]: skip\nrejectsNull(String)[3]: pass\n"));
         String inserted = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: a skipped case among cases that ran, where as many run as before, could not be judged",
                 inserted.contains("\n        rejectsNull(String): 1 of 3 are skipped after the change and 0 of 2 before it, while 2 run where 2 ran before. The report names its cases only by their place")
-                && !inserted.contains("skipped now"));
+                && !inserted.contains("skipped now") && !inserted.contains("new test") && code == 0);
         write(repo, "checks/named.t", NAMED);
+        // a run put in front of a skipped one: the skipped run has a place the file as it was did not have, and its test skips as many as before
+        write(repo, "checks/off.t", OFF.replace("params(int)[1]: pass", "params(int)[1]: pass\nparams(int)[2]: pass").replace("params(int)[2]: skip", "params(int)[3]: skip"));
+        String shifted = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a skipped run moved to a new place by a row put in front of it is skipped as before, not new",
+                !shifted.contains(" is skipped\n") && !shifted.contains("skipped now") && !shifted.contains("new test") && code == 0);
         // what could not be judged in one run and is not switched off in another is unstable
         write(repo, "checks/off.t", OFF.replace("params(int)[1]: pass\nparams(int)[2]: skip", "params(int)[1]: skip-once fixed\nparams(int)[2]: skip\nparams(int)[3]: pass"));
         String undecidedOnce = report(Map.of("selftest-runner", "true", "runs", "2"));
