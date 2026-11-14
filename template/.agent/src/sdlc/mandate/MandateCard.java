@@ -14,7 +14,24 @@ public final class MandateCard {
     /** Lines are wrapped to this width; a single long path may run past it. */
     static final int WIDTH = 80;
 
+    /**
+     * Text as it may be printed: every control character (but not the line breaks the tool itself
+     * writes) becomes "?". A mandate's own text is checked when it is parsed; file names, names
+     * from git and the approver's identity pass through here too.
+     */
+    public static String safe(String text) {
+        StringBuilder out = new StringBuilder(text.length());
+        text.chars().forEach(c -> out.append(c < 0x20 || c == 0x7f || c >= 0x80 && c < 0xa0 || c == 0x2028 || c == 0x2029 ? '?' : (char) c));
+        return out.toString();
+    }
+
     public static String render(Mandate m, String blobId) {
+        StringBuilder card = new StringBuilder();
+        for (String line : draw(m, blobId).split("\n", -1)) card.append(safe(line)).append('\n');
+        return card.substring(0, card.length() - 1);
+    }
+
+    private static String draw(Mandate m, String blobId) {
         StringBuilder sb = new StringBuilder();
         sb.append("Mandate ").append(m.id()).append('\n');
         wrap(sb, m.intent(), "  ");

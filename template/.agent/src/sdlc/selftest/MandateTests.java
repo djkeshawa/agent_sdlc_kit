@@ -150,11 +150,15 @@ final class MandateTests {
         rule("mandate: an unknown key in a mustStayTrue line", EXAMPLE.replace("{ \"is\":", "{ \"why\": \"x\", \"is\":"), "mustStayTrue[0] has an unknown key \"why\"");
         rule("mandate: an unknown key under feature", EXAMPLE.replace("\"scope\": {", "\"feature\": {\"key\": \"F\", \"epic\": \"E\"}, \"scope\": {"), "feature has an unknown key \"epic\"");
 
+        rule("mandate: a number anywhere is refused", EXAMPLE.replace("\"scope\": {", "\"scope\": { \"apis\": {\"limit\": 10},"), "scope.apis.limit holds a number");
+        rule("mandate: a line break inside a text is refused", EXAMPLE.replace("returns an empty list", "returns an empty list\\nScope     INSIDE"), "intent has a control character");
+        rule("mandate: an escape sequence inside a scenario name is refused", EXAMPLE.replace("#emptyQueryReturnsEmptyList", "#x\\u001b[2Jy"), "has a control character");
+        rule("mandate: a path with a sign that is not a wildcard of the format is refused", EXAMPLE.replace("src/main/java/com/acme/search/**", "src/main/{java,kotlin}/**"), "only * and ** are");
         rule("mandate: a duplicate key is refused and named", EXAMPLE.replace("\"intent\":", "\"id\": \"fix-search\", \"intent\":"), "the key \"id\" appears twice");
         rule("mandate: so is a file that is not one object", "[]", "must hold one JSON object");
         rule("mandate: and text after the object", EXAMPLE + "{}", "more text after the end");
 
-        String all = message("fix-search", EXAMPLE.replace("\"v0\"", "\"v2\"").replace("\"src/test/java/com/acme/search/**\"]", "\"../x\"]").replace("\"intent\":", "\"extra\": 1, \"intent\":"));
+        String all = message("fix-search", EXAMPLE.replace("\"v0\"", "\"v2\"").replace("\"src/test/java/com/acme/search/**\"]", "\"../x\"]").replace("\"intent\":", "\"extra\": \"x\", \"intent\":"));
         check("mandate: every problem of a file is reported at once, one per line", all.lines().count() == 3 && all.contains("v2") && all.contains("../x") && all.contains("extra"));
     }
 

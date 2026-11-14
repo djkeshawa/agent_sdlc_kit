@@ -49,27 +49,30 @@ final class MandateVerdict {
     }
 
     /** Files that decide how the tests are built and run. When one changed, no test result of this run can be relied on. */
-    private static final Pattern BUILD = Pattern.compile("(.*/)?(pom\\.xml|mvnw|mvnw\\.cmd|build\\.gradle(\\.kts)?|settings\\.gradle(\\.kts)?|gradle\\.properties|gradlew|gradlew\\.bat"
+    private static final Pattern BUILD = Pattern.compile("(.*/)?(pom\\.xml|mvnw|mvnw\\.cmd|build\\.gradle[^/]*|settings\\.gradle[^/]*|gradle\\.properties|gradlew[^/]*"
             + "|package\\.json|package-lock\\.json|npm-shrinkwrap\\.json|yarn\\.lock|pnpm-lock\\.yaml|vitest\\.config\\.[^/]+|vitest\\.workspace\\.[^/]+|jest\\.config\\.[^/]+|tsconfig[^/]*\\.json)"
             + "|(.*/)?(\\.mvn|gradle)/.*");
 
     static int run(Map<String, String> opt, List<Runner> runners, int runs, int timeout) {
         String id = opt.get("mandate");
         Mandate.requireId(id);
-        Mandate m = Mandate.load(Ctx.root, id);
+        // read once: the text that is checked is the text whose blob is compared with the approval
+        Mandate.Loaded read = Mandate.loaded(Ctx.root, id);
+        Mandate m = read.mandate();
         Change change = Change.of(opt.get("base"));
-        Result r = judge(m, change, runners, runs, timeout, opt.containsKey("no-run"));
+        Result r = judge(read, change, runners, runs, timeout, opt.containsKey("no-run"));
         print(System.out, m, change, r);
         return r.failed() ? 1 : 0;
     }
 
-    static Result judge(Mandate m, Change change, List<Runner> runners, int runs, int timeout, boolean noRun) {
+    static Result judge(Mandate.Loaded read, Change change, List<Runner> runners, int runs, int timeout, boolean noRun) {
+        Mandate m = read.mandate();
         String own = Mandate.DIR + "/" + m.id() + ".json";
         List<String> outside = new ArrayList<>();
         for (Change.File f : change.files) if (!f.path().equals(own) && !m.inScope(f.path())) outside.add(f.path());
 
         // the mandate as the change holds it, and whether that very text was approved
-        String blob = blobAt(change.head, own);
+        String blob = read.blob();
         SelfApproval.Record approved = SelfApproval.of(Ctx.root, m.id());
         String approval;
         boolean inForce = false;
@@ -168,12 +171,17 @@ final class MandateVerdict {
                 if (v.kind() == Kind.PASSES_ON_BOTH) detail.add(v.file() + "  " + v.name() + ": passes before and after, so it does not test the change");
                 else if (v.kind() == Kind.FAILS_AFTER) detail.add(v.file() + "  " + v.name() + ": " + v.detail());
             }
-            long undecided = w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE);
-            if (undecided > 0) detail.add(undecided + " could not be judged");
+            for (Witness.Verdict v : w.verdicts()) {
+                if (v.kind() == Kind.SENSITIVE) detail.add(v.file() + "  " + v.name() + ": fails before, passes after (" + (m.locked().containsKey(v.file()) ? "a test approved with the mandate" : "a test written with the change") + ")");
+            }
+            // one sensitive test does not speak for the tests that could not be judged
+            long undecided = w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE) + w.count(Kind.SKIPPED);
+            if (undecided > 0) detail.add(undecided + " of the change's tests could not be judged, gave different results or were skipped");
+            for (String f : w.unsupported()) detail.add(f + ": no runner for it in this version");
             String what = w.verdicts().isEmpty() ? "the change adds or edits no test this version can run"
                     : "the change's own tests: " + sensitive + (sensitive == 1 ? " fails" : " fail") + " before it and " + (sensitive == 1 ? "passes" : "pass") + " after it"
                             + (sensitive > 0 ? " (" + preApproved + " approved with the mandate, " + (sensitive - preApproved) + " written with the change)" : "");
-            State st = both + failing > 0 ? State.VIOLATED : sensitive > 0 ? State.SATISFIED : State.UNKNOWN;
+            State st = both + failing > 0 ? State.VIOLATED : undecided > 0 || !w.unsupported().isEmpty() || sensitive == 0 ? State.UNKNOWN : State.SATISFIED;
             lines.add(new Line(st, what, false, detail));
         }
         return new Result(scope, outside, approval, lines, unresolved);
@@ -199,16 +207,26 @@ final class MandateVerdict {
         return cases.stream().allMatch(c -> c.status() == Status.PASSED) ? State.SATISFIED : State.UNKNOWN;
     }
 
+    /**
+     * The cases a scenario means. A name is first taken as the report gives it; only when no case
+     * has exactly that name is the plain form tried ("adds" for "suite > adds", "refunds" for
+     * "refunds(int)[1]"). A plain name that fits tests of more than one class or suite names none
+     * of them: it is not known which was meant.
+     */
     private static List<JUnitXml.Case> cases(FileRun run, String path, String name) {
         if (name.isEmpty()) return run.cases();
-        return run.cases().stream().filter(c -> c.name().equals(name) || TestNames.plain(path, c.name()).equals(name)).toList();
+        List<JUnitXml.Case> exact = run.cases().stream().filter(c -> c.name().equals(name)).toList();
+        if (!exact.isEmpty()) return exact.stream().map(JUnitXml.Case::suite).distinct().count() == 1 ? exact : List.of();
+        List<JUnitXml.Case> plain = run.cases().stream().filter(c -> TestNames.plain(path, c.name()).equals(name)).toList();
+        long homes = plain.stream().map(c -> c.suite() + "\n" + c.name().replaceFirst("[(\\[{].*$", "")).distinct().count();
+        return homes == 1 ? plain : List.of();
     }
 
     private static String why(FileRun run, String path, String name) {
         if (run == null) return "has no runner in this version, or does not exist";
         if (run.problem() != null) return run.problem();
         List<JUnitXml.Case> cases = cases(run, path, name);
-        if (cases.isEmpty()) return "was not found among the tests that ran";
+        if (cases.isEmpty()) return "was not found among the tests that ran, or more than one test has that name";
         for (JUnitXml.Case c : cases) {
             if (c.status() == Status.FAILED) return "fails" + (c.message().isBlank() ? "" : ": " + brief(c.message()));
             if (c.status() == Status.ERRORED) return "throws " + c.type() + (c.message().isBlank() ? "" : ": " + brief(c.message()));
@@ -225,27 +243,33 @@ final class MandateVerdict {
         String sha = change.base.length() > 7 ? change.base.substring(0, 7) : change.base;
         out.println("sdlc check --mandate " + m.id() + ": " + change.files.size() + " file" + (change.files.size() == 1 ? "" : "s") + " changed against " + change.baseName + " (" + sha + ")");
         out.println();
-        out.println("Mandate   " + m.intent());
-        out.println("          " + r.approval());
+        out.println("Mandate   " + safe(m.intent()));
+        out.println("          " + safe(r.approval()));
         out.println();
         out.println("Scope     " + r.scope() + switch (r.scope()) {
             case "INSIDE" -> "   every changed file is inside the mandate, and the mandate is approved as it is";
             case "AMENDED" -> "  every changed file is inside the mandate, but the mandate is " + (r.approval().startsWith("not") ? "not approved" : "not approved in the form it has now");
             default -> "  " + r.outside().size() + (r.outside().size() == 1 ? " changed file is" : " changed files are") + " not covered by the mandate";
         });
-        for (String f : r.outside()) out.println("            " + f);
+        for (String f : r.outside()) out.println("            " + safe(f));
         out.println();
         out.println("Evidence");
         for (Line l : r.lines()) {
-            out.println("  " + pad(l.state().word, 10) + l.what() + "   [" + (l.independent() ? "read from git" : "from the change's own test run") + "]");
-            for (String d : l.details()) out.println("              " + d);
+            out.println("  " + pad(l.state().word, 10) + safe(l.what()) + "   [" + (l.independent() ? "read from git" : "from the change's own test run") + "]");
+            for (String d : l.details()) out.println("              " + safe(d));
         }
-        if (r.unresolved() != null) out.println("  unresolved " + r.unresolved());
+        if (r.unresolved() != null) out.println("  unresolved " + safe(r.unresolved()));
         out.println();
         out.println("What this does not say");
         out.println("  - that the change is correct: the tests and the code come from the same author");
         out.println("  - that the mandate was approved before the work: only that this text was approved");
         if (r.lines().stream().anyMatch(l -> l.state() == State.UNKNOWN || l.state() == State.NOT_RUN)) out.println("  - anything about an obligation marked unknown or not run");
+        if (m.apis() != null) out.println("  - whether the change keeps to scope.apis: this version does not check it");
+    }
+
+    /** File names, test names and identities come from the change and from git: nothing a terminal would act on is printed. */
+    private static String safe(String text) {
+        return sdlc.mandate.MandateCard.safe(text);
     }
 
     private static String pad(String s, int n) {

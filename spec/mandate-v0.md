@@ -48,6 +48,10 @@ Rules of the format:
   form: change one byte and it is another mandate.
 - Parsing is strict. A duplicate key, a key this table does not name, a wrong type, or a path
   that leaves the repository is an error, and the mandate is not used.
+- A mandate holds no numbers and no control characters (no line break, tab or escape inside a
+  text). It is at most 256 KB, is UTF-8, and is a file of its own, not a link.
+- The blob id is of the bytes on disk, with no line-ending or other git filter applied. Locked
+  tests are compared as git stores them, which is what `git hash-object <file>` prints.
 - No YAML, no Markdown front matter, no comments.
 
 ## The card
@@ -60,7 +64,8 @@ is no second text that looks approved.
 
 Version 0 has one kind: **self**. `sdlc mandate approve <id>`, run by a person in a terminal:
 
-1. asks for the "this fails if…" sentence **before** showing the card;
+1. asks for the "this fails if…" sentence **before** showing anything of the draft, the intent
+   included;
 2. shows the card beside that sentence and asks which scenario covers it. With none, the
    sentence is kept and reported as unresolved;
 3. writes the sentence into `failsIf`, and records the approval of the resulting blob id.
@@ -97,9 +102,9 @@ alone) or *candidate-influenced* (the result of running the change's own build).
 | --- | --- | --- | --- |
 | 1 | Locked tests have the blob ids the mandate names | independent | `violated` when one differs or is missing |
 | 2 | Build files and test-runner configuration are unchanged from the base | independent | `violated` when one changed. Obligations 3 to 5 are then `unknown`: a changed build can make any test pass |
-| 3 | Each scenario was found, ran and passed after the change | candidate-influenced | `violated` when one fails; `unknown` when one is not found or cannot be run |
-| 4 | Each `mustStayTrue` test passes before the change and after it | candidate-influenced | `violated` when it fails on either side; `unknown` when it cannot be run |
-| 5 | The witness: tests the change adds or edits fail before it and pass after it | candidate-influenced | Reported with its counts. `violated` when a new test passes on both sides or a changed test fails after. Each sensitive test is graded *pre-approved* (its file is in `oracle.locked`) or *author-written* |
+| 3 | Each scenario was found, ran and passed after the change | candidate-influenced | `violated` when one fails, or does not compile or load after the change; `unknown` when one is not found, when its name fits more than one test, or when it cannot be run for a reason outside the code (no build tool, a timeout) |
+| 4 | Each `mustStayTrue` test passes before the change and after it | candidate-influenced | `violated` when it fails, or does not compile or load, on either side; `unknown` when it cannot be run for a reason outside the code |
+| 5 | The witness: tests the change adds or edits fail before it and pass after it | candidate-influenced | Reported with its counts. `violated` when a new test passes on both sides or a changed test fails after. `unknown` when any of the change's tests could not be judged, was skipped or has no runner, or when none is sensitive. Each sensitive test is listed as approved with the mandate (its file is in `oracle.locked`) or written with the change |
 
 Build files and runner configuration, for obligation 2: `pom.xml`, `.mvn/**`, `mvnw`,
 `mvnw.cmd`, `build.gradle*`, `settings.gradle*`, `gradle.properties`, `gradle/**`, `gradlew*`,
@@ -116,3 +121,5 @@ what they mean for review.
   the change's own author.
 - That the approval was given before the work. It says the text was approved in this form.
 - Anything about files the mandate does not name beyond "outside".
+- That the tests ran on the bytes that were locked, in a repository whose git filters rewrite
+  files on checkout.

@@ -29,7 +29,7 @@ final class Scratch implements AutoCloseable {
         try {
             Scratch s = new Scratch(Files.createTempDirectory("sdlc-check-" + label + "-").toRealPath());
             try {
-                s.write(tree, List.of());
+                s.checkout(tree, List.of());
             } catch (IOException | RuntimeException e) {
                 s.close();
                 throw e;
@@ -40,8 +40,13 @@ final class Scratch implements AutoCloseable {
         }
     }
 
-    /** Writes the given paths of a tree over what is here (all paths when the list is empty). */
+    /** Writes the given paths of a tree over what is here. No paths, nothing written. */
     void write(String tree, List<String> paths) throws IOException {
+        if (!paths.isEmpty()) checkout(tree, paths);
+    }
+
+    /** Writes every file of the tree (paths empty) or the given paths. */
+    private void checkout(String tree, List<String> paths) throws IOException {
         Path index = Files.createTempFile("sdlc-index", "");
         Files.delete(index); // git creates it
         try {

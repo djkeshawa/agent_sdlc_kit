@@ -56,25 +56,28 @@ public final class MandateCli {
      * ask puts one question and returns the answer.
      */
     public static int approve(Path root, String id, java.util.function.Function<String, String> ask, PrintStream out) throws IOException {
-        Mandate draft = Mandate.load(root, id);
+        // read once: what is shown, what is rewritten and what is approved all come from these bytes
+        Mandate.Loaded read = Mandate.loaded(root, id);
+        Mandate draft = read.mandate();
         out.println("Approving " + Mandate.DIR + "/" + id + ".json");
         out.println();
-        out.println("Before you read it: the change is \"" + draft.intent() + "\".");
+        out.println("Nothing of the draft is shown yet. You know what this change is for.");
         String fails = ask.apply("In your own words, this change fails if ... ");
         if (fails.isBlank()) {
             out.println("Nothing entered. Not approved.");
             return 1;
         }
-        if (fails.length() > 300 || fails.contains("\n")) throw new UsageException("keep the sentence to one line of at most 300 characters");
+        fails = fails.strip();
+        if (fails.length() > 300 || !MandateCard.safe(fails).equals(fails)) throw new UsageException("keep the sentence to one line of plain text, at most 300 characters");
         out.println();
-        out.print(MandateCard.render(draft, Mandate.blobId(root, id)));
-        if (draft.failsIf() != null && !draft.failsIf().equals(fails)) out.println("The draft said it fails if: " + draft.failsIf());
+        out.print(MandateCard.render(draft, read.blob()));
+        if (draft.failsIf() != null && !draft.failsIf().equals(fails)) out.println("The draft said it fails if: " + MandateCard.safe(draft.failsIf()));
         out.println("You said it fails if:      " + fails);
         out.println();
         out.println("Which of the tests that must pass covers what you said?");
         for (int i = 0; i < draft.scenarios().size(); i++) {
             Mandate.Scenario s = draft.scenarios().get(i);
-            out.println("  " + (i + 1) + "  " + s.path() + (s.wholeFile() ? "" : "#" + s.name()));
+            out.println("  " + (i + 1) + "  " + MandateCard.safe(s.path() + (s.wholeFile() ? "" : "#" + s.name())));
         }
         out.println("  0  none of them");
         String pick = ask.apply("Number: ");
@@ -99,18 +102,25 @@ public final class MandateCli {
             out.println("Not approved.");
             return 1;
         }
-        // the sentence becomes part of the mandate, so the blob that is approved holds the approver's own words
+        // the file must still be the one that was shown: a draft swapped in while the person was deciding is not approved
         Path file = Mandate.file(root, id);
-        Map<String, Object> json = new java.util.LinkedHashMap<>(Json.map(Json.parseStrict(Files.readString(file, java.nio.charset.StandardCharsets.UTF_8))));
+        String rel = Mandate.DIR + "/" + id + ".json";
+        if (!Mandate.read(root, file, rel).equals(read.text())) {
+            out.println(rel + " changed while you were deciding. Nothing was approved; look at it again.");
+            return 1;
+        }
+        // the sentence becomes part of the mandate, so the blob that is approved holds the approver's own words
+        Map<String, Object> json = new java.util.LinkedHashMap<>(Json.map(Json.parseStrict(read.text())));
         json.put("failsIf", fails);
-        Files.writeString(file, Json.pretty(json) + "\n", java.nio.charset.StandardCharsets.UTF_8);
-        Mandate.load(root, id); // still valid
-        String blob = Mandate.blobId(root, id);
+        String approved = Json.pretty(json) + "\n";
+        Mandate.parse(id, approved); // what is about to be written is a valid mandate
+        Files.writeString(file, approved, java.nio.charset.StandardCharsets.UTF_8);
+        String blob = Mandate.blobOf(root, approved); // of the text just written, not of a second read
         SelfApproval.record(root, id, new SelfApproval.Record(blob, who(root), java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString(), covers));
         out.println();
-        out.println("Approved by you (" + who(root) + "), blob " + blob.substring(0, Math.min(12, blob.length())) + ".");
+        out.println("Approved by you (" + MandateCard.safe(who(root)) + "), blob " + blob.substring(0, Math.min(12, blob.length())) + ".");
         out.println("This is your own approval of your own mandate: it is recorded on this machine only and says so in every verdict.");
-        out.println("Commit " + Mandate.DIR + "/" + id + ".json with the change. Editing it afterwards needs approving again.");
+        out.println("Commit " + rel + " with the change. Editing it afterwards needs approving again.");
         return 0;
     }
 
@@ -135,7 +145,7 @@ public final class MandateCli {
         }
         List<String> problems;
         try {
-            problems = Mandate.problems(id, Mandate.read(f, rel));
+            problems = Mandate.problems(id, Mandate.read(root, f, rel));
         } catch (UsageException e) {
             problems = List.of(e.getMessage());
         }
@@ -201,7 +211,7 @@ public final class MandateCli {
             } else {
                 String json;
                 try {
-                    json = Mandate.read(f, Mandate.DIR + "/" + id + ".json");
+                    json = Mandate.read(root, f, Mandate.DIR + "/" + id + ".json");
                 } catch (UsageException e) {
                     json = "";
                 }

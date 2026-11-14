@@ -85,13 +85,33 @@ final class MandateFlowTests {
 
         // approval: the sentence first, then the card
         ByteArrayOutputStream said = new ByteArrayOutputStream();
+        // a draft swapped in while the person is deciding is not approved
+        String draftText = Files.readString(repo.resolve("docs/mandates/fix.json"));
+        Deque<String> slow = new ArrayDeque<>(List.of("it breaks", "1", "fix"));
+        ByteArrayOutputStream swapped = new ByteArrayOutputStream();
+        int raced = MandateCli.approve(repo, "fix", q -> {
+            try {
+                if (slow.size() == 1) Files.writeString(repo.resolve("docs/mandates/fix.json"), draftText.replace("\"tests/**\"", "\"tests/**\", \"**\""));
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+            return slow.poll();
+        }, new PrintStream(swapped, true, StandardCharsets.UTF_8));
+        check("mandate: a mandate that changes while the person decides is not approved",
+                raced == 1 && swapped.toString(StandardCharsets.UTF_8).contains("changed while you were deciding") && SelfApproval.of(repo, "fix") == null);
+        Files.writeString(repo.resolve("docs/mandates/fix.json"), draftText);
+
         Deque<String> answers = new ArrayDeque<>(List.of("the fix is applied twice", "1", "fix"));
         StringBuilder order = new StringBuilder();
+        boolean[] blind = {true};
         int approved = MandateCli.approve(repo, "fix", q -> {
-            order.append(said.toString(StandardCharsets.UTF_8).contains("May change") ? "card;" : "blind;");
+            String shown = said.toString(StandardCharsets.UTF_8);
+            if (order.length() == 0) blind[0] = !shown.contains("The fix is applied") && !shown.contains("May change");
+            order.append(shown.contains("May change") ? "card;" : "blind;");
             return answers.poll();
         }, new PrintStream(said, true, StandardCharsets.UTF_8));
         check("mandate: the approver is asked how it fails before the card is shown", approved == 0 && order.toString().startsWith("blind;card;"));
+        check("mandate: and before anything of the draft, its intent included", blind[0]);
         check("mandate: the approver's sentence is written into the mandate", Mandate.load(repo, "fix").failsIf().equals("the fix is applied twice"));
         SelfApproval.Record rec = SelfApproval.of(repo, "fix");
         check("mandate: the approval names the blob that was approved and the test that covers the sentence",
@@ -153,6 +173,40 @@ final class MandateFlowTests {
         check("mandate: anything but the id cancels, and the file is left as it was",
                 MandateCli.approve(repo, "fix", q -> wrongId.poll(), new PrintStream(new ByteArrayOutputStream())) == 1 && Files.readString(repo.resolve("docs/mandates/fix.json")).equals(before));
         check("mandate: an id that is not a mandate is refused", Asserts.throwsUsage(() -> Check.run(Map.of("mandate", "../x"))));
+
+        // a change to production code only: "before" must be the real base, not the change laid over it
+        write(repo, "tests/reg.t", "holds: needs more\n");
+        commit(repo, "everything so far, and a test that the base does not pass");
+        String reg = Proc.run(repo, "git", "hash-object", "--", "tests/reg.t").out().strip();
+        write(repo, "docs/mandates/prodonly.json", """
+                {
+                  "mandate": "v0",
+                  "id": "prodonly",
+                  "intent": "More is added",
+                  "mustStayTrue": [ { "is": "this held before", "test": "tests/reg.t" } ],
+                  "scope": { "paths": ["prod.txt"] },
+                  "oracle": { "scenarios": ["tests/reg.t"], "locked": { "tests/reg.t": "%s" } }
+                }
+                """.formatted(reg));
+        write(repo, "prod.txt", Files.readString(repo.resolve("prod.txt")) + "more\n");
+        String prodOnly = report(Map.of("mandate", "prodonly", "selftest-runner", "true", "runs", "1"));
+        check("mandate: with only production code changed, a test that fails on the base is seen to fail before the change",
+                prodOnly.contains("violated  what must stay true passes before and after: 0 of 1") && prodOnly.contains("fails before the change"));
+
+        // a mandate that is a link to a file elsewhere
+        Path outsideFile = Files.createTempFile("sdlc-elsewhere", ".json");
+        try {
+            Files.writeString(outsideFile, Files.readString(repo.resolve("docs/mandates/prodonly.json")).replace("prodonly", "linked"));
+            Files.createSymbolicLink(repo.resolve("docs/mandates/linked.json"), outsideFile);
+            check("mandate: a mandate that is a link is refused", Asserts.throwsUsage(() -> Mandate.load(repo, "linked")));
+        } catch (IOException | UnsupportedOperationException e) {
+            // no links on this file system: nothing to refuse
+        } finally {
+            Files.deleteIfExists(repo.resolve("docs/mandates/linked.json"));
+            Files.deleteIfExists(outsideFile);
+        }
+        write(repo, "docs/mandates/huge.json", "{\"mandate\": \"v0\", \"id\": \"huge\", \"intent\": \"" + "x".repeat(300_000) + "\"}");
+        check("mandate: a mandate larger than a page is refused before it is parsed", Asserts.throwsUsage(() -> Mandate.load(repo, "huge")));
     }
 
     private static int code;

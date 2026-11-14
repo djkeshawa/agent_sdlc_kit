@@ -73,6 +73,8 @@ public record Mandate(String version, String id, String intent, List<Truth> must
     static boolean matches(String glob, String path) {
         String end = "\u0001";
         if (path.contains(end) || glob.contains(end)) return false;
+        // a backslash or a control character in a file's name: no path of a mandate can name it, so it is outside
+        if (path.indexOf('\\') >= 0 || control(path)) return false;
         return Glob.any(List.of(glob + end), path + end);
     }
 
@@ -88,21 +90,42 @@ public record Mandate(String version, String id, String intent, List<Truth> must
         if (problem != null) throw new UsageException("the mandate id " + problem);
     }
 
-    /** Reads and parses docs/mandates/<id>.json. The message of the error names the file and lists every problem. */
-    public static Mandate load(Path root, String id) {
-        Path f = file(root, id);
+    /** A mandate file may be this large and no larger: it is a page, not a document. */
+    static final int MAX_BYTES = 256 * 1024;
+
+    /**
+     * A mandate as it was read: the parsed form, the text and the blob id, all of the same bytes.
+     * What is shown, what is approved and what is checked must be one thing; reading the file once
+     * and hashing those very bytes (no git filter in between) makes it so.
+     */
+    public record Loaded(Mandate mandate, String text, String blob) {}
+
+    /** Reads docs/mandates/<id>.json once and parses it. The message of the error names the file and lists every problem. */
+    public static Loaded loaded(Path root, String id) {
         String rel = DIR + "/" + id + ".json";
-        if (!Files.isRegularFile(f)) throw new UsageException(rel + " does not exist.");
-        String json = read(f, rel);
+        String json = read(root, file(root, id), rel);
         List<String> problems = problems(id, json);
         if (!problems.isEmpty()) throw new UsageException(rel + " is not a valid mandate:\n  " + String.join("\n  ", problems));
-        return build(id, json);
+        return new Loaded(build(id, json), json, blobOf(root, json));
     }
 
-    /** The file's text. A file that is not UTF-8 is refused: its bytes would not mean what they show. */
-    static String read(Path f, String rel) {
+    public static Mandate load(Path root, String id) {
+        return loaded(root, id).mandate();
+    }
+
+    /**
+     * The file's text. Refused: a file that is not there, a link (it could name any file on the
+     * machine, and approving would rewrite that file), a path that leaves the repository through a
+     * linked folder, a file that is too large, and one that is not UTF-8 (its bytes would not mean
+     * what they show).
+     */
+    static String read(Path root, Path f, String rel) {
         try {
-            return Files.readString(f);
+            if (Files.isSymbolicLink(f)) throw new UsageException(rel + " is a link. A mandate is a file of its own.");
+            if (!Files.isRegularFile(f, java.nio.file.LinkOption.NOFOLLOW_LINKS)) throw new UsageException(rel + " does not exist.");
+            if (!f.toRealPath().startsWith(root.toRealPath())) throw new UsageException(rel + " is reached through a link that leaves the repository.");
+            if (Files.size(f) > MAX_BYTES) throw new UsageException(rel + " is larger than " + MAX_BYTES / 1024 + " KB. A mandate is one page.");
+            return java.nio.charset.StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(Files.readAllBytes(f))).toString();
         } catch (CharacterCodingException e) {
             throw new UsageException(rel + " is not UTF-8 text.");
         } catch (IOException e) {
@@ -110,15 +133,27 @@ public record Mandate(String version, String id, String intent, List<Truth> must
         }
     }
 
-    /** The git blob id of the file as git would store it (git hash-object). */
+    /** The git blob id of the file's bytes as they are on disk. */
     public static String blobId(Path root, String id) {
-        return hashObject(root, DIR + "/" + id + ".json", file(root, id));
+        return loadedText(root, id).blob();
     }
 
-    /** git hash-object of one file, relative to the repository root. */
+    private static Loaded loadedText(Path root, String id) {
+        String json = read(root, file(root, id), DIR + "/" + id + ".json");
+        return new Loaded(null, json, blobOf(root, json));
+    }
+
+    /** git hash-object of a file of the working tree, as git would store it: what a locked test is compared with. */
     static String hashObject(Path root, String rel, Path f) {
         Proc p = Proc.run(root, "git", "hash-object", "--", f.toString());
         if (!p.ok()) throw new UsageException("cannot work out the blob id of " + rel + ": " + p.err().strip());
+        return p.out().strip();
+    }
+
+    /** The git blob id of a text's UTF-8 bytes, exactly as given: no line-ending or other filter of the repository is applied. */
+    public static String blobOf(Path root, String text) {
+        Proc p = Proc.runWithInput(root, text, 60, "git", "hash-object", "--stdin");
+        if (!p.ok() || p.out().isBlank()) throw new UsageException("cannot work out a blob id: " + p.err().strip());
         return p.out().strip();
     }
 
@@ -145,6 +180,7 @@ public record Mandate(String version, String id, String intent, List<Truth> must
         }
         Map<String, Object> m = Json.obj(root);
         unknownKeys(out, m, TOP, "");
+        values(out, m, "");
 
         Object v = m.get("mandate");
         if (!m.containsKey("mandate")) out.add("mandate is missing; it must be \"v0\"");
@@ -319,6 +355,32 @@ public record Mandate(String version, String id, String intent, List<Truth> must
         }
     }
 
+    /**
+     * Rules for every value, wherever it sits. No numbers: nothing in a mandate is a quantity, and a
+     * number can change its spelling when the file is written again. No control characters in any
+     * text or key: a mandate is shown on a terminal, where a line break or an escape sequence could
+     * imitate the tool's own lines.
+     */
+    private static void values(List<String> out, Object v, String where) {
+        if (v instanceof Number) {
+            out.add((where.isEmpty() ? "the file" : where) + " holds a number; a mandate has none (write it as text)");
+        } else if (v instanceof String s) {
+            if (control(s)) out.add((where.isEmpty() ? "the file" : where) + " has a control character (a line break, a tab or an escape); write it as plain text on one line");
+        } else if (v instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> e : map.entrySet()) {
+                String key = String.valueOf(e.getKey());
+                if (control(key)) out.add("a key under " + (where.isEmpty() ? "the top level" : where) + " has a control character");
+                else values(out, e.getValue(), where.isEmpty() ? key : where + "." + key);
+            }
+        } else if (v instanceof List<?> list) {
+            for (int i = 0; i < list.size(); i++) values(out, list.get(i), where + "[" + i + "]");
+        }
+    }
+
+    private static boolean control(String s) {
+        return s.chars().anyMatch(c -> c < 0x20 || c == 0x7f || c >= 0x80 && c < 0xa0 || c == 0x2028 || c == 0x2029);
+    }
+
     /** The rules every path of the file follows: relative to the repository root, and never leaving it. */
     private static void path(List<String> out, String p, String where, boolean glob) {
         String shown = where.contains("\"") ? where : where + " \"" + p + "\"";
@@ -329,6 +391,8 @@ public record Mandate(String version, String id, String intent, List<Truth> must
         else if (("/" + p + "/").contains("/../") || p.equals("..")) out.add(shown + " leaves the repository");
         else if (p.chars().anyMatch(c -> c < 0x20)) out.add(shown + " has a control character");
         if (!glob && !p.isEmpty() && p.endsWith("/")) out.add(shown + " ends with \"/\"; name a file");
+        // the specification has two wildcards and nothing else
+        if (glob && p.chars().anyMatch(c -> "{}[]?".indexOf(c) >= 0)) out.add(shown + " uses a sign that is not part of a mandate's paths; only * and ** are");
     }
 
     private static String kind(Object v) {
