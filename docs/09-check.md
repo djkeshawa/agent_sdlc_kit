@@ -302,8 +302,10 @@ Claude Code, in `.claude/settings.json`:
   tests or their switches: only the lines the change adds are linted, with comments and the insides of strings taken out of each
   line. A switch on such a line is reported as that line, whatever the change did with the
   test: a skipped test that is moved, given another title or edited on the line of its skip is
-  reported as switched off. Not seen by the lint: a switch written over two lines (`it`, then
-  `.skip(` on the next), one reached through another name (`const later = it.skip`, then
+  reported as switched off. A switch that the change writes over two or three lines (`it`, then
+  `.skip(` on the next) is found too, also inside a text that runs over several lines, where it
+  switches nothing off: the lint errs on the safe side. Not seen by the lint: a switch of which
+  the change wrote only a part, one reached through another name (`const later = it.skip`, then
   `later('x', ...)`), and a test skipped from inside its body. For a file a runner owns (Vitest),
   the run says which tests ran before the change and are skipped now, whatever the source says;
   for a file no runner owns, nothing does.

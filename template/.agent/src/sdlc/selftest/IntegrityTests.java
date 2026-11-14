@@ -280,13 +280,13 @@ final class IntegrityTests {
         git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a name with a separator");
         // a switch that no single line shows
         write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\nit\n  .skip('later', () => {\n  expect(1).toBe(1)\n})\n");
-        check("integrity: a script switch written over two lines is not seen by the line lint (the run of the file judges it)", count(scan(repo), "test switched off") == 0);
+        check("integrity: a script switch written over two added lines is found by the line lint", count(scan(repo), "test switched off") == 1);
         write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\nit.concurrent.skip('later', () => {\n  expect(1).toBe(1)\n})\n");
         check("integrity: it.concurrent.skip is a test switched off", count(scan(repo), "test switched off") == 1);
         write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\n// it\n//   .skip('in a comment')\nconst s = 'it .skip(';\n");
         check("integrity: the same words in a comment or a string switch nothing off", problems(scan(repo)) == 0);
         write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\nconst example = `\nit\n  .skip('documentation example')\n`;\n");
-        check("integrity: nor on lines inside a template string that do not show a whole switch", problems(scan(repo)) == 0);
+        check("integrity: the line lint does not know a template string that runs over lines: a switch over two of its lines is reported (it errs on the safe side)", count(scan(repo), "test switched off") == 1);
         // the line lint of scripts: a skip on a line the change adds is reported as that line, whatever the change did with the test
         write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\nit('later', () => {})\n");
         git(repo, "add", "-A");

@@ -232,8 +232,8 @@ final class TrustTests {
         write(repo, "src/main/java/A.java", "class A { int e; }\n");
         commit(repo, "feat(PROJ-17): switch script tests off");
         Ctx.init(repo);
-        check("trust: a script test switched off on an added line fails, and one written over two lines is not seen by the lint",
-                Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No test was disabled or focused") && f.contains("web.test.ts: it.skip('later'") && !f.contains("sooner")));
+        check("trust: a script test switched off on an added line fails, and so does one written over two lines",
+                Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No test was disabled or focused") && f.contains("web.test.ts: it.skip('later'") && f.contains("web.test.ts: it .skip('sooner'")));
 
         // text that looks like a skipped test, inside a string: no failure, but a warning
         git(repo, "switch", "-q", "-c", "feature/PROJ-16-example", "origin/main");

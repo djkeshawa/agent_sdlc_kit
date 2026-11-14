@@ -187,12 +187,12 @@ public final class Checks {
         for (String hit : disabledTests(added)) if (containsDisabled(sdlc.check.Integrity.withoutBuiltInSwitches(hit.substring(hit.indexOf(": ") + 2)))) disabled.add(hit);
         // a Java switch that no added line shows (@, a line break, Disabled): read from the whole file, before and after, each with
         // the declaration it stands on, so that one taken off a test does not make up for one put on another. Other test files are
-        // linted by the lines the change adds; for scripts their run is the judge.
+        // linted by the lines the change adds, alone and two or three together (it, a line break, .skip); for scripts their run is the judge.
         String branchPoint = Contracts.mergeBase(base);
         for (String f : files) {
             if (!Glob.any(Ctx.cfg.list("paths.test"), f)) continue;
             if (!sdlc.check.Integrity.readWhole(f)) {
-                for (String line : added.getOrDefault(f, List.of())) if (sdlc.check.Integrity.lintedSwitch(line)) disabled.add(f + ": " + line.trim());
+                for (String hit : sdlc.check.Integrity.lintedSwitches(added.getOrDefault(f, List.of()))) disabled.add(f + ": " + hit);
                 continue;
             }
             String was = Trusted.read(branchPoint, f), now = Trusted.read("HEAD", f);

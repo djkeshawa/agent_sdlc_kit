@@ -156,13 +156,52 @@ public final class Integrity {
     /**
      * The line lint: true when the code of a line (its comments dropped and the insides of its
      * strings emptied) holds a switch that skips a test, marks it as to do, or focuses on one. A
-     * switch written over several lines (it, a line break, .skip) is not seen, and a skipped test
-     * that a change moves or gives another title is reported like any other skip on a line the
-     * change wrote.
+     * skipped test that a change moves or gives another title is reported like any other skip on
+     * a line the change wrote.
      */
     public static boolean lintedSwitch(String line) {
-        String code = code(line);
+        return lintedCode(code(line));
+    }
+
+    private static boolean lintedCode(String code) {
         return FOCUSED.matcher(code).find() || SCRIPT_SWITCH.matcher(code).find() || OTHER_SWITCH.matcher(code).find();
+    }
+
+    /**
+     * The line lint over the lines a change adds to one file, in their order: each line that holds
+     * a switch, as it is written, and each run of two or three added lines that hold one only
+     * together (it, a line break, .skip), joined by a space. Without the second part, breaking a
+     * switch over two lines would hide it from a command that runs no test (check-pr). The lines
+     * are taken as neighbours as the diff lists them; lines of two places of the file that only
+     * together read as a switch are reported too, which errs on the safe side. Still not seen: a
+     * switch of which the change wrote only a part (the line of ".skip(" under an "it" that was
+     * there); the run of the file reports that test as skipped.
+     */
+    public static List<String> lintedSwitches(List<String> addedLines) {
+        List<String> out = new ArrayList<>();
+        String[] code = new String[addedLines.size()];
+        boolean[] told = new boolean[code.length];
+        for (int i = 0; i < code.length; i++) {
+            code[i] = code(addedLines.get(i));
+            if (!lintedCode(code[i])) continue;
+            told[i] = true;
+            out.add(addedLines.get(i).trim());
+        }
+        for (int width = 2; width <= 3; width++) {
+            for (int i = 0; i + width <= code.length; i++) {
+                boolean fresh = true;
+                StringBuilder joined = new StringBuilder(), shown = new StringBuilder();
+                for (int k = i; k < i + width; k++) {
+                    fresh &= !told[k];
+                    joined.append(k == i ? "" : " ").append(code[k]);
+                    shown.append(k == i ? "" : " ").append(addedLines.get(k).trim());
+                }
+                if (!fresh || !lintedCode(joined.toString())) continue;
+                for (int k = i; k < i + width; k++) told[k] = true;
+                out.add(shown.toString());
+            }
+        }
+        return out;
     }
 
     /**
@@ -334,7 +373,7 @@ public final class Integrity {
         for (String path : change.paths("AM")) {
             if (!anyTestFile(path)) continue;
             if (!readWhole(path)) {
-                for (String line : added.getOrDefault(path, List.of())) if (lintedSwitch(line)) switchedOff(path, line.trim());
+                for (String hit : lintedSwitches(added.getOrDefault(path, List.of()))) switchedOff(path, hit);
                 continue;
             }
             read.add(path);
