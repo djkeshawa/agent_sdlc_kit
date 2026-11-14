@@ -185,13 +185,27 @@ final class MandateVerdict {
             long undecided = w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE) + w.count(Kind.SKIPPED);
             if (undecided > 0) detail.add(undecided + " of the change's tests could not be judged, gave different results or were skipped");
             for (String f : w.unsupported()) detail.add(f + ": no runner for it in this version");
+            // what violates the line, each with its count of tests ("at least" where a file's counts prove only a least number)
+            List<String> wrong = new ArrayList<>();
+            count(wrong, w, Kind.FAILS_AFTER, " fails after it", " fail after it");
+            count(wrong, w, Kind.PASSES_ON_BOTH, " new test passes on both sides", " new tests pass on both sides");
+            count(wrong, w, Kind.SKIPPED_NOW, " ran before it and is skipped now", " ran before it and are skipped now");
+            count(wrong, w, Kind.REMOVED, " was removed", " were removed");
+            count(wrong, w, Kind.OLD_FAILS_AFTER, " passed before it, fails on it as it was and was taken out of the way", " passed before it, fail on it as they were and were taken out of the way");
             String what = w.verdicts().isEmpty() ? "the change adds or edits no test this version can run"
                     : "the change's own tests: " + sensitive + (sensitive == 1 ? " fails" : " fail") + " before it and " + (sensitive == 1 ? "passes" : "pass") + " after it"
-                            + (sensitive > 0 ? " (" + preApproved + " approved with the mandate, " + (sensitive - preApproved) + " written with the change)" : "");
+                            + (sensitive > 0 ? " (" + preApproved + " approved with the mandate, " + (sensitive - preApproved) + " written with the change)" : "")
+                            + (wrong.isEmpty() ? "" : "; " + String.join("; ", wrong));
             State st = both + failing + switchedOff + removed > 0 ? State.VIOLATED : undecided > 0 || !w.unsupported().isEmpty() || sensitive == 0 ? State.UNKNOWN : State.SATISFIED;
             lines.add(new Line(st, what, false, detail));
         }
         return new Result(scope, outside, approval, lines, unresolved);
+    }
+
+    /** "at least 2 were removed": a kind's count of tests, when there are any. */
+    private static void count(List<String> parts, Witness.Result w, Kind kind, String one, String many) {
+        long n = w.count(kind);
+        if (n > 0) parts.add((w.atLeast(kind) ? "at least " : "") + n + (n == 1 ? one : many));
     }
 
     /** The blob id of a path in a tree, or null when the tree does not hold it. */

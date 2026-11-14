@@ -56,6 +56,7 @@ final class MandateFlowTests {
         write(repo, "tests/keep.t", "stays: pass\n");
         write(repo, "tests/other.t", "on: pass\ngoes: pass\n");
         write(repo, "tests/hurt.t", "guards: fails-with fixed\n");
+        write(repo, "tests/hurts.t", "a: fails-with fixed\nb: fails-with fixed\nc: fails-with fixed\nd: pass\n");
         git(repo, "init", "-q", "-b", "main");
         commit(repo, "base");
         Ctx.init(repo);
@@ -199,6 +200,24 @@ final class MandateFlowTests {
                 rewritten.contains("unknown   the change's own tests: 2 fail before it and pass after it") && rewritten.contains("could not be judged")
                 && !rewritten.contains("violated  the change's own tests") && code == 0);
         write(repo, "tests/hurt.t", "guards: fails-with fixed\n");
+
+        // each counted verdict of a file, with a least number above one, is counted by the tests it proves
+        write(repo, "tests/other.t", "  nothing left\n");
+        String twoRemoved = verdict();
+        check("mandate: two tests removed are counted as two", twoRemoved.contains("violated  the change's own tests: 1 fails before it and passes after it (0 approved with the mandate, "
+                + "1 written with the change); at least 2 were removed   [") && code == 1);
+        write(repo, "tests/other.t", "on: skip\ngoes: skip\n");
+        String twoOff = verdict();
+        check("mandate: two tests switched off are counted as two", twoOff.contains("written with the change); at least 2 ran before it and are skipped now   [") && code == 1);
+        write(repo, "tests/other.t", "on: pass\ngoes: pass\nnew one: pass\nnew two: pass\n");
+        String twoIdle = verdict();
+        check("mandate: two new tests that pass on both sides are counted as two", twoIdle.contains("written with the change); at least 2 new tests pass on both sides   [") && code == 1);
+        write(repo, "tests/other.t", "on: pass\ngoes: pass\n");
+        write(repo, "tests/hurts.t", "a again: pass\nb again: pass\nc again: needs fixed\nd: pass\n");
+        String twoTaken = verdict();
+        check("mandate: two old tests taken out of the way are counted as two", twoTaken.contains("; at least 2 passed before it, fail on it as they were and were taken out of the way   [")
+                && code == 1);
+        write(repo, "tests/hurts.t", "a: fails-with fixed\nb: fails-with fixed\nc: fails-with fixed\nd: pass\n");
 
         // what must stay true breaks
         write(repo, "prod.txt", "v1\nfixed\nbroken\n");

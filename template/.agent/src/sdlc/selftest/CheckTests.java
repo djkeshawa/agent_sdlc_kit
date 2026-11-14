@@ -394,25 +394,45 @@ final class CheckTests {
         write(repo, "checks/broken.t", later);
         commit(repo, "a test that a later word breaks");
         write(repo, "prod.txt", "v1\nfixed\nmore\nlater\n");
-        write(repo, "checks/broken.t", later.replace("holds: fails-with later", "kept up: pass"));
+        String keptUp = later.replace("holds: fails-with later", "kept up: pass");
+        write(repo, "checks/broken.t", keptUp);
         commit(repo, "a test broken and taken out of the way");
+        // and each counted verdict of a file with a least number above one
+        write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\nidle: pass\nidle too: pass\nidle three: pass\n");
+        commit(repo, "two new tests that prove nothing");
+        write(repo, "checks/named.t", "adds %i: pass\nrejectsNull(String)[%i]: pass\nrefund: skip\ngoes: skip\n");
+        commit(repo, "two tests switched off and two removed");
+        String latest = keptUp.replace("fragile: pass", "fragile: fails-with latest").replace("steady: pass", "steady: fails-with latest").replace("wobbly: pass", "wobbly: fails-with latest");
+        write(repo, "checks/broken.t", latest);
+        commit(repo, "tests that a latest word breaks");
+        write(repo, "prod.txt", "v1\nfixed\nmore\nlater\nlatest\n");
+        write(repo, "checks/broken.t", latest.replace("fragile: fails-with latest", "fragile anew: pass").replace("steady: fails-with latest", "steady anew: pass")
+                .replace("wobbly: fails-with latest", "wobbly anew: needs latest"));
+        commit(repo, "three tests broken, one rewritten and two taken out of the way");
         String history = report(Map.of("selftest-runner", "true", "runs", "1", "since", "1d"));
+        check("check: --since counts each verdict of a file by the tests it proves, not by its lines",
+                history.contains("two new tests that prove nothing\n    tests: at least 2 new, pass on both sides\n")
+                && history.contains("two tests switched off and two removed\n    tests: at least 2 ran before, skipped after; at least 2 removed\n")
+                && history.contains("three tests broken, one rewritten and two taken out of the way\n    tests: 1 fail before and pass after; at least 2 passed before, fail as they were "
+                        + "after, taken out; ")
+                && history.contains("\n  at least 3 new tests pass on both sides, so do not test their commit\n")
+                && history.contains("\n  at least 3 tests ran before their commit and are skipped after it; at least 3 tests were removed\n")
+                && history.contains("\n  at least 3 tests passed before their commit, fail on it as they were, and were taken out of the way\n"));
         check("check: --since names a test its commit broke and took out of the way",
                 history.contains("a test broken and taken out of the way\n    tests: 1 passed before, fail as they were after, taken out; 1 could not be judged\n"
-                        + "        passed before, fails as it was after, taken out: checks/broken.t  holds\n")
-                && history.contains("  1 test passed before its commit, fails on it as it was, and was taken out of the way\n"));
+                        + "        passed before, fails as it was after, taken out: checks/broken.t  holds\n"));
         check("check: --since says of a commit whose tests were only skipped before and after that they were",
                 history.contains("an edit of a skipped test\n    tests: only tests that were already there, skipped as before\n"));
         check("check: --since replays each recent commit", history.contains("commits on this branch since 1 days ago") && history.contains("  the fix")
                 && history.contains("tests: 1 fail before and pass after") && history.contains("does not test the change: tests/old.t  the file reports 1 test it did not have: at least 1 "
                         + "new test passes before and after. Under names the file did not have, 1 passes before and after (idle)")
-                && history.contains("\n  at least 1 new test passes on both sides, so does not test its commit\n") && code == 0);
+                && code == 0);
         check("check: --since names the tests a commit switched off or removed", history.contains("tests: at least 1 ran before, skipped after; at least 1 removed\n")
                 && history.contains("ran before, skipped after: checks/judged.t  the file runs 2 of its tests where it ran 4 before the change, and skips 2 where it skipped 1 "
                         + "(skipped now under a name that ran before: turned off)") && history.contains("removed: checks/judged.t  the file no longer reports 1 test under the name it had (goes too)")
-                && history.contains("at least 1 test ran before its commit and is skipped after it; at least 1 test was removed"));
+                );
         check("check: --since wants a time span", Asserts.throwsUsage(() -> Check.run(Map.of("since", "true"))));
-        git(repo, "reset", "-q", "--hard", "HEAD~7");
+        git(repo, "reset", "-q", "--hard", "HEAD~11");
         write(repo, "prod.txt", "v1\nfixed\nmore\n");
         branch = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: commits on the branch and uncommitted edits are one change", branch.contains("2 files changed against main") && branch.contains("1 fails before the change and passes after it"));
@@ -1023,6 +1043,14 @@ final class CheckTests {
                         + "renamed or switched off\n      checks/broken.t  [self test]\n        holds, fragile passed before the change and fail on the code after it as the file "
                         + "was, and the file does not report them now or skips them. It has 1 test that passes after the change and does not pass on both sides (holds anew), "
                         + "and at most 1 of the 2 old tests can be among them, rewritten for the changed behaviour: at least 1 was taken out of the way\n") && code == 1);
+        // three broken tests renamed, and only one sensitive test that can be a rewrite: at least two were taken out of the way
+        write(repo, "checks/broken.t", MENDED.replace("holds: pass", "holds anew: needs fixed").replace("fragile: pass", "sturdy: pass").replace("rows(int)[1]: pass", "rows(int)[0]: pass"));
+        String two = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a file whose counts prove two tests taken out of the way is counted as two",
+                two.contains("at least 2 tests passed before the change and fail on the code after it as the test was, and the change took them out of the way: removed, "
+                        + "renamed or switched off\n      checks/broken.t  [self test]\n        holds, fragile, rows(int)[1] passed before the change and fail on the code after it as "
+                        + "the file was") && two.contains("and at most 1 of the 3 old tests can be among them, rewritten for the changed behaviour: at least 2 were taken out of the way\n")
+                && code == 1);
         write(repo, "checks/broken.t", BROKEN);
 
         // two cases exchange which of them is skipped: could not be judged by the reports, but the one switched off fails as it was on the change

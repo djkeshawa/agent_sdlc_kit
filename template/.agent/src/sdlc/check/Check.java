@@ -232,7 +232,7 @@ public final class Check {
             out.println("  " + (least.contains(Kind.PASSES_ON_BOTH) ? "at least " : "") + both
                     + (both == 1 ? " new test passes on both sides, so does not test its commit" : " new tests pass on both sides, so do not test their commit"));
             out.println("  " + unknown + " could not be judged; " + failing + " fail after their commit");
-            out.println("  " + (least.contains(Kind.SKIPPED_NOW) ? "at least " : "") + switchedOff + (switchedOff == 1 ? " test ran" : " tests ran") + " before its commit and "
+            out.println("  " + (least.contains(Kind.SKIPPED_NOW) ? "at least " : "") + switchedOff + (switchedOff == 1 ? " test ran before its commit and " : " tests ran before their commit and ")
                     + (switchedOff == 1 ? "is" : "are") + " skipped after it; " + (least.contains(Kind.REMOVED) ? "at least " : "") + removed + (removed == 1 ? " test was" : " tests were") + " removed");
             out.println("  " + (least.contains(Kind.OLD_FAILS_AFTER) ? "at least " : "") + takenAway + (takenAway == 1 ? " test passed before its commit, fails on it as it was, and was" : " tests passed before their commit, fail on it as they were, and were")
                     + " taken out of the way");
