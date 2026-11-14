@@ -52,13 +52,13 @@ Three parts:
 | Result | Meaning |
 | --- | --- |
 | Fails before, passes after | The test is sensitive to the change. It is run three times on each side, so a test that fails at random does not count |
-| New test passes before and after | It passes whether or not the change is there, so it does not test the change. In a file the change adds, each such test is named. In an edited file the file is named, "at least N", with the names the file reports for the first time; those names need not be the new tests (see below). This fails the check |
+| New test passes before and after | It passes whether or not the change is there, so it does not test the change. In a file the change adds, each such test is named. In an edited file the file is named, "at least N", with the names the file reports for the first time; those names need not be the new tests (see below). Said of an edited file only where the run of the file as it was lists every test (see below), and only where the counts are the same in every run. This fails the check |
 | Fails after the change | The change's own test fails. This fails the check |
-| Ran before the change, skipped now | Fewer of the edited file's tests run than in the file as it was (a test that passed, failed or threw ran), and more are skipped: at least N tests that ran do not run now, switched off, or removed while skipped tests were added. Said of the file, "at least N", with the names that ran before and are skipped now as the reports give them (see below). This fails the check |
-| Removed | The edited file reports fewer tests than it had: at least N were removed. Said of the file, with the names it no longer reports and those it reports for the first time; the names do not say which tests were removed. This fails the check. A file whose tests were all taken out counts too |
-| Passed before, fails as it was after, taken out | An old test that passed before the change, run as the file was on the code after the change, fails, in every run; in every run after the change the file does not report its name or skips it, and no test of the file could be it rewritten (see below). This fails the check |
-| Could not be judged | Before the change the test did not compile, threw something other than a failed assertion, or was not found. Or the file as it was could not be run (it did not compile, timed out, or no build tool), so it cannot be told whether a test is new. Or the reports fit two stories, one of which is fine: a rename and a test deleted and another written; a test switched off and rows that changed places; a new test and an old one under a new name; an old test edited, or taken out and its name given to another. Or a report of the file holds a failure, so it may not list every test (see below). Each such line says what the reports show and which stories they cannot tell apart, or why nothing is counted. It never fails the check |
-| Different results from run to run | Unstable. Not counted as sensitive. A test file whose runs say different things about which tests were switched off or removed is unstable too, and so is an old test the change breaks that is gone or skipped in one run after the change and runs in another |
+| Ran before the change, skipped now | Fewer of the edited file's tests run than in the file as it was, and more are skipped: at least N tests that ran do not run now, switched off, or removed while skipped tests were added. Said of the file, "at least N", with the names that ran before and are skipped now as the reports give them (see below). Not said where the run of the file as it was holds a test that failed or threw: such a case need not be a test that ran. This fails the check |
+| Removed | The edited file reports fewer tests than it had: at least N were removed. Said of the file, with the names it no longer reports and those it reports for the first time; the names do not say which tests were removed. Said only where both runs list every test (see below): not where a report holds a failure, reports no test at all, or skips a case under a name the other report does not skip as often. This fails the check |
+| Passed before, fails as it was after, taken out | An old test that passed before the change, run as the file was on the code after the change, fails, in every run; in every run of the file after the change that the check made, the first and every repeat, the file does not report its name or skips it, and no test of the file could be it rewritten in any of them (see below). This fails the check |
+| Could not be judged | Before the change the test did not compile, threw something other than a failed assertion, or was not found. Or the file as it was could not be run (it did not compile, timed out, or no build tool), so it cannot be told whether a test is new. Or the reports fit two stories, one of which is fine: a rename and a test deleted and another written; a test switched off and rows that changed places; a new test and an old one under a new name; an old test edited, or taken out and its name given to another. Or a report of the file may not list every test (see below). Or the file as it was could not be run on the code after the change when the fourth run asked for it, or did not report an old test there as passed or failed: the file gets a line of its own saying so, whatever else is said of it. Each such line says what the reports show and which stories they cannot tell apart, or why nothing is counted. It never fails the check |
+| Different results from run to run | Unstable. Not counted as sensitive. A test file whose runs say different things about which tests were switched off, removed or new is unstable too, and so is an old test the change breaks that is gone or skipped in one run after the change and runs in another, or that fails as it was on the change in one run and not in another |
 | Skipped | A test skipped in a file the change adds, or in a file none of whose tests ran before the change. Listed |
 | Already in the file, passes on both | A test of a name the file reported before the change. Not counted. The same for a test skipped under the same name before and after the change |
 
@@ -73,7 +73,10 @@ shape of a name. Where cases are named by their place, a row put in among the ar
 every later row the next name and the last one a name the file did not have, and a row taken
 out does the opposite. What the names cannot tell, the counts of the file decide, because they
 are true however tests are named. What the counts cannot prove is said as "could not be judged",
-never passed in silence.
+never passed in silence; so is a run the check asked for that gave no answer.
+
+Every decision that must hold in every run is made from every run the check made, each repeat
+of each way (`--runs`), after the last of them.
 
 For each edited file, from the run as it was (old) and the run after the change: a name the file
 reports as many times on both sides is lined up with itself. That is a way of counting, not a
@@ -88,7 +91,7 @@ Switched off:
 | In the file | Result |
 | --- | --- |
 | No off flip and no test skipped under a new name, or no test of the file ran before | Nothing switched off. A test skipped under the same name on both sides is skipped as before |
-| Fewer run and more are skipped (R1 < R0, S1 > S0) | At least min(R0 - R1, S1 - S0) tests that ran do not run now: switched off, or removed while skipped tests were added. Said of the file, with the names that ran before and are skipped now. Fails |
+| Fewer run and more are skipped (R1 < R0, S1 > S0) | At least min(R0 - R1, S1 - S0) tests that ran do not run now: switched off, or removed while skipped tests were added. Said of the file, with the names that ran before and are skipped now. Fails. Where the file as it was reported a test that failed or threw: could not be judged |
 | Anything else where a test that ran may be skipped now | Could not be judged, with the counts and the names: off flips beside other changes (a switch-off, or tests that changed places), more skipped while as many run (a skipped test added, or one switched off and another added), a test skipped under a new name (a new skipped test, or one that ran, renamed and switched off) |
 
 Even when only off flips changed, the name of one does not say which test was switched off:
@@ -96,9 +99,10 @@ named by place, two rows that change places while the one moved to the front is 
 `[a, b]` to `[b skipped, a]`, give one off flip, at the first name, while `a` still runs under
 the second. The count holds; the name is only what the report shows.
 
-A skip is decided again from the whole reports of each repeat run (`--runs`), down to which
-names (with their class) ran before and are skipped now; an answer that differs from run to
-run is unstable.
+A skip is decided again from the whole reports of every run, each report of the file as it was
+against each report after the change, down to which names (with their class) ran before and are
+skipped now and the words of the answer; an answer that differs from run to run is unstable,
+also where the first run's skips said nothing.
 
 New tests that pass on both sides. A file that reports F new names and no longer reports G has
 at least F - G tests it did not have. If X of its tests do not pass on both sides (they fail
@@ -107,7 +111,7 @@ N = F - G - X of the new tests pass on both sides:
 
 | In the file | Result |
 | --- | --- |
-| N = 0 | Each test under a new name that passes on both sides could not be judged: it may be an old test under a new name, or moved on by a row put in before it |
+| N = 0, or the run of the file as it was may not list every test (see below) | Each test under a new name that passes on both sides could not be judged: it may be an old test under a new name, moved on by a row put in before it, or one the old report did not list |
 | N > 0 | The file is named: at least N new tests do not test the change. The names under which it reports tests for the first time and that pass on both sides are listed, but they need not be the new tests: a row put in before the others, `[a, b]` to `[c, a, b]`, puts `c` under a name the file had and `b` under a new one. Fails |
 
 So a fix that adds one sensitive test is sensitive; one that adds a sensitive test and one that
@@ -118,12 +122,12 @@ Gone tests (G gone, F new):
 
 | In the file | Result |
 | --- | --- |
-| More gone than new (G > F, also with no new name) | At least G - F were removed. Said of the file, with the names it no longer reports: named by place, taking the first row out of `[a, b]` leaves the last name gone and `b` under the first. Fails |
+| More gone than new (G > F, also with no new name) | At least G - F were removed. Said of the file, with the names it no longer reports: named by place, taking the first row out of `[a, b]` leaves the last name gone and `b` under the first. Fails. Where either run may not list every test (see below): could not be judged |
 | As many new as gone or more | Could not be judged: a rename looks exactly like a test deleted and another written. When fewer tests run and more are skipped, that is said instead (above) |
 
-A file whose counts say tests were removed is run again with the repeat runs; when the counts
-differ between runs (its tests come from a source that gives another number each time) it is
-unstable, not a removal.
+A file whose counts say tests were removed, or that new tests pass on both sides, is run again
+with the repeat runs; when the counts differ between runs (its tests come from a source that
+gives another number each time) it is unstable, not a removal or new tests.
 
 The fourth run, for each edited file whose list of tests changed in any way: every old test of
 the file that passed as it was is run as it was on the code after the change. One that fails or
@@ -131,29 +135,42 @@ throws there, in every run, failed on what the change wrote; what became of it d
 
 | The old test | Result |
 | --- | --- |
-| Its name is gone or skipped now, in every run after the change (B such tests), and the file has M tests that pass after the change and do not pass on both sides, in the run that has the most (any of which could be one of them rewritten for the changed behaviour) | B > M: at least B - M were taken out of the way, by name when M = 0 (the name is the old file's own, run on both codes). Fails. B <= M: could not be judged, as the old tests may have been rewritten under new names |
+| Its name is gone or skipped now, in every run of the file after the change that the check made (B such tests), and the file has M tests that pass after the change and do not pass on both sides, in the run that has the most (any of which could be one of them rewritten for the changed behaviour) | B > M: at least B - M were taken out of the way, by name when M = 0 (the name is the old file's own, run on both codes). Fails. B <= M: could not be judged, as the old tests may have been rewritten under new names |
 | Its name still runs after the change | Could not be judged: it may have been edited for the changed behaviour, or taken out and its name given to the next row. Where the file runs fewer tests than before, the check already fails for that |
-| Its name is gone or skipped in some runs after the change only, or it fails as it was in some runs only | Unstable |
+| Its name is gone or skipped in some runs after the change only, a run after the change gave no result, or it fails as it was in some runs only | Unstable |
 
 An old test said to be taken out of the way may be one of the tests the file no longer reports
 or no longer runs, so it is not counted again there: the counts of tests removed and of tests that
 ran and do not run now are said only beyond the old tests already said.
 
-A report that holds a failure. The counts take each report for the whole list of the file's
-tests. When the file as it was, or after the change, has a test that failed or threw, its
-report need not be one: JUnit 4 reports a class it cannot set up as one case,
-`initializationError`, in place of its tests, and Vitest reports a failed `afterAll` as a case of
-its own. Mending such a fault takes a case away or brings tests in. Which case stands for a
-fault outside a test's body a report does not say, and its name is not read to guess it. So in
-such a file, tests removed, new tests that pass on both sides and tests that no longer run
-beside new or gone names are not said; and where the report after the change holds the
-failure, nor are old tests taken out of the way (only that report says whether their names are
-gone and how many tests could be their rewrites). They could not be judged, with the reason. A
-failure after the change fails the check as always. Where the file reports the
-same names as before, as many of each, a skip is still said, as the very cases listed are
-compared. The run before the change (the new file on the old code) is not counted so: there a
-failure is what a sensitive test does, a test it does not list could not be judged, and no
-count is taken from it.
+A report that may not list every test. The counts take each report for the whole list of the
+file's tests, one case for each. A case that passed is one test that ran; the others need not
+be. A case that failed or threw may stand for a fault outside a test's body: JUnit 4 reports a
+class it cannot set up as one case, `initializationError`, in place of its tests, and Vitest
+reports a failed `afterAll` as a case of its own. A skipped case may stand for any number of
+tests: JUnit 4 reports an ignored class as one skipped case, and Surefire a disabled JUnit 5
+factory or template as one, whose tests it lists one by one once they run. And a report with
+no case at all may come from a JUnit 5 class that stops in its set-up on an assumption. Which
+case stands for what a report does not say, and its name is not read to guess it. So a report
+is taken for the whole list only where it reports at least one test, holds no test that failed
+or threw, and each case it skips is skipped under its name, as many times, in the other report
+(whatever such a case hides is then hidden on both sides alike). Each count needs only what it
+rests on:
+
+| Count | Needs |
+| --- | --- |
+| Tests removed | Both reports list every test |
+| New tests that pass on both sides | The report as it was lists every test (a test hidden after the change does not pass, so it is never counted as one) |
+| Tests that ran and are skipped now | The report as it was holds no failure. A skipped case, an empty report or a failure after the change only makes the count smaller, so a class, factory or template switched off as one skipped case is still said, as at least one test |
+| Old tests taken out of the way | No report after the change holds a failure (a failure may stand in place of the old test, which then fails and is not gone). An old test inside a case skipped after the change does not run: it was taken out of the way |
+
+What a count cannot rest on could not be judged, with the reason. So switching on an ignored
+class is not said to add tests, a test of a file that now reports no test at all is not said to
+be removed, and a case that failed before and is skipped now under its name (a failing set-up
+turned into an assumption) is not said to be switched off. A failure after the change fails the
+check as always. The run before the change (the new file on the old code) is not counted so:
+there a failure is what a sensitive test does, a test it does not list could not be judged, and
+no count is taken from it.
 
 **What a good result does not mean.** The tests and the code come from the same author. A test
 that fails before and passes after shows the test notices the change. It is not evidence that
@@ -244,8 +261,8 @@ Claude Code, in `.claude/settings.json`:
   was on the code before and after the change, and as the change has it. It is made for each
   edited file whose list of tests changed, and only for those files. Adding a test to an
   existing test file changes its list, so a fix that does so costs one more build. A file whose
-  skips may hide a test switched off, or whose counts say tests were removed, is also run again
-  as it was with each repeat run.
+  skips may hide a test switched off, or whose counts say tests were removed or new tests pass
+  on both sides, is also run again as it was with each repeat run.
 - In a report, a renamed test looks exactly like one test deleted and another written, and a
   renamed `describe` block or nested class renames every test in it. The check does not read
   the file's text or a title inside a name to tell them apart; it judges the counts (see above).
@@ -287,13 +304,20 @@ Claude Code, in `.claude/settings.json`:
   its file: removed there, unless that file reports as many new names as it lost. In the other
   file it is a new test. This comes from judging files one by one, not from the reports.
 - When the test file as it was does not compile or load on the change (the change renamed what
-  it used), or gives no result, the fourth run tells nothing: its gone tests could not be judged,
-  and the report says why.
-- A file whose tests were all taken out: its tests were removed. For Maven the file runs and
-  reports none (a build that passes with no report for the class; a build that fails, or no
-  build tool, is not read as "no tests"). Vitest reports such a file, and a `describe` block
-  without tests, as a failed case ("No test found in suite ..."), which is listed as failing
-  after the change: a report writes it exactly as a test's own failure, so it is not left out.
+  it used), or gives no result, or does not report an old test as passed or failed, the fourth
+  run tells nothing of those old tests: the file is said to be one that could not be judged,
+  with why, and whether the change broke a test it took out or replaced is not known.
+- A file whose tests were all taken out. For Maven the file runs and reports none (a build that
+  passes with no report for the class; a build that fails, or no build tool, is not read as "no
+  tests"). A JUnit 5 class that stops in its set-up on an assumption reports none too, so this
+  could not be judged, unless the fourth run finds an old test the change broke. Vitest reports
+  such a file, and a `describe` block without tests, as a failed case ("No test found in suite
+  ..."), which is listed as failing after the change: a report writes it exactly as a test's
+  own failure, so it is not left out.
+- A test of a file that skips a case it did not skip before, or no longer skips one it did, is
+  not counted as removed, and a file whose report as it was skipped such a case is not said to
+  have new tests that pass on both sides: the skipped case may stand for any number of tests.
+  A test that passed before and is skipped now is still counted as switched off.
 - A test file that is moved or renamed (git sees one file deleted and one added) has no earlier
   version under its new name: all its tests count as new.
 - A test whose name changes from run to run (a time or a random value in it) looks new each time.
