@@ -98,7 +98,7 @@ alone) or *candidate-influenced* (the result of running the change's own build).
 | 1 | Locked tests have the blob ids the mandate names | independent | `violated` when one differs or is missing |
 | 2 | Build files and test-runner configuration are unchanged from the base | independent | `violated` when one changed. Obligations 3 to 5 are then `unknown`: a changed build can make any test pass |
 | 3 | Each scenario was found, ran and passed after the change | candidate-influenced | `violated` when one fails; `unknown` when one is not found or cannot be run |
-| 4 | Each `mustStayTrue` test passes before the change and after it | candidate-influenced | `violated` when it fails on either side; `unknown` when it is not in `oracle.locked` |
+| 4 | Each `mustStayTrue` test passes before the change and after it | candidate-influenced | `violated` when it fails on either side; `unknown` when it cannot be run |
 | 5 | The witness: tests the change adds or edits fail before it and pass after it | candidate-influenced | Reported with its counts. `violated` when a new test passes on both sides or a changed test fails after. Each sensitive test is graded *pre-approved* (its file is in `oracle.locked`) or *author-written* |
 
 Build files and runner configuration, for obligation 2: `pom.xml`, `.mvn/**`, `mvnw`,

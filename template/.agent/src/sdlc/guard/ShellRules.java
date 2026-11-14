@@ -211,6 +211,7 @@ public final class ShellRules {
             if (sub.equals("setup") || sub.equals("upgrade") || sub.equals("config") && sub2.equals("apply")) return Decision.deny("setup, upgrade and config apply change guardrail files; a human runs them.");
             if (sub.equals("review") && sub2.equals("record")) return g.gate.recordReview();
             if (sub.equals("tests") && sub2.equals("lock")) return Decision.deny("locking acceptance tests is QE's approval; a human runs tests lock.");
+            if (sub.equals("mandate") && sub2.equals("approve")) return Decision.deny("approving a mandate is a person's decision; a human runs mandate approve.");
             if (sub.equals("eval")) return Decision.deny("the scoping eval is collected and scored by a human (its report shows the ground truth); agents only answer cases with /eval-scoping.");
             if (vouched) return Decision.allow();
         }

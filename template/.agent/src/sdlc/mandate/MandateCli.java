@@ -22,6 +22,7 @@ public final class MandateCli {
               mandate check <ID>   is docs/mandates/<ID>.json a valid mandate? Exit 0 yes, 1 no
               mandate show <ID>    print the mandate as a card a person can read
               mandate list         every mandate in docs/mandates, valid or not
+              mandate approve <ID> approve it yourself, in a terminal: you say first how it could fail
             """;
 
     /** args is the whole command line: args[0] is "mandate". */
@@ -33,12 +34,90 @@ public final class MandateCli {
             case "check" -> check(root, id(args), out);
             case "show" -> show(root, id(args), out);
             case "list" -> list(root, out);
-            // "approve" belongs here: the lead's part, not yet built
+            case "approve" -> approve(root, id(args), MandateCli::terminal, out);
             default -> {
                 System.err.print(USAGE);
                 yield 3;
             }
         };
+    }
+
+    /** Asks the person at the terminal. There must be one: an approval that arrives through a pipe is nobody's. */
+    private static String terminal(String question) {
+        java.io.Console console = System.console();
+        if (console == null) throw new UsageException("mandate approve is for a person at a terminal. It does not read answers from a pipe or a file.");
+        String answer = console.readLine("%s", question);
+        return answer == null ? "" : answer.strip();
+    }
+
+    /**
+     * Approval by the person at the keyboard. The order matters: they say how the change could
+     * fail before they see what the draft says, so the draft cannot put the thought in their head.
+     * ask puts one question and returns the answer.
+     */
+    public static int approve(Path root, String id, java.util.function.Function<String, String> ask, PrintStream out) throws IOException {
+        Mandate draft = Mandate.load(root, id);
+        out.println("Approving " + Mandate.DIR + "/" + id + ".json");
+        out.println();
+        out.println("Before you read it: the change is \"" + draft.intent() + "\".");
+        String fails = ask.apply("In your own words, this change fails if ... ");
+        if (fails.isBlank()) {
+            out.println("Nothing entered. Not approved.");
+            return 1;
+        }
+        if (fails.length() > 300 || fails.contains("\n")) throw new UsageException("keep the sentence to one line of at most 300 characters");
+        out.println();
+        out.print(MandateCard.render(draft, Mandate.blobId(root, id)));
+        if (draft.failsIf() != null && !draft.failsIf().equals(fails)) out.println("The draft said it fails if: " + draft.failsIf());
+        out.println("You said it fails if:      " + fails);
+        out.println();
+        out.println("Which of the tests that must pass covers what you said?");
+        for (int i = 0; i < draft.scenarios().size(); i++) {
+            Mandate.Scenario s = draft.scenarios().get(i);
+            out.println("  " + (i + 1) + "  " + s.path() + (s.wholeFile() ? "" : "#" + s.name()));
+        }
+        out.println("  0  none of them");
+        String pick = ask.apply("Number: ");
+        int n;
+        try {
+            n = Integer.parseInt(pick.strip());
+        } catch (NumberFormatException e) {
+            n = -1;
+        }
+        if (n < 0 || n > draft.scenarios().size()) {
+            out.println("That is not one of the numbers. Not approved.");
+            return 1;
+        }
+        String covers = "";
+        if (n > 0) {
+            Mandate.Scenario s = draft.scenarios().get(n - 1);
+            covers = s.path() + (s.wholeFile() ? "" : "#" + s.name());
+        } else {
+            out.println("No test covers it. The mandate can still be approved; every verdict will say this is unresolved.");
+        }
+        if (!ask.apply("Type the mandate's id to approve it (anything else cancels): ").equals(id)) {
+            out.println("Not approved.");
+            return 1;
+        }
+        // the sentence becomes part of the mandate, so the blob that is approved holds the approver's own words
+        Path file = Mandate.file(root, id);
+        Map<String, Object> json = new java.util.LinkedHashMap<>(Json.map(Json.parseStrict(Files.readString(file, java.nio.charset.StandardCharsets.UTF_8))));
+        json.put("failsIf", fails);
+        Files.writeString(file, Json.pretty(json) + "\n", java.nio.charset.StandardCharsets.UTF_8);
+        Mandate.load(root, id); // still valid
+        String blob = Mandate.blobId(root, id);
+        SelfApproval.record(root, id, new SelfApproval.Record(blob, who(root), java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString(), covers));
+        out.println();
+        out.println("Approved by you (" + who(root) + "), blob " + blob.substring(0, Math.min(12, blob.length())) + ".");
+        out.println("This is your own approval of your own mandate: it is recorded on this machine only and says so in every verdict.");
+        out.println("Commit " + Mandate.DIR + "/" + id + ".json with the change. Editing it afterwards needs approving again.");
+        return 0;
+    }
+
+    private static String who(Path root) {
+        String name = sdlc.util.Proc.run(root, "git", "config", "user.name").out().strip();
+        String mail = sdlc.util.Proc.run(root, "git", "config", "user.email").out().strip();
+        return (name.isEmpty() ? "unnamed" : name) + (mail.isEmpty() ? "" : " <" + mail + ">");
     }
 
     private static String id(String[] args) {

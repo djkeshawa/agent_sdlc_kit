@@ -67,6 +67,7 @@ public final class Main {
             tasks create|list <STORY>            Jira sub-tasks from the approved LLD's work breakdown
             task start <TASK> | task finish      scope edits to the task, move Jira
             check [--base REF] [--runs N] [--no-run]   the change in front of you, nothing to configure: its tests before and after it
+            check --mandate <ID>                 the change against its mandate: inside it or not, and what is known
             check --since 30d [--max N]          the same, replayed over the recent commits of this branch
             check --stop-hook                    for an agent's Stop hook: keeps the agent working while a new test proves nothing
             mandate check|show <ID>              what one change may do (docs/mandates/<ID>.json): is it valid | print it as a card

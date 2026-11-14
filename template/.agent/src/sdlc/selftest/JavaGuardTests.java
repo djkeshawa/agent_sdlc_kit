@@ -146,6 +146,9 @@ final class JavaGuardTests {
         expect("nor over its bootstrap", shell("cp payload .agent/Sdlc.java"), Decision.Kind.DENY);
         check("moving a file onto the launcher is not allowed either", shell("mv /tmp/x .agent/bin/sdlc").kind() != Decision.Kind.ALLOW);
         expect("packaged tool: check ok", shell("sdlc check"), Decision.Kind.ALLOW);
+        expect("approving a mandate by agent", shell("java .agent/Sdlc.java mandate approve fix-search"), Decision.Kind.DENY);
+        expect("packaged tool: approving a mandate by agent", shell("sdlc mandate approve fix-search"), Decision.Kind.DENY);
+        expect("reading a mandate ok", shell("sdlc mandate show fix-search"), Decision.Kind.ALLOW);
         expect("a folder named sdlc is not the tool", shell("ls sdlc setup"), Decision.Kind.ALLOW);
         expect("compile into build", shell("javac -d .agent/.build /tmp/Evil.java"), Decision.Kind.DENY);
         expect("curl asks", shell("curl https://example.com"), Decision.Kind.ASK);

@@ -26,6 +26,7 @@ public final class Check {
             sdlc.core.Config trusted = sdlc.core.Git.refExists(sdlc.core.Trusted.baseRef()) ? sdlc.core.Trusted.config(sdlc.core.Trusted.baseRef()) : null;
             sdlc.core.Ctx.cfg = trusted != null ? trusted : sdlc.core.Config.parse("stack: java-maven\n");
         }
+        if (opt.containsKey("mandate")) return MandateVerdict.run(opt, runners(opt), runs, timeout);
         if (opt.containsKey("since")) return since(opt, runs, timeout);
         if (opt.containsKey("stop-hook")) return stopHook(opt, opt.containsKey("runs") ? runs : 1, timeout);
         Change change = Change.of(opt.get("base"));

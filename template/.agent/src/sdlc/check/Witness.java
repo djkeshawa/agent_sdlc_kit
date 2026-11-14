@@ -49,28 +49,26 @@ final class Witness {
     }
 
     static Result run(Change change, List<Runner> runners, int runs, int timeoutSeconds) {
+        try (Sides sides = new Sides(change, runners)) {
+            return run(change, runners, runs, timeoutSeconds, sides);
+        }
+    }
+
+    /** As above, in checkouts the caller made and will remove. */
+    static Result run(Change change, List<Runner> runners, int runs, int timeoutSeconds, Sides sides) {
         List<Verdict> verdicts = new ArrayList<>();
         List<String> unsupported = new ArrayList<>();
-        try (Scratch head = Scratch.of(change.head, "after")) {
-            Map<Runner, List<String>> owned = new LinkedHashMap<>();
-            Set<String> support = new LinkedHashSet<>();
-            for (String path : change.paths("AM")) {
-                Runner owner = runners.stream().filter(r -> r.runs(head.dir, path)).findFirst().orElse(null);
-                if (owner != null) owned.computeIfAbsent(owner, k -> new ArrayList<>()).add(path);
-                else if (Integrity.testNamed(path)) unsupported.add(path);
-                if (runners.stream().anyMatch(r -> r.support(path))) support.add(path);
-            }
-            if (owned.isEmpty()) return new Result(verdicts, unsupported, 0);
-            try (Scratch base = Scratch.of(change.base, "before")) {
-                base.write(change.head, new ArrayList<>(support));
-                // a fixture or helper the change deletes is gone before the change too, as the tests now expect
-                for (String gone : change.paths("D")) if (runners.stream().anyMatch(r -> r.support(gone))) java.nio.file.Files.deleteIfExists(base.dir.resolve(gone));
-                for (Map.Entry<Runner, List<String>> e : owned.entrySet()) {
-                    verdicts.addAll(judge(change, e.getKey(), e.getValue(), base, head, Math.max(1, runs), timeoutSeconds));
-                }
-            }
-        } catch (java.io.IOException e) {
-            throw new sdlc.core.UsageException("cannot prepare the checkouts for the test runs: " + e.getMessage());
+        Scratch head = sides.head();
+        Map<Runner, List<String>> owned = new LinkedHashMap<>();
+        for (String path : change.paths("AM")) {
+            Runner owner = runners.stream().filter(r -> r.runs(head.dir, path)).findFirst().orElse(null);
+            if (owner != null) owned.computeIfAbsent(owner, k -> new ArrayList<>()).add(path);
+            else if (Integrity.testNamed(path)) unsupported.add(path);
+        }
+        if (owned.isEmpty()) return new Result(verdicts, unsupported, 0);
+        Scratch base = sides.base();
+        for (Map.Entry<Runner, List<String>> e : owned.entrySet()) {
+            verdicts.addAll(judge(change, e.getKey(), e.getValue(), base, head, Math.max(1, runs), timeoutSeconds));
         }
         return new Result(verdicts, unsupported, Math.max(1, runs));
     }
