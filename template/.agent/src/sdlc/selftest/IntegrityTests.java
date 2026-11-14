@@ -422,6 +422,9 @@ final class IntegrityTests {
                         "class ATest {\n  @Test void b() {}\n  @Disabled @Test void a() {}\n}\n").isEmpty()
                 && sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n}\n", "class ATest {\n  @Disabled @Test void c() {}\n}\n")
                         .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > c"))));
+        check("integrity: a switch moved between two overloads of one test method is found",
+                sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Disabled\n  @Test void a() {}\n  @ParameterizedTest @ValueSource(ints = 1)\n  void a(int n) {}\n}\n",
+                        "class ATest {\n  @Test void a() {}\n  @Disabled\n  @ParameterizedTest @ValueSource(ints = 1)\n  void a(int n) {}\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > a"))));
         check("integrity: in a Java file the reader cannot follow to its end, declarations are known by their names alone",
                 sdlc.check.Integrity.unsure("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n  @Test void b() {\n}\n")
                 && sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Test void a() {}\n  @Test void b() {\n}\n", "class ATest {\n  @Disabled @Test void a() {}\n  @Test void b() {\n}\n").size() == 1);

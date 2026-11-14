@@ -104,11 +104,15 @@ public final class Integrity {
         }
     }
 
-    /** A switch, the name of the declaration it stands on without the classes around it, and whether that declaration is a test. */
-    private record Found(Switch is, String name, boolean test) {}
+    /**
+     * A switch, the name of the declaration it stands on without the classes around it, whether
+     * that declaration is a test, and how many declarations of the same place and name come
+     * before it (placed) or of the same name (named): overloads of a method share a name.
+     */
+    private record Found(Switch is, String name, boolean test, int placed, int named) {}
 
-    /** What tells one switch of a file from another: what it does, the declaration it stands on, and whether that is a test. */
-    private record Key(String how, String on, boolean test) {}
+    /** What tells one switch of a file from another: what it does, the declaration it stands on, whether that is a test, and which of its name. */
+    private record Key(String how, String on, boolean test, int nth) {}
 
     /**
      * Every switch of a Java test file that skips a test: an annotation that switches it off and
@@ -121,8 +125,10 @@ public final class Integrity {
     private static List<Found> found(String path, String text) {
         List<Found> out = new ArrayList<>();
         if (text == null || !readWhole(path)) return out;
+        Map<String, Integer> places = new HashMap<>(), names = new HashMap<>();
         for (Declared.Item item : Declared.java(text)) {
-            for (String how : item.switches()) out.add(new Found(new Switch(how, item.where()), item.name(), item.test()));
+            int placed = places.merge(item.where(), 1, Integer::sum) - 1, named = names.merge(item.name(), 1, Integer::sum) - 1;
+            for (String how : item.switches()) out.add(new Found(new Switch(how, item.where()), item.name(), item.test(), placed, named));
         }
         return out;
     }
@@ -166,9 +172,9 @@ public final class Integrity {
      * the declaration it stands on, whatever lines the change wrote: a switch taken off one test
      * does not make up for one put on another, a switch on a line the change did not touch that
      * the change puts onto a test is new, and a line only written differently changes nothing.
-     * Where either version could not be read to its end (Declared.unsure), declarations are known
-     * by their names alone. A test renamed while it is switched off is a new switch on the test of
-     * the new name.
+     * Overloads of a method are told apart by their order. Where either version could not be read
+     * to its end (Declared.unsure), declarations are known by their names alone. A test renamed
+     * while it is switched off is a new switch on the test of the new name.
      */
     public static List<Switch> addedSwitches(String path, String before, String after) {
         boolean placed = !unsure(path, before) && !unsure(path, after);
@@ -180,7 +186,7 @@ public final class Integrity {
     }
 
     private static Key key(Found f, boolean placed) {
-        return new Key(f.is().how(), placed ? f.is().what() : f.name(), f.test());
+        return placed ? new Key(f.is().how(), f.is().what(), f.test(), f.placed()) : new Key(f.is().how(), f.name(), f.test(), f.named());
     }
 
     /**
