@@ -299,12 +299,16 @@ final class CheckTests {
         commit(repo, "more");
         write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\nidle: pass\n");
         commit(repo, "a test that proves nothing");
+        write(repo, "checks/judged.t", JUDGED.replace("turned off: pass", "turned off: skip"));
+        commit(repo, "a test switched off");
         String history = report(Map.of("selftest-runner", "true", "runs", "1", "since", "1d"));
         check("check: --since replays each recent commit", history.contains("commits on this branch since 1 days ago") && history.contains("  the fix")
                 && history.contains("tests: 1 fail before and pass after") && history.contains("does not test the change: tests/old.t  idle")
                 && history.contains("new tests pass on both sides, so do not test their commit") && code == 0);
+        check("check: --since names the tests a commit switched off", history.contains("tests: 1 ran before, skipped after\n")
+                && history.contains("ran before, skipped after: checks/judged.t  turned off") && history.contains("1 test ran before its commit and is skipped after it"));
         check("check: --since wants a time span", Asserts.throwsUsage(() -> Check.run(Map.of("since", "true"))));
-        git(repo, "reset", "-q", "--hard", "HEAD~2");
+        git(repo, "reset", "-q", "--hard", "HEAD~3");
         write(repo, "prod.txt", "v1\nfixed\nmore\n");
         branch = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: commits on the branch and uncommitted edits are one change", branch.contains("2 files changed against main") && branch.contains("1 fails before the change and passes after it"));
@@ -327,6 +331,33 @@ final class CheckTests {
                 r.contains("5 tests that were already in the edited files pass before and after (not counted)") && !r.contains("        stays"));
         write(repo, "checks/judged.t", JUDGED);
 
+        // one test switched off; another was off before and stays off
+        write(repo, "checks/judged.t", JUDGED.replace("turned off: pass", "turned off: skip"));
+        String off = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a test that ran before the change and is skipped now is a problem",
+                off.contains("1 ran before the change and is skipped now\n      checks/judged.t  [self test]\n        turned off\n") && code == 1);
+        check("check: a test skipped before and after the change is not counted",
+                off.contains("1 test that was skipped before the change is skipped after it too (not counted)") && !off.contains("        was off") && !off.contains(" is skipped\n"));
+        java.io.InputStream in = System.in;
+        java.io.PrintStream err = System.err;
+        ByteArrayOutputStream reasons = new ByteArrayOutputStream();
+        try {
+            System.setErr(new PrintStream(reasons, true, StandardCharsets.UTF_8));
+            System.setIn(new java.io.ByteArrayInputStream("{}".getBytes(StandardCharsets.UTF_8)));
+            int blocked = Check.run(Map.of("selftest-runner", "true", "stop-hook", "true"));
+            check("check: the stop hook blocks on a test that ran before the change and is skipped now", blocked == 2
+                    && reasons.toString(StandardCharsets.UTF_8).contains("ran before your change and is skipped now: checks/judged.t » turned off"));
+        } finally {
+            System.setIn(in);
+            System.setErr(err);
+        }
+        // a new test that is skipped is listed, as before
+        write(repo, "checks/judged.t", JUDGED + "later: skip\n");
+        String later = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a new test that is skipped is listed as skipped, not as switched off",
+                later.contains("1 is skipped\n      checks/judged.t  [self test]\n        later\n") && !later.contains("skipped now") && code == 0);
+        write(repo, "checks/judged.t", JUDGED);
+
         // the file as it was gives no result (its slow test is cut off): whether a test is new cannot be told
         write(repo, "checks/legacy.t", "held: pass\nadded: pass\n");
         String legacy = report(Map.of("selftest-runner", "true", "runs", "1"));
@@ -335,7 +366,7 @@ final class CheckTests {
                 && legacy.contains("held: passes before and after, but run as it was before the change")
                 && legacy.contains("checks/legacy.t  [self test]\n        held: ") && !legacy.contains("so it does not test the change") && code == 0);
         check("check: and the report says so for the file as a whole",
-                legacy.contains("        run as it was before the change, the file timed out after 900 s, so it cannot be told which of its tests are new\n"));
+                legacy.contains("        run as it was before the change, the file timed out after 900 s, so it cannot be told which of its tests are new or were switched off\n"));
         write(repo, "checks/legacy.t", LEGACY);
     }
 

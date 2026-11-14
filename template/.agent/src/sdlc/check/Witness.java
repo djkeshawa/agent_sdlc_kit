@@ -21,8 +21,9 @@ import sdlc.check.Runner.FileRun;
  *           for a file the change edits, as an added file has no earlier version
  *
  * A test that fails before and passes after is sensitive to the change; one that passes on both
- * sides does not test it. Which tests are new is read from the reports of the old and the after
- * run, not from the files' text: the test framework knows which tests a file has.
+ * sides does not test it. Which tests are new, and which ran and are skipped now, is read from
+ * the reports of the old and the after run, not from the files' text: the test framework knows
+ * which tests a file has.
  *
  * What this says is narrow. The tests and the code come from the same author, so a pass here is
  * not evidence that the change is correct, only that these tests would notice its absence.
@@ -43,8 +44,12 @@ final class Witness {
         UNKNOWN,
         /** Runs disagreed with each other. */
         UNSTABLE,
-        /** Skipped after the change. */
-        SKIPPED
+        /** Skipped after the change: a new test, or one whose state before the change is not known. */
+        SKIPPED,
+        /** Ran in the file as it was before the change, and is skipped after it: switched off. */
+        SKIPPED_NOW,
+        /** Skipped in the file as it was and after the change: unchanged, not counted. */
+        EXISTING_SKIPPED
     }
 
     /** name is "" when the verdict is about the whole file. */
@@ -96,6 +101,12 @@ final class Witness {
         /** True when the file had no test of this identity, false when it had one, null when that cannot be told. */
         Boolean isNew(String key) {
             return problem != null ? null : !cases.containsKey(key);
+        }
+
+        /** The one case of this identity the file had; null when it had none, or two that cannot be told apart, or when that is not known. */
+        JUnitXml.Case one(String key) {
+            List<JUnitXml.Case> found = cases.get(key);
+            return found != null && found.size() == 1 ? found.get(0) : null;
         }
     }
 
@@ -158,7 +169,7 @@ final class Witness {
                 if (twice.contains(key(c))) {
                     if (seen.add(key(c))) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "more than one test reports this name, so they cannot be told apart", runner.name()));
                 } else if (c.status() == Status.FLAKY) out.add(new Verdict(f, c.name(), Kind.UNSTABLE, "the build ran it again and got another result", runner.name()));
-                else if (c.status() == Status.SKIPPED) out.add(new Verdict(f, c.name(), Kind.SKIPPED, "skipped after the change", runner.name()));
+                else if (c.status() == Status.SKIPPED) out.add(skipped(f, c, e.one(key(c)), runner));
                 else if (c.status() != Status.PASSED) out.add(new Verdict(f, c.name(), Kind.FAILS_AFTER, describe(c), runner.name()));
                 else if (b == null || b.problem() != null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "before the change the file " + (b == null ? "gave no result" : b.problem()), runner.name()));
                 else if (p == null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "was not found before the change", runner.name()));
@@ -172,7 +183,7 @@ final class Witness {
                 else candidates.computeIfAbsent(f, k -> new LinkedHashSet<>()).add(key(c));
             }
             if (e.problem() != null) out.add(new Verdict(f, "", Kind.UNKNOWN, "run as it was before the change, the file " + e.problem()
-                    + ", so it cannot be told which of its tests are new", runner.name()));
+                    + ", so it cannot be told which of its tests are new or were switched off", runner.name()));
         }
         // A test that was run alone before the change may have failed there for want of another changed test file,
         // not for want of the change. It is run alone after the change too, and must pass there as well.
@@ -251,6 +262,13 @@ final class Witness {
         } catch (java.io.IOException e) {
             throw new sdlc.core.UsageException("cannot prepare the checkout for a repeat run: " + e.getMessage());
         }
+    }
+
+    /** A test skipped after the change, by what the file as it was said of it (old: null when it is new, or that is not known). */
+    private static Verdict skipped(String file, JUnitXml.Case c, JUnitXml.Case old, Runner runner) {
+        if (old == null) return new Verdict(file, c.name(), Kind.SKIPPED, "skipped after the change", runner.name());
+        if (old.status() == Status.SKIPPED) return new Verdict(file, c.name(), Kind.EXISTING_SKIPPED, "skipped before the change too", runner.name());
+        return new Verdict(file, c.name(), Kind.SKIPPED_NOW, "ran before the change and is skipped now", runner.name());
     }
 
     private static Status status(FileRun run, String key) {
