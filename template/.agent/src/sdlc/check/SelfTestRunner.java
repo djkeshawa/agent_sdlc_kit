@@ -35,6 +35,8 @@ import sdlc.check.JUnitXml.Status;
  *   pass-retried        failed, and passed when the build ran it again (Surefire's flakyFailure)
  *   fail-retried        failed by assertion every time the build ran it (failure, then rerunFailure)
  *   error-retried       threw every time the build ran it (error, then rerunError), as a set-up that fails does
+ *   compile-later WORD  as needs WORD; where prod.txt holds the word, no file of the run compiles from the second run in that checkout on
+ *   timeout-later WORD  as needs WORD; where prod.txt holds the word, the whole file gives no result from the second run in that checkout on
  * A name is reported as a script's string would give it: \' is a quote. A name with %i in it is
  * reported twice, with 1 and with 2 in its place (it.each, a parameterized method). A line
  * without ": " is not a case: it stands for the test's body. A name is reported as it is written,
@@ -105,7 +107,8 @@ final class SelfTestRunner implements Runner {
             try {
                 for (String line : Files.readAllLines(checkout.resolve(f))) {
                     String[] how = line.contains(": ") ? line.substring(line.indexOf(": ") + 2).trim().split(" ") : new String[0];
-                    if (how.length > 1 && how[0].equals("compile-needs") && !prod.contains(how[1])) {
+                    boolean later = how.length > 1 && how[0].equals("compile-later") && prod.contains(how[1]) && call > 1; // a build that stops compiling in a repeat
+                    if (later || how.length > 1 && how[0].equals("compile-needs") && !prod.contains(how[1])) {
                         for (String all : files) out.put(all, FileRun.broken(Witness.DOES_NOT_COMPILE));
                         return out;
                     }
@@ -120,7 +123,9 @@ final class SelfTestRunner implements Runner {
                 Path built = checkout.resolve(".built").resolve(f); // what a build leaves behind: the compiled form of the file
                 Files.createDirectories(built.getParent());
                 Files.writeString(built, "");
-                if (Files.readAllLines(checkout.resolve(f)).stream().anyMatch(line -> line.endsWith(": timeout"))) {
+                final String words = prod;
+                boolean late = call > 1 && Files.readAllLines(checkout.resolve(f)).stream().anyMatch(line -> line.matches(".*: timeout-later \\S+") && words.contains(line.substring(line.lastIndexOf(' ') + 1)));
+                if (late || Files.readAllLines(checkout.resolve(f)).stream().anyMatch(line -> line.endsWith(": timeout"))) {
                     out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
                     continue;
                 }
@@ -147,7 +152,7 @@ final class SelfTestRunner implements Runner {
                         case "fails-with" -> has ? Status.FAILED : Status.PASSED;
                         case "breaks-once" -> has && call == 1 ? Status.FAILED : Status.PASSED;
                         case "flaky" -> has || call > 1 ? Status.PASSED : Status.FAILED; // without the word: fails only the first time
-                        case "needs" -> has ? Status.PASSED : Status.FAILED;
+                        case "needs", "compile-later", "timeout-later" -> has ? Status.PASSED : Status.FAILED;
                         case "error-unless" -> has ? Status.PASSED : Status.ERRORED;
                         case "compile-needs" -> Status.PASSED; // it compiled, so the word is there
                         case "leans-on" -> how.length > 1 && (Files.isRegularFile(checkout.resolve(how[1])) || Files.isRegularFile(checkout.resolve(".built").resolve(how[1])))

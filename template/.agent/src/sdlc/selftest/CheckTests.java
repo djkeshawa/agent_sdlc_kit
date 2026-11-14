@@ -1526,6 +1526,20 @@ final class CheckTests {
         check("every difference: an existing test that fails in a repeat run after the change fails after the change, with in how many runs",
                 brokeLater.contains("1 fails after the change\n      checks/kept.t  [self test]\n        kept: fails: expected something else (in 1 of the 2 runs after the change)\n")
                 && !brokeLater.contains(NO_RULE) && code == 1);
+        // CR4-1: the file compiles in the first run after the change and not in the repeat: code that does not compile or load after the change is
+        // the change's own failure in any run, as in the first, said of the file with in how many runs (of each file run with it: nothing of that run compiles)
+        write(repo, "checks/kept.t", "kept: pass\nsensitive: compile-later fixed\n");
+        String unbuilt = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("every difference: a file that does not compile in a repeat run after the change fails after the change, with in how many runs, and the check fails",
+                unbuilt.contains("2 fail after the change\n      checks/kept.t  [self test]\n        after the change it does not compile (in 1 of the 2 runs after the change)\n"
+                        + "      tests/old.t  [self test]\n        after the change it does not compile (in 1 of the 2 runs after the change)\n")
+                && unbuilt.contains("sensitive: passed after the change in one run and not in another") && !unbuilt.contains(NO_RULE) && code == 1);
+        // a repeat that gives no result for a reason outside the code (a timeout) says nothing of the code: from run to run, not a failure
+        write(repo, "checks/kept.t", "kept: pass\nsensitive: timeout-later fixed\n");
+        String cutOff = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("every difference: a repeat run after the change that times out is said from run to run, not as a failure, and the check passes",
+                !cutOff.contains("fails after the change") && cutOff.contains("\n        the file was reported differently from run to run, in ways " + NO_RULE
+                        + ": the file after the change (one run gave no result and another gave one)\n") && code == 0);
         write(repo, "checks/kept.t", KEPT);
 
         // CR3-3: a new test passes on both sides in the first run after the change and is skipped in the repeat: the count is made again in every

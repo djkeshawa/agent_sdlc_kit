@@ -408,7 +408,8 @@ final class Witness {
      * Each case identity of a file is read in every combination of its reports: each run as it
      * was (for an edited file), with each run before the change, with each run after it (see
      * read). A test that failed in any run after the change fails after the change: that is said,
-     * whatever the other runs say, with how many runs it failed in. Else a verdict of a test is said
+     * whatever the other runs say, with how many runs it failed in; and so does a file whose code
+     * did not compile or load in any run after the change (see brokenAfter). Else a verdict of a test is said
      * only where every combination says the same; a test that failed before and passed after in
      * the first runs is sensitive only where every combination says so, and unstable otherwise;
      * and of any other test that the combinations do not agree on, no verdict is said here: its
@@ -477,6 +478,9 @@ final class Witness {
             }
             passingIn.put(f, passing);
             if (!muted("per test")) out.addAll(mine);
+            // code that does not compile or load in a repeat run after the change is the change's own failure, as in the first run (see ended)
+            Verdict unbuilt = brokenAfter(f, afters, by);
+            if (unbuilt != null) out.add(unbuilt);
             Skips s = skipsIn.get(f);
             // the skips the file reports as before, or of a file none of whose tests ran: only where the file reports each of them alike in every run
             if (s != null && !muted("skips")) for (Verdict v : s.listed()) if (v.cover().change().stream().noneMatch(ledger.unsteady()::contains)) out.add(v);
@@ -644,6 +648,26 @@ final class Witness {
         if (first == null) return null;
         return new Verdict(f, shown(sh, k), Kind.FAILS_AFTER, describe(first) + (failedIn < afters.size() ? " (in " + failedIn + " of the " + afters.size() + " runs after the change)" : ""),
                 by, tests, Cover.NONE);
+    }
+
+    /**
+     * A file whose code, as the change has it, did not compile or load in a run after the change
+     * fails after the change, in every run as in the first: the run gave no report, so no test of
+     * it can carry the failure, and the file is said, with in how many of the runs after the
+     * change. The first run is said where it ends the file (see ended); this is for the repeats,
+     * the first run having given a report. A run that gave no report for a reason outside the
+     * code (no build tool, a timeout, a name that cannot be passed on) says nothing of the code: it
+     * is said from run to run (see reconcile, or lost where a count rests on it). Null where no
+     * run after the change was broken. It answers for the runs after the change that gave no
+     * report where each of them was broken (else one that gave none for another reason is said
+     * apart), and for nothing of the file's tests.
+     */
+    private static Verdict brokenAfter(String f, List<FileRun> afters, String by) {
+        List<FileRun> broken = afters.stream().filter(r -> r != null && r.problem() != null && r.broken()).toList();
+        if (broken.isEmpty()) return null;
+        boolean all = afters.stream().filter(r -> !gave(r)).count() == broken.size();
+        return new Verdict(f, "", Kind.FAILS_AFTER, "after the change it " + broken.get(0).problem() + " (in " + broken.size() + " of the " + afters.size() + " runs after the change)", by,
+                all ? new Cover(Set.of(), Map.of(Side.AFTER, Set.of(""))) : Cover.NONE);
     }
 
     /**
