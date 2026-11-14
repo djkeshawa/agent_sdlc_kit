@@ -88,8 +88,11 @@ were removed, or a test that passed before the change fails as it was on the cha
 taken out of the way. Which tests are new, ran before or are gone is read from a run of each
 edited test file as it was, on the commit the branch started from; whether the change broke a
 test it took away, from a run of that file as it was on the code after the change (see
-[sdlc check](09-check.md#how-to-read-the-test-results)). A test renamed cannot be told from one
-deleted and another written: then the line is `unknown`, not `violated`.
+[sdlc check](09-check.md#which-tests-are-new-gone-or-switched-off)). A test is known by its exact
+name, and what names cannot tell is decided by counting the tests of each file. Where the counts
+cannot tell two stories apart, one of them fine (a test renamed, or one deleted and another
+written; an old test the change breaks, renamed and rewritten for the new behaviour, or taken
+out and a new test written), the line is `unknown`, not `violated`, and a review decides.
 
 The command fails (exit code 1) for `OUTSIDE` or a `violated` line. `AMENDED` and `unknown` do
 not fail it; they are there for you to read.
