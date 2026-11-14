@@ -14,8 +14,13 @@ import sdlc.core.Ctx;
 import sdlc.util.Proc;
 
 /** The runners this version has: Maven Surefire and Vitest. */
-final class Runners {
+public final class Runners {
     private Runners() {}
+
+    /** For the self test: where Maven would be started for a module. */
+    public static String reactorRootOf(java.nio.file.Path checkout, String module) {
+        return Maven.reactorRoot(checkout, module);
+    }
 
     static List<Runner> all() {
         return List.of(new Maven(), new Vitest());
@@ -106,11 +111,6 @@ final class Runners {
         @Override
         public Map<String, FileRun> run(Path checkout, List<String> files, int timeoutSeconds) {
             Map<String, FileRun> out = new LinkedHashMap<>();
-            List<String> launcher = launcher(checkout);
-            if (launcher == null) {
-                for (String f : files) out.put(f, FileRun.failed("Maven is not available (no mvnw in the repository, no mvn on the PATH)"));
-                return out;
-            }
             Map<String, List<String>> byModule = new LinkedHashMap<>();
             for (String f : files) {
                 String module = nearest(checkout, f, d -> Files.isRegularFile(d.resolve("pom.xml")));
@@ -126,12 +126,20 @@ final class Runners {
                     for (String f : m.getValue()) out.put(f, FileRun.failed("was not run: " + refused));
                     continue;
                 }
+                // Maven runs where the module's build starts: the topmost pom that lists it, which need not be the repository root
+                String root = reactorRoot(checkout, m.getKey());
+                String within = root.isEmpty() ? m.getKey() : m.getKey().equals(root) ? "" : m.getKey().substring(root.length() + 1);
+                List<String> launcher = launcher(checkout, root);
+                if (launcher == null) {
+                    for (String f : m.getValue()) out.put(f, FileRun.failed("Maven is not available (no mvnw in the repository, no mvn on the PATH)"));
+                    continue;
+                }
                 List<String> cmd = new ArrayList<>(launcher);
                 cmd.addAll(List.of("-B", "-q", "-ntp", "-Dtest=" + String.join(",", m.getValue().stream().map(Maven::className).toList()),
                         "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false"));
-                if (!m.getKey().isEmpty()) cmd.addAll(List.of("-pl", m.getKey(), "-am"));
+                if (!within.isEmpty()) cmd.addAll(List.of("-pl", within, "-am"));
                 cmd.add("test");
-                Proc p = Proc.runWithEnv(checkout, Map.of(), null, timeoutSeconds, cmd.toArray(new String[0]));
+                Proc p = Proc.runWithEnv(checkout.resolve(root), Map.of(), null, timeoutSeconds, cmd.toArray(new String[0]));
                 List<JUnitXml.Case> cases = new ArrayList<>();
                 String unreadable = null;
                 if (p.code() == 124) {
@@ -162,6 +170,33 @@ final class Runners {
             return out;
         }
 
+        /**
+         * The folder Maven is started in for a module: the module itself, or the topmost folder
+         * above it whose pom.xml lists it (through any chain of <module> entries). "" is the
+         * repository root.
+         */
+        static String reactorRoot(Path checkout, String module) {
+            String dir = module;
+            while (!dir.isEmpty()) {
+                String listedBy = null;
+                String above = dir;
+                while (!above.isEmpty() && listedBy == null) {
+                    above = above.contains("/") ? above.substring(0, above.lastIndexOf('/')) : "";
+                    Path pom = checkout.resolve(above).resolve("pom.xml");
+                    if (!Files.isRegularFile(pom)) continue;
+                    String rel = above.isEmpty() ? dir : dir.substring(above.length() + 1);
+                    try {
+                        if (Pattern.compile("<module>\\s*(\\./)?" + Pattern.quote(rel) + "/?\\s*</module>").matcher(Files.readString(pom)).find()) listedBy = above;
+                    } catch (IOException e) {
+                        // an unreadable pom lists nothing
+                    }
+                }
+                if (listedBy == null) break;
+                dir = listedBy;
+            }
+            return dir;
+        }
+
         /** Removes the reports of an earlier run. False when that cannot be done safely: the folder is a link, or a file stays. */
         private static boolean clear(Path checkout, Path reports) {
             if (!Files.exists(reports, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return true;
@@ -177,10 +212,13 @@ final class Runners {
             }
         }
 
-        /** mvnw of the checkout when it has one, else mvn; null when neither starts. */
-        private static List<String> launcher(Path checkout) {
-            if (Proc.WINDOWS && Files.isRegularFile(checkout.resolve("mvnw.cmd"))) return List.of("cmd", "/c", checkout.resolve("mvnw.cmd").toString());
-            if (!Proc.WINDOWS && Files.isRegularFile(checkout.resolve("mvnw"))) return List.of("sh", checkout.resolve("mvnw").toString());
+        /** The Maven wrapper nearest to the build's root (there, or in a folder above it), else mvn; null when neither starts. */
+        private static List<String> launcher(Path checkout, String root) {
+            String name = Proc.WINDOWS ? "mvnw.cmd" : "mvnw";
+            for (Path dir = checkout.resolve(root); dir != null && dir.startsWith(checkout); dir = dir.getParent()) {
+                Path wrapper = dir.resolve(name);
+                if (Files.isRegularFile(wrapper)) return Proc.WINDOWS ? List.of("cmd", "/c", wrapper.toString()) : List.of("sh", wrapper.toString());
+            }
             List<String> mvn = Proc.WINDOWS ? List.of("cmd", "/c", "mvn") : List.of("mvn");
             List<String> probe = new ArrayList<>(mvn);
             probe.add("-v");

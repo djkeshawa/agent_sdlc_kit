@@ -10,6 +10,7 @@ another copy of the template. Needs a JDK 17+, git and Python 3. Exit code 0 = e
 import argparse
 import shutil
 import socket
+import os
 import subprocess
 import sys
 import tempfile
@@ -54,7 +55,9 @@ def main():
     mock = subprocess.Popen([sys.executable, str(HERE / "mock.py"), str(port)])
     try:
         wait_for(port, mock)
-        code = subprocess.run([sys.executable, str(HERE / "flow.py"), str(template), str(work / "run"), str(port)]).returncode
+        # the flow's repositories have their own base branch: a pull request build of this repository must not name it for them
+        env = {k: v for k, v in os.environ.items() if k not in ("SDLC_BASE_BRANCH", "GITHUB_BASE_REF", "CHANGE_TARGET")}
+        code = subprocess.run([sys.executable, str(HERE / "flow.py"), str(template), str(work / "run"), str(port)], env=env).returncode
     finally:
         mock.terminate()
         try:

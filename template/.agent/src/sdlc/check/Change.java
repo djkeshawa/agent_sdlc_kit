@@ -17,9 +17,9 @@ import sdlc.util.Proc;
  * The change under check: from the commit where this branch left its base, to the working tree
  * as it is now, committed or not, untracked files included, ignored files left out.
  *
- * The working tree is recorded as a git tree through a throw-away index, so both sides can be
- * read and compared with git. Nothing in the working tree or the real index is touched; git
- * stores the blobs of uncommitted files in its object store, where `git gc` later drops them.
+ * The working tree is recorded as a git tree through a throw-away index and a throw-away object
+ * folder, so both sides can be read and compared with git. The repository itself is only read:
+ * its working tree, index and object store stay as they are.
  */
 public final class Change {
     /** The empty tree in this repository's hash format: the base of a repository with no commit, or of a first commit. */
@@ -107,16 +107,50 @@ public final class Change {
         return Proc.run(Ctx.root, "git", "rev-parse", ref + "^{commit}").out().strip();
     }
 
-    /** The working tree as a tree object, written through a copy of the index so the real one stays as it is. */
+    /** Where this run keeps the git objects of uncommitted files: outside the repository, removed when the tool ends. */
+    private static Path objects;
+
+    private static synchronized Path objects() throws IOException {
+        if (objects == null) {
+            Path dir = Files.createTempDirectory("sdlc-objects");
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                try (java.util.stream.Stream<Path> s = Files.walk(dir)) {
+                    for (Path p : s.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                        p.toFile().setWritable(true);
+                        Files.deleteIfExists(p);
+                    }
+                } catch (IOException ignored) {
+                    // a stray temp folder
+                }
+            }));
+            // every later git command of this run can read what the snapshot wrote there
+            Proc.ENV.merge("GIT_ALTERNATE_OBJECT_DIRECTORIES", dir.toString(), (a, b) -> a + java.io.File.pathSeparator + b);
+            objects = dir;
+        }
+        return objects;
+    }
+
+    /**
+     * The working tree as a tree object. It is written through a copy of the index and into an
+     * object folder of its own, with the repository's objects as alternates: the repository is
+     * only read, so a read-only checkout works too.
+     */
     private static String snapshot() {
         Path tmp = null;
         try {
             tmp = Files.createTempFile("sdlc-index", "");
             Proc where = Proc.run(Ctx.root, "git", "rev-parse", "--git-path", "index");
             Path index = where.ok() ? Ctx.root.resolve(where.out().strip()) : null;
-            if (index != null && Files.isRegularFile(index)) Files.copy(index, tmp, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            // the copy keeps the index's timestamp: git trusts a file's size and time unless the index is not newer than it
+            if (index != null && Files.isRegularFile(index)) Files.copy(index, tmp, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.COPY_ATTRIBUTES);
             else Files.delete(tmp); // git creates it
-            Map<String, String> env = Map.of("GIT_INDEX_FILE", tmp.toString());
+            Proc od = Proc.run(Ctx.root, "git", "rev-parse", "--git-path", "objects");
+            if (!od.ok()) throw new UsageException("cannot find the repository's objects: " + od.err().strip());
+            String repoObjects = Ctx.root.resolve(od.out().strip()).toString();
+            String mine = objects().toString();
+            String inherited = System.getenv("GIT_ALTERNATE_OBJECT_DIRECTORIES");
+            Map<String, String> env = Map.of("GIT_INDEX_FILE", tmp.toString(), "GIT_OBJECT_DIRECTORY", mine,
+                    "GIT_ALTERNATE_OBJECT_DIRECTORIES", repoObjects + (inherited == null || inherited.isBlank() ? "" : java.io.File.pathSeparator + inherited));
             Proc add = Proc.runWithEnv(Ctx.root, env, null, 300, "git", "add", "-A", "--", ".");
             if (!add.ok()) throw new UsageException("cannot record the working tree (git add): " + add.err().strip());
             Proc tree = Proc.runWithEnv(Ctx.root, env, null, 120, "git", "write-tree");
@@ -126,7 +160,10 @@ public final class Change {
             throw new UsageException("cannot record the working tree: " + e.getMessage());
         } finally {
             try {
-                if (tmp != null) Files.deleteIfExists(tmp);
+                if (tmp != null) {
+                    Files.deleteIfExists(tmp);
+                    Files.deleteIfExists(Path.of(tmp + ".lock"));
+                }
             } catch (IOException ignored) {
                 // a stray temp file
             }

@@ -32,6 +32,7 @@ final class CheckTests {
         try {
             Trusted.env = name -> null;
             reports(repo);
+            reactor(repo);
             scenarios(repo);
         } finally {
             Trusted.env = System::getenv;
@@ -81,6 +82,22 @@ final class CheckTests {
                 && sdlc.check.TestNames.plain("a.test.ts", "x > nested > adds").equals("adds"));
     }
 
+    private static void reactor(Path repo) throws IOException {
+        Path r = repo.resolve("reactor");
+        Files.createDirectories(r.resolve("backend/api"));
+        Files.createDirectories(r.resolve("tools/cli"));
+        Files.writeString(r.resolve("backend/pom.xml"), "<project><modules><module>api</module></modules></project>");
+        Files.writeString(r.resolve("backend/api/pom.xml"), "<project/>");
+        Files.writeString(r.resolve("tools/cli/pom.xml"), "<project/>");
+        check("check: Maven starts at the topmost pom that lists the module, not at the repository root",
+                sdlc.check.Runners.reactorRootOf(r, "backend/api").equals("backend") && sdlc.check.Runners.reactorRootOf(r, "tools/cli").equals("tools/cli"));
+        Files.writeString(r.resolve("pom.xml"), "<project><modules>\n  <module>backend</module>\n</modules></project>");
+        check("check: and follows a chain of modules up to the root", sdlc.check.Runners.reactorRootOf(r, "backend/api").isEmpty() && sdlc.check.Runners.reactorRootOf(r, "tools/cli").equals("tools/cli"));
+        try (Stream<Path> s = Files.walk(r)) {
+            for (Path p : s.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(p);
+        }
+    }
+
     private static void scenarios(Path repo) throws IOException {
         write(repo, "prod.txt", "v1\n");
         write(repo, "tests/old.t", "kept: pass\n");
@@ -92,11 +109,17 @@ final class CheckTests {
         String nothing = report(Map.of("selftest-runner", "true"));
         check("check: nothing changed says so and passes", nothing.contains("nothing has changed against main") && code == 0);
 
+        // an edit that keeps a file's size, made right after a commit, is still seen (git must not trust size and time alone)
+        write(repo, "prod.txt", "v2\n");
+        check("check: an edit of the same size as the committed file is part of the change", report(Map.of("no-run", "true")).contains("1 file changed against main"));
+        write(repo, "prod.txt", "v1\n");
+
         // an uncommitted change: the fix, an edited test file, a new untracked test file, an ignored file
         write(repo, "prod.txt", "v1\nfixed\n");
         write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\nproves nothing: pass\n");
         write(repo, "tests/new.t", "new feature: error-unless fixed\nbroken: fail\nlater: skip\nrandom: flaky\n");
         write(repo, "ignored/x.t", "never: fail\n");
+        String objectsBefore = Proc.run(repo, "git", "count-objects").out();
         String index = Proc.run(repo, "git", "ls-files", "--stage").out();
         String status = Proc.run(repo, "git", "status", "--porcelain").out();
         String r = report(Map.of("selftest-runner", "true", "runs", "3"));
@@ -114,6 +137,8 @@ final class CheckTests {
         check("check: the working tree and the index are untouched",
                 Proc.run(repo, "git", "ls-files", "--stage").out().equals(index) && Proc.run(repo, "git", "status", "--porcelain").out().equals(status));
         check("check: nothing is written into the repository", !Files.exists(repo.resolve(".sdlc")) && !Files.exists(repo.resolve(".agent")));
+        check("check: not even git objects: the uncommitted files are stored outside the repository",
+                Proc.run(repo, "git", "count-objects").out().equals(objectsBefore));
 
         // as a Stop hook: blocks (exit 2, reasons on stderr) on what is certain and fixable, never on "could not be judged"
         java.io.InputStream in = System.in;

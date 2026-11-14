@@ -13,6 +13,9 @@ import java.util.concurrent.TimeUnit;
 public record Proc(int code, String out, String err) {
     public static final boolean WINDOWS = System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("win");
 
+    /** Variables added to the environment of every child process of this run. */
+    public static final java.util.Map<String, String> ENV = new java.util.concurrent.ConcurrentHashMap<>();
+
     public static Proc run(Path dir, String... cmd) {
         return runWithInput(dir, null, 120, cmd);
     }
@@ -25,6 +28,7 @@ public record Proc(int code, String out, String err) {
     public static Proc runWithEnv(Path dir, java.util.Map<String, String> env, String stdin, int timeoutSeconds, String... cmd) {
         try {
             ProcessBuilder pb = new ProcessBuilder(cmd).directory(dir.toFile());
+            pb.environment().putAll(ENV);
             env.forEach((k, v) -> {
                 if (v == null || v.isEmpty()) pb.environment().remove(k);
                 else pb.environment().put(k, v);
