@@ -22,6 +22,7 @@ import sdlc.check.JUnitXml.Status;
  *   timeout             the whole file gives no result, as a run cut off by the time limit
  *   skip-without WORD   skipped where prod.txt lacks the word; where it holds it, the case does not exist
  *   skip-once WORD      where it holds the word, skipped in the first run in that checkout and passes in later ones; else passes
+ *   skip-odd WORD       where it holds the word, skipped in the first, third, ... run in that checkout and passes in the others; else passes
  *   pass-once           passes in the first run in that checkout, skipped in later ones
  *   fails-with WORD     fails by assertion where prod.txt holds the word, else passes: a test the change breaks
  *   breaks-once WORD    where it holds the word, fails in the first run in that checkout and passes in later ones; else passes
@@ -127,6 +128,7 @@ final class SelfTestRunner implements Runner {
                         case "fail" -> Status.FAILED;
                         case "skip", "skip-without", "skip-later" -> Status.SKIPPED;
                         case "skip-once" -> has && call == 1 ? Status.SKIPPED : Status.PASSED; // with the word: skipped only the first time
+                        case "skip-odd" -> has && call % 2 == 1 ? Status.SKIPPED : Status.PASSED; // with the word: skipped every other time, from the first
                         case "pass-once" -> call == 1 ? Status.PASSED : Status.SKIPPED;
                         case "fails-with" -> has ? Status.FAILED : Status.PASSED;
                         case "breaks-once" -> has && call == 1 ? Status.FAILED : Status.PASSED;
