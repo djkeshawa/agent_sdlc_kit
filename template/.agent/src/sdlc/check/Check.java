@@ -88,6 +88,22 @@ public final class Check {
         return failed ? 1 : 0;
     }
 
+    /**
+     * For the self test: makes the three checkouts of a change and closes them. Returns their
+     * folders, which must all be gone now, or an empty list when one of them was not there while
+     * open.
+     */
+    public static List<java.nio.file.Path> checkoutsAfterClose(Change change) {
+        List<java.nio.file.Path> made = new ArrayList<>();
+        try (Sides sides = new Sides(change, List.of(new SelfTestRunner()))) {
+            for (Scratch s : List.of(sides.head(), sides.base(), sides.old())) {
+                if (!java.nio.file.Files.isDirectory(s.dir)) return List.of();
+                made.add(s.dir);
+            }
+        }
+        return made;
+    }
+
     private static List<Runner> runners(Map<String, String> opt) {
         return opt.containsKey("selftest-runner") ? List.of(new SelfTestRunner()) : Runners.all();
     }

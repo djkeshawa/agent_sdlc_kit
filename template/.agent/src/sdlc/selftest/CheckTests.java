@@ -131,6 +131,7 @@ final class CheckTests {
         // says nothing about them and the exit code is the run's alone.
         write(repo, "checks/judged.t", JUDGED);
         write(repo, "checks/legacy.t", LEGACY);
+        write(repo, "checks/era.t", ERA);
         write(repo, ".gitignore", "ignored/\n");
         git(repo, "init", "-q", "-b", "main");
         commit(repo, "base");
@@ -417,10 +418,27 @@ final class CheckTests {
         check("check: and the report says so for the file as a whole",
                 legacy.contains("        run as it was before the change, the file timed out after 900 s, so it cannot be told which of its tests are new, were switched off or were removed\n"));
         write(repo, "checks/legacy.t", LEGACY);
+
+        // The file as it was runs on the code as it was: as it is in the base it compiles only with v1, which the change
+        // takes out of prod.txt. On the code after the change it would not compile, and its tests could not be judged.
+        write(repo, "prod.txt", "fixed\n");
+        write(repo, "checks/era.t", "era: pass\nlasting: pass\n");
+        String era = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: the file as it was runs on the code as it was, not on the code after the change",
+                era.contains("3 tests that were already in the edited files pass before and after (not counted)") && !era.contains("could not be judged") && code == 0);
+        write(repo, "checks/era.t", ERA);
+        write(repo, "prod.txt", "v1\nfixed\n");
+
+        // the three checkouts are made outside the repository and removed when done
+        java.util.List<Path> made = Check.checkoutsAfterClose(sdlc.check.Change.of(null));
+        check("check: the checkouts after, before and as it was are all removed", made.size() == 3 && made.stream().noneMatch(Files::exists));
     }
 
     /** A test file of the base that, as it is there, gives no result: what it had cannot be learnt from a run of it. */
     private static final String LEGACY = "held: pass\nslow: timeout\n";
+
+    /** A test file of the base that, as it is there, compiles only on the base's code. */
+    private static final String ERA = "era: compile-needs v1\nlasting: pass\n";
 
     private static int code;
 
