@@ -43,7 +43,7 @@ Three parts:
 
 | Part | What it is |
 | --- | --- |
-| **Tests this change adds or edits** | Each such test is run after the change and before it. "Before" is the commit your branch started from, with only the change's test files laid over it |
+| **Tests this change adds or edits** | Each such test is run after the change and before it. "Before" is the commit your branch started from, with only the change's test files laid over it. A test file the change edits is run a third time as it was, on that commit, to learn which tests it had |
 | **Integrity** | What the diff does to the things that check the change: tests switched off or removed, secrets, changes to the build, the pipeline, dependencies and migrations |
 | **Not checked** | What this run did not look at, so silence is never read as approval |
 
@@ -54,9 +54,17 @@ Three parts:
 | Fails before, passes after | The test is sensitive to the change. It is run three times on each side, so a test that fails at random does not count |
 | New test passes before and after | It passes whether or not the change is there, so it does not test the change. This fails the check |
 | Fails after the change | The change's own test fails. This fails the check |
-| Could not be judged | Before the change the test did not compile, threw something other than a failed assertion, or was not found. A test of code that did not exist before cannot fail there for the right reason, so it is counted neither way |
+| Ran before the change, skipped now | The file as it was ran this test, and the change skips it: the change switched it off. This fails the check |
+| Removed | The file as it was had these tests, the file now does not, and fewer new tests came in their place. They are named. This fails the check |
+| Could not be judged | Before the change the test did not compile, threw something other than a failed assertion, or was not found. Or the file as it was could not be run (it did not compile, timed out, or no build tool), so it cannot be told whether a test is new. A test of code that did not exist before cannot fail there for the right reason, so it is counted neither way |
 | Different results from run to run | Unstable. Not counted as sensitive |
-| Already in the file, passes on both | A test you did not add. Not counted |
+| Skipped | A new test that is skipped. Listed |
+| Note: renamed, replaced or moved | Tests the file no longer reports under their names, with as many new ones or more; tests found under a renamed group with their own titles unchanged; tests now in another changed file. Not a problem: each new test is judged on its own |
+| Already in the file, passes on both | A test you did not add. Not counted. The same for a test that was skipped before the change and still is |
+
+A test is **new** when the run of its file as it was, on the commit your branch started from,
+did not report a test of the same name in the same class or file. The test framework says which
+tests a file has; the check does not read the test files' text for this.
 
 **What a good result does not mean.** The tests and the code come from the same author. A test
 that fails before and passes after shows the test notices the change. It is not evidence that
@@ -83,8 +91,9 @@ uncommitted changes are checked, and the report says so.
 | `--since 30d` | Replay the check over each recent commit of the branch (`12h`, `2w`, `3m` or a date). `--max N` sets how many (default 20). A report on the past: it never fails |
 | `--stop-hook` | For an agent's Stop hook; see below |
 
-Exit code: 0 when nothing is wrong, 1 when a changed test fails, a new test passes on both sides
-or the integrity scan finds a problem, 3 on a usage error. "Could not be judged" never fails.
+Exit code: 0 when nothing is wrong, 1 when a changed test fails, a new test passes on both sides,
+a test that ran before the change is skipped now, tests were removed, or the integrity scan finds
+a problem, 3 on a usage error. "Could not be judged" and notes never fail.
 
 ## Which tests it can run
 
@@ -118,8 +127,9 @@ Claude Code, in `.claude/settings.json`:
 ```
 
 - It blocks (exit code 2, the reasons on standard error) only on what is certain and fixable: a
-  changed test that fails, a new test that passes on both sides, a test switched off, a secret.
-- It never blocks on "could not be judged", so work on a new feature is not held up.
+  changed test that fails, a new test that passes on both sides, a test that ran before the
+  change and is skipped now, tests removed, a test switched off, a secret.
+- It never blocks on "could not be judged" or on a note, so work on a new feature is not held up.
 - It blocks once. When the agent is already continuing because of a stop hook, the reasons are
   printed and the agent is let go, so it cannot loop.
 - It says nothing when there is nothing to fix.
@@ -134,8 +144,22 @@ Claude Code, in `.claude/settings.json`:
 - A test that depends on the time, the network or the order of tests may be reported as
   unstable.
 - Two tests in one file that report the same name cannot be told apart and are not judged.
-  The same holds when a file now declares a name more often than before (a nested class, another
-  `describe` block): the new test cannot be told from the old one.
+- An edited test file is run three times instead of two: after the change, before it, and as it
+  was. For Maven this is one more build of the module on the base commit (on a small project, 75
+  seconds instead of 61). A change that only adds test files needs no third run.
+- A renamed test looks exactly like one test removed and one added; no report tells the two
+  apart. So when at least as many new tests came as went, the report says so in a note, and each
+  new test is judged on its own: one that passes on both sides fails the check as usual. Only
+  when fewer came than went are the gone ones reported as removed.
+- A renamed group (`describe` block, nested class) renames every test in it. A test whose own
+  title is unchanged and fits exactly one gone test and one new test of the file is taken to be
+  the same test, so a test deleted in one group and a trivial one of the same title added in
+  another is taken for a rename too.
+- A gone test whose own title another changed file now reports as a new test counts as moved
+  (a note), not removed. In that other file it is a new test and is judged as one.
+- A test file that is moved or renamed (git sees one file deleted and one added) has no earlier
+  version under its new name: all its tests count as new.
+- A test whose name changes from run to run (a time or a random value in it) looks new each time.
 - When one new test stops the others from compiling before the change, each changed test file
   is run on its own. A test then counts as sensitive only if it also passes on its own after
   the change: otherwise its failure before the change may come from another changed test file.
@@ -159,10 +183,6 @@ Claude Code, in `.claude/settings.json`:
   (`assume-unchanged`, `skip-worktree`) are not honoured. A flagged file that is missing counts
   as deleted, unless a sparse checkout is on and its rules leave that file out; telling the two
   apart needs git 2.41 or newer, and an older git with such files stops the check with an error.
-- A script test file that builds test names while it runs (`it.each`, a template with `${...}`,
-  a variable as the name): a test of such a file that passes on both sides is "could not be
-  judged" when its name is declared nowhere in the file as plain text, because it cannot be
-  read from the file whether it is new. A test declared by a plain name is judged as usual.
 - A test is "switched off" when the change puts a skip, a to-do mark or a focus into a test
   file. The change itself says where to look: a switch is new when it stands on a line the
   change wrote, and the lines it replaced did not hold the same switch on the same thing. So a
@@ -176,8 +196,7 @@ Claude Code, in `.claude/settings.json`:
 - The reading of a file knows the tokens of the language, not its grammar. Where it cannot
   follow a file (its brackets do not pair up for the reader: text of a JSX element with a
   bracket or a quote in it does this), the report says so in a note. Switches in such a file
-  are still found. What is not relied on there: which tests the file declares, so a test of
-  it that passes on both sides is "could not be judged", not "new and proves nothing".
+  are still found.
 - When a change adds something that looks like a skipped test inside a comment or a string,
   the report says so as a note (a warning in `check-pr`), and a person looks at it: a file
   can be written so that code is taken for text.
@@ -194,5 +213,5 @@ Claude Code, in `.claude/settings.json`:
   `it.runIf`, `@DisabledOnOs`, `@EnabledIf...` and other JUnit conditions.
 - In a pull request build the base branch must be fetched, with enough history to reach the
   commit the branch started from. Otherwise the check stops with an error.
-- Names of test cases are matched by simple reading of the file. A test shown under another
-  name (a display name, a generated name) may be counted as new.
+- Until the reading of the diff for removed and renamed tests is replaced by the runs, both say
+  what they find: a removed test may be reported twice, once under Integrity.

@@ -82,6 +82,12 @@ Each line also says where the fact comes from. **Read from git** needs no trust 
 or the test configuration changed, those lines are `unknown`, because a changed build can make
 any test pass.
 
+The last line, the change's own tests, is `violated` when a new test passes before and after the
+change, a changed test fails after it, a test that ran before the change is skipped now, or
+tests were removed. Which tests are new, ran before or are gone is read from a run of each
+edited test file as it was, on the commit the branch started from (see
+[sdlc check](09-check.md#how-to-read-the-test-results)).
+
 The command fails (exit code 1) for `OUTSIDE` or a `violated` line. `AMENDED` and `unknown` do
 not fail it; they are there for you to read.
 
