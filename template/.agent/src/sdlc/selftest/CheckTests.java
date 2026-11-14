@@ -51,14 +51,18 @@ final class CheckTests {
     /** The output of a child process is held in memory only up to a limit. */
     private static void output(Path repo) {
         Proc whole = Proc.run(repo, "git", "help", "-a");
-        Proc ends = Proc.exec(repo, Map.of(), null, 60, 40, 40, "git", "help", "-a");
+        Proc ends = Proc.exec(repo, Map.of(), null, 60, 40, 40, null, "git", "help", "-a");
         check("output: a build's output is kept at both ends and the middle is left out, with a count", whole.ok() && whole.out().length() > 200
                 && ends.ok() && ends.out().startsWith(whole.out().substring(0, 40)) && ends.out().endsWith(whole.out().substring(whole.out().length() - 40))
                 && ends.out().contains((whole.out().getBytes(StandardCharsets.UTF_8).length - 80) + " bytes of output left out here"));
-        Proc strict = Proc.exec(repo, Map.of(), null, 60, 40, 0, "git", "help", "-a");
+        String middle = whole.out().lines().skip(whole.out().lines().count() / 2).filter(l -> l.strip().length() > 12).findFirst().orElse("").strip();
+        Proc marked = Proc.exec(repo, Map.of(), null, 60, 40, 40, java.util.regex.Pattern.compile(java.util.regex.Pattern.quote(middle)), "git", "help", "-a");
+        check("output: a line of the middle that the caller decides by is kept", !middle.isEmpty() && !ends.out().contains(middle) && marked.out().contains(middle)
+                && marked.out().contains("bytes of output left out here"));
+        Proc strict = Proc.exec(repo, Map.of(), null, 60, 40, 0, null, "git", "help", "-a");
         check("output: an answer that is read as a whole is an error when it is too large, not a shortened answer",
                 strict.code() == Proc.TOO_MUCH_OUTPUT && strict.out().isEmpty() && strict.err().contains("larger than"));
-        check("output: one that fits is unchanged", Proc.exec(repo, Map.of(), null, 60, 1 << 20, 0, "git", "help", "-a").out().equals(whole.out()));
+        check("output: one that fits is unchanged", Proc.exec(repo, Map.of(), null, 60, 1 << 20, 0, null, "git", "help", "-a").out().equals(whole.out()));
     }
 
     private static void reports(Path repo) throws IOException {
@@ -232,6 +236,12 @@ final class CheckTests {
                 sharedSetup.contains("idle: passes before and after, but the change touches shared.lock") && !sharedSetup.contains("so it does not test the change")
                 && sharedSetup.contains("1 fails before the change and passes after it"));
         Files.delete(repo.resolve("shared.lock"));
+        // the same kind of file somewhere else in the repository decides nothing for these tests
+        write(repo, "elsewhere/shared.lock", "v2\n");
+        String unrelated = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: such a file elsewhere in the repository does not excuse a test that proves nothing",
+                unrelated.contains("1 new test passes before and after, so it does not test the change") && unrelated.contains("        idle") && code == 1);
+        Files.delete(repo.resolve("elsewhere/shared.lock"));
         write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\n");
 
         // two cases under one name cannot be told apart

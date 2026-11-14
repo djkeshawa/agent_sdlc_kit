@@ -17,8 +17,9 @@ import sdlc.check.JUnitXml.Status;
  *   needs WORD          passes when prod.txt of the checkout holds the word, else fails by assertion
  *   error-unless WORD   passes when it does, else throws something that is not an assertion
  *   compile-needs WORD  passes when it does; else no file of the same run compiles
- *   leans-on FILE       passes when the checkout holds that file, else fails by assertion
- * A change that touches shared.lock is one whose two sides share an installed setup.
+ *   leans-on FILE       passes when the checkout holds that file or an earlier run built it, else fails by assertion
+ * A changed shared.lock in a test's folder or above it is a setup both sides share. Like a build,
+ * a run leaves something behind for each file it ran (.built/), until forgetBuilt removes it.
  */
 final class SelfTestRunner implements Runner {
     private int calls;
@@ -39,8 +40,19 @@ final class SelfTestRunner implements Runner {
     }
 
     @Override
-    public String sharedBySides(Change change) {
-        return change.files.stream().anyMatch(f -> f.path().equals("shared.lock")) ? "the change touches shared.lock, which both sides ran with" : null;
+    public String sharedBySides(Change change, Path checkout, String file) {
+        for (Change.File f : change.files) {
+            String path = f.path();
+            if (!path.equals("shared.lock") && !path.endsWith("/shared.lock")) continue;
+            String dir = path.contains("/") ? path.substring(0, path.lastIndexOf('/') + 1) : "";
+            if (file.startsWith(dir)) return "the change touches shared.lock, which both sides ran with";
+        }
+        return null;
+    }
+
+    @Override
+    public void forgetBuilt(Path checkout, List<String> files) {
+        Runners.deleteTree(checkout.resolve(".built"));
     }
 
     @Override
@@ -70,6 +82,9 @@ final class SelfTestRunner implements Runner {
         for (String f : files) {
             List<JUnitXml.Case> cases = new ArrayList<>();
             try {
+                Path built = checkout.resolve(".built").resolve(f); // what a build leaves behind: the compiled form of the file
+                Files.createDirectories(built.getParent());
+                Files.writeString(built, "");
                 for (String line : Files.readAllLines(checkout.resolve(f))) {
                     if (!line.contains(": ")) continue;
                     String name = line.substring(0, line.indexOf(": "));
@@ -83,7 +98,8 @@ final class SelfTestRunner implements Runner {
                         case "needs" -> has ? Status.PASSED : Status.FAILED;
                         case "error-unless" -> has ? Status.PASSED : Status.ERRORED;
                         case "compile-needs" -> Status.PASSED; // it compiled, so the word is there
-                        case "leans-on" -> how.length > 1 && Files.isRegularFile(checkout.resolve(how[1])) ? Status.PASSED : Status.FAILED;
+                        case "leans-on" -> how.length > 1 && (Files.isRegularFile(checkout.resolve(how[1])) || Files.isRegularFile(checkout.resolve(".built").resolve(how[1])))
+                                ? Status.PASSED : Status.FAILED;
                         default -> Status.ERRORED;
                     };
                     cases.add(new JUnitXml.Case(f, name, s, s == Status.ERRORED ? "java.lang.IllegalStateException" : s == Status.FAILED ? "AssertionError" : "", s == Status.FAILED ? "expected something else" : ""));

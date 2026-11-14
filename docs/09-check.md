@@ -139,13 +139,19 @@ Claude Code, in `.claude/settings.json`:
 - When one new test stops the others from compiling before the change, each changed test file
   is run on its own. A test then counts as sensitive only if it also passes on its own after
   the change: otherwise its failure before the change may come from another changed test file.
+  For Maven the compiled tests of the module are removed before each such run, so a test file
+  that was taken away is not still there as a class.
 - A test file whose name or folder has unusual characters (a comma, a space, a leading dash) is
   not run: such names could be read as options by Maven or Vitest.
-- For Vitest both sides run with the packages installed now. When the change touches
-  `package.json`, a lock file or a package manager's settings, a test that passes on both sides
-  is reported as "could not be judged", not as a test that proves nothing.
+- For Vitest both sides run with the packages installed now. When the change touches what the
+  test's project has installed, a test that passes on both sides is reported as "could not be
+  judged", not as a test that proves nothing. That is: a lock file or a package manager's
+  settings in the project's folder or above it, or a `package.json` there (or of a package the
+  project depends on) whose lists of packages changed. A new script in `package.json`, or a
+  package file elsewhere in the repository, does not count.
 - The output of a build is kept only at its start and its end (2 MB each); what lies between is
-  dropped. An answer of git larger than 64 MB stops the check with an error.
+  dropped, except the lines that say the code did not compile or load. An answer of git larger
+  than 64 MB stops the check with an error.
 - In a pull request build the base branch must be fetched, with enough history to reach the
   commit the branch started from. Otherwise the check stops with an error.
 - Names of test cases are matched by simple reading of the file. A test shown under another

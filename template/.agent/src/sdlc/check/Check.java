@@ -30,7 +30,7 @@ public final class Check {
         if (opt.containsKey("since")) return since(opt, runs, timeout);
         if (opt.containsKey("stop-hook")) return stopHook(opt, opt.containsKey("runs") ? runs : 1, timeout);
         Change change = Change.of(opt.get("base"));
-        PrintStream out = System.out;
+        PrintStream out = sdlc.util.SafeOut.stream(System.out);
         String sha = change.base.length() > 7 ? change.base.substring(0, 7) : change.base;
         if (change.isEmpty()) {
             out.println("sdlc check: nothing has changed against " + change.baseName + " (" + sha + ").");
@@ -93,7 +93,7 @@ public final class Check {
     private static int since(Map<String, String> opt, int runs, int timeout) {
         String window = window(opt.get("since"));
         int max = number(opt, "max", 20);
-        PrintStream out = System.out;
+        PrintStream out = sdlc.util.SafeOut.stream(System.out);
         sdlc.util.Proc log = sdlc.util.Proc.run(sdlc.core.Ctx.root, "git", "log", "--first-parent", "--since=" + window, "--format=%H%x09%cs%x09%s", "HEAD");
         if (!log.ok()) throw new UsageException("git log failed: " + log.err().strip());
         List<String> commits = log.out().isBlank() ? List.of() : List.of(log.out().strip().split("\\R"));
@@ -179,7 +179,7 @@ public final class Check {
         for (String r : reasons) msg.append("- ").append(r).append('\n');
         msg.append("A new test must fail without the change and pass with it. Fix the test or the code; do not delete the test to get past this, and do not switch tests off. "
                 + "If a finding is wrong, say so in your final message and stop.");
-        System.err.println(msg);
+        System.err.println(sdlc.util.SafeOut.clean(msg.toString()));
         return again ? 0 : 2;
     }
 

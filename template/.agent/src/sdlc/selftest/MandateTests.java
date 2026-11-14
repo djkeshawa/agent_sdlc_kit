@@ -155,6 +155,8 @@ final class MandateTests {
         rule("mandate: an escape sequence inside a scenario name is refused", EXAMPLE.replace("#emptyQueryReturnsEmptyList", "#x\\u001b[2Jy"), "has a control character");
         rule("mandate: a mark that turns the direction of the text is refused", EXAMPLE.replace("returns an empty list", "returns an \\u202eempty list"), "intent has a control character");
         rule("mandate: a character with no width is refused in a path", EXAMPLE.replace("src/main/java/com/acme/search/**", "src/main/java/com/acme/sea\\u200brch/**"), "has a control character");
+        check("names: a script test declared under a name a report would read the same way is counted with it",
+                sdlc.check.TestNames.counts("a.test.ts", "it('kept', () => {});\nit('outer > kept', () => {});\n").getOrDefault("kept", 0) == 2);
         check("mandate: such characters in other text (a file name, a name from git) are shown as a question mark",
                 sdlc.mandate.MandateCard.safe("a\u202eb\u200bc\u001bd\ud83d\ude00").equals("a?b?c?d\ud83d\ude00"));
         rule("mandate: a path with a sign that is not a wildcard of the format is refused", EXAMPLE.replace("src/main/java/com/acme/search/**", "src/main/{java,kotlin}/**"), "only * and ** are");

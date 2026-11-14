@@ -55,10 +55,17 @@ final class Scratch implements AutoCloseable {
     private void makeRoom(String path) throws IOException {
         Path target = dir.resolve(path).normalize();
         if (!target.startsWith(dir)) throw new UsageException("a path that leaves the checkout: " + path);
-        for (Path up = target.getParent(); up != null && !up.equals(dir); up = up.getParent()) {
-            if (Files.isSymbolicLink(up) || Files.isRegularFile(up, java.nio.file.LinkOption.NOFOLLOW_LINKS)) Files.delete(up);
+        // From the checkout's root downwards, and never through a link: a link on the way may lead out of the checkout,
+        // and what lies behind it is not ours to look at or remove. The link itself is removed; a folder takes its place.
+        Path at = dir;
+        Path rest = dir.relativize(target);
+        for (int i = 0; i < rest.getNameCount() - 1; i++) {
+            at = at.resolve(rest.getName(i));
+            if (Files.isSymbolicLink(at) || Files.isRegularFile(at, java.nio.file.LinkOption.NOFOLLOW_LINKS)) Files.delete(at);
+            if (!Files.exists(at, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return; // nothing below it stands in the way
         }
-        if (Files.isDirectory(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+        if (Files.isSymbolicLink(target)) Files.delete(target);
+        else if (Files.isDirectory(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
             try (Stream<Path> s = Files.walk(target)) {
                 for (Path p : s.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(p);
             }

@@ -19,12 +19,21 @@ interface Runner {
     Map<String, FileRun> run(Path checkout, List<String> files, int timeoutSeconds);
 
     /**
-     * What the two sides of a comparison share although the change touches it, as the end of a
-     * sentence, or null. A test that passes on both sides then proves nothing either way: the side
-     * "before the change" did not run without all of the change.
+     * What the two sides of a comparison of this test file share although the change touches it,
+     * as the end of a sentence, or null. A test that passes on both sides then proves nothing
+     * either way: the side "before the change" did not run without all of the change. Only what
+     * decides this file's run counts: a file of the same kind elsewhere in the repository does not.
      */
-    default String sharedBySides(Change change) {
+    default String sharedBySides(Change change, Path checkout, String file) {
         return null;
+    }
+
+    /**
+     * Removes what earlier runs in this checkout built from test sources, so that the next run
+     * sees only the sources that are there now. Without it, a test file that was taken away may
+     * still be on the class path as a compiled class.
+     */
+    default void forgetBuilt(Path checkout, List<String> files) {
     }
 
     /**

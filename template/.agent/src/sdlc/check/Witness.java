@@ -89,8 +89,8 @@ final class Witness {
         for (String f : alone) before.put(f, runAlone(change, runner, files, f, base, timeout));
         // candidates: failed before by assertion, passed after. They are run again to rule out a test that fails at random.
         Map<String, Set<String>> candidates = new LinkedHashMap<>();
-        String shared = runner.sharedBySides(change);
         for (String f : files) {
+            String shared = runner.sharedBySides(change, head.dir, f);
             FileRun a = after.get(f), b = before.get(f);
             Map<String, Integer> declaredBefore = TestNames.counts(f, change.before(f)), declaredNow = TestNames.counts(f, change.after(f));
             if (a == null || a.problem() != null) {
@@ -141,8 +141,8 @@ final class Witness {
             if (candidates.get(f).isEmpty()) candidates.remove(f);
         }
         if (!alone.isEmpty()) {
-            restore(change, head, files);
-            restore(change, base, files);
+            restore(change, runner, head, files);
+            restore(change, runner, base, files);
         }
         if (candidates.isEmpty()) return out;
         List<String> again = new ArrayList<>(candidates.keySet());
@@ -151,7 +151,7 @@ final class Witness {
             Map<String, FileRun> a = runner.run(head.dir, again, timeout);
             List<String> together = again.stream().filter(f -> !alone.contains(f)).toList();
             Map<String, FileRun> b = new LinkedHashMap<>();
-            if (!alone.isEmpty()) restore(change, base, files);
+            if (!alone.isEmpty()) restore(change, runner, base, files);
             if (!together.isEmpty()) b.putAll(runner.run(base.dir, together, timeout));
             for (String f : again) if (alone.contains(f)) b.put(f, runAlone(change, runner, files, f, base, timeout));
             for (String f : again) {
@@ -170,7 +170,7 @@ final class Witness {
                 else out.add(new Verdict(f, name, Kind.SENSITIVE, "", runner.name()));
             }
         }
-        if (!alone.isEmpty()) restore(change, base, files); // as the caller's other checks expect it
+        if (!alone.isEmpty()) restore(change, runner, base, files); // as the caller's other checks expect it
         return out;
     }
 
@@ -188,6 +188,7 @@ final class Witness {
                 else base.write(change.base, List.of(other));
             }
             base.write(change.head, List.of(file));
+            runner.forgetBuilt(base.dir, files); // a test file that was just taken away must not stay behind as a compiled class
             FileRun run = runner.run(base.dir, List.of(file), timeout).get(file);
             return run == null ? FileRun.failed("gave no result") : run;
         } catch (java.io.IOException e) {
@@ -196,9 +197,10 @@ final class Witness {
     }
 
     /** Puts every changed test file back into a checkout as the change has it. */
-    private static void restore(Change change, Scratch base, List<String> files) {
+    private static void restore(Change change, Runner runner, Scratch base, List<String> files) {
         try {
             base.write(change.head, files);
+            runner.forgetBuilt(base.dir, files);
         } catch (java.io.IOException e) {
             throw new sdlc.core.UsageException("cannot prepare the checkout for a repeat run: " + e.getMessage());
         }

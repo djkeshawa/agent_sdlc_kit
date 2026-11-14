@@ -29,7 +29,9 @@ public final class TestNames {
             while (m.find()) out.merge(m.group(1), 1, Integer::sum);
         } else {
             Matcher m = SCRIPT.matcher(text);
-            while (m.find()) out.merge(m.group(2), 1, Integer::sum);
+            // a report gives "outer > kept" for it('kept') inside describe('outer') and also for it('outer > kept'):
+            // both are counted under the name a report is read as
+            while (m.find()) out.merge(plain(path, m.group(2)), 1, Integer::sum);
         }
         return out;
     }

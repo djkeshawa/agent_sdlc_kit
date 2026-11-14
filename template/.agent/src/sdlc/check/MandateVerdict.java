@@ -61,7 +61,7 @@ final class MandateVerdict {
         Mandate m = read.mandate();
         Change change = Change.of(opt.get("base"));
         Result r = judge(read, change, runners, runs, timeout, opt.containsKey("no-run"));
-        print(System.out, m, change, r);
+        print(sdlc.util.SafeOut.stream(System.out), m, change, r);
         return r.failed() ? 1 : 0;
     }
 
@@ -216,12 +216,13 @@ final class MandateVerdict {
     private static List<JUnitXml.Case> cases(FileRun run, String path, String name) {
         if (name.isEmpty()) return run.cases();
         List<JUnitXml.Case> exact = run.cases().stream().filter(c -> c.name().equals(name)).toList();
-        if (!exact.isEmpty()) return exact.stream().map(JUnitXml.Case::suite).distinct().count() == 1 ? exact : List.of();
-        List<JUnitXml.Case> plain = run.cases().stream().filter(c -> TestNames.plain(path, c.name()).equals(name)).toList();
-        // Java reports one method once per invocation ("refunds(int)[1]", "[2]"): those are one test. Elsewhere the reported
-        // name is the whole way to the test ("one(a) > fixed"), and two of them are two tests.
+        // Java reports one method once per invocation ("refunds(int)[1]", "[2]"): those are one test, when they are of one
+        // class. Elsewhere every reported case is a test of its own, so a name must fit exactly one.
         boolean java = path.endsWith(".java");
-        long homes = plain.stream().map(c -> c.suite() + "\n" + (java ? c.name().replaceFirst("[(\\[{].*$", "") : c.name())).distinct().count();
+        if (!exact.isEmpty()) return exact.size() == 1 || java && exact.stream().map(JUnitXml.Case::suite).distinct().count() == 1 ? exact : List.of();
+        List<JUnitXml.Case> plain = run.cases().stream().filter(c -> TestNames.plain(path, c.name()).equals(name)).toList();
+        if (!java) return plain.size() == 1 ? plain : List.of();
+        long homes = plain.stream().map(c -> c.suite() + "\n" + c.name().replaceFirst("[(\\[{].*$", "")).distinct().count();
         return homes == 1 ? plain : List.of();
     }
 

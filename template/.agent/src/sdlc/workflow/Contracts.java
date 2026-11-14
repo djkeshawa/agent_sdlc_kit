@@ -271,9 +271,15 @@ public final class Contracts {
         // that drops an API from its own catalog-info.yaml still has that API's file checked
         Map<String, String> fileToApi = new LinkedHashMap<>();
         String catalogFile = sdlc.core.Ctx.root.relativize(Catalog.file()).toString().replace('\\', '/');
-        apiFiles(Catalog.parse(show(from, catalogFile)), fileToApi);
-        // the base branch's catalog as it is now: a branch made before the catalog existed is still held to it
-        if (!base.equals(from)) apiFiles(Catalog.parse(show(base, catalogFile)), fileToApi);
+        try {
+            apiFiles(Catalog.parse(show(from, catalogFile)), fileToApi);
+            // the base branch's catalog as it is now: a branch made before the catalog existed is still held to it
+            if (!base.equals(from)) apiFiles(Catalog.parse(show(base, catalogFile)), fileToApi);
+        } catch (RuntimeException e) {
+            // without the catalog it is not known which files are contracts: that is a failure, not "no contracts"
+            fails.add("The catalog " + catalogFile + " on " + sdlc.core.Trusted.shortName(base) + " cannot be read, so contract changes cannot be checked: " + e.getMessage());
+            return new Policy(passes, fails, warns);
+        }
         apiFiles(Catalog.load(), fileToApi);
         if (fileToApi.isEmpty()) return new Policy(passes, fails, warns);
         List<String> touched = changed.stream().filter(fileToApi::containsKey).toList();
@@ -370,8 +376,9 @@ public final class Contracts {
         return r.code() == 0 && !r.out().isBlank() ? r.out().strip() : base;
     }
 
+    /** A file as committed at a ref, "" when the ref does not hold it. A read that fails throws: it is not an empty file. */
     private static String show(String ref, String file) {
-        sdlc.util.Proc r = sdlc.util.Proc.run(sdlc.core.Ctx.root, "git", "show", ref + ":" + file);
-        return r.code() == 0 ? r.out() : "";
+        String text = sdlc.core.Trusted.read(ref, file);
+        return text == null ? "" : text;
     }
 }

@@ -502,6 +502,14 @@ final class MultiRepoTests {
         check("contracts: an operation the slice does not list fails", Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("GET /refunds added, but the solution slice does not list it")));
         Store.write(allow, Store.map("story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds"), "remove", List.of(), "breaking", false))));
         check("contracts: an operation the slice lists passes", Contracts.prPolicy("PROJ-80", base, changed).fails().isEmpty());
+        // a contract that cannot be read is a failure, never an empty contract that "did not change"
+        int limit = Proc.maxOutput;
+        Proc.maxOutput = 200;
+        try {
+            check("contracts: a contract too large to read fails the check", Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("could not be read") || f.contains("cannot be read")));
+        } finally {
+            Proc.maxOutput = limit;
+        }
         // in a pull request build the allowance is the base branch's: the pull request's own copy grants nothing
         sdlc.core.Trusted.env = name -> name.equals("GITHUB_BASE_REF") ? "main" : null;
         try {

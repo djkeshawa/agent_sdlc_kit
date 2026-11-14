@@ -388,9 +388,7 @@ public record Mandate(String version, String id, String intent, List<Truth> must
      * stored) and the ones with no width (so two different paths look the same).
      */
     public static boolean unprintable(int codePoint) {
-        int type = Character.getType(codePoint);
-        return type == Character.CONTROL || type == Character.FORMAT || type == Character.LINE_SEPARATOR || type == Character.PARAGRAPH_SEPARATOR
-                || type == Character.SURROGATE || type == Character.UNASSIGNED || type == Character.PRIVATE_USE;
+        return sdlc.util.SafeOut.unprintable(codePoint);
     }
 
     /** True when every surrogate of the text is half of a pair. */

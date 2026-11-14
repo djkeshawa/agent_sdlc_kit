@@ -29,7 +29,7 @@ public final class MandateCli {
     public static int run(String[] args, Map<String, String> opt) throws IOException {
         String sub = args.length > 1 ? args[1] : "";
         Path root = Ctx.root;
-        PrintStream out = System.out;
+        PrintStream out = sdlc.util.SafeOut.stream(System.out);
         return switch (sub) {
             case "check" -> check(root, id(args), out);
             case "show" -> show(root, id(args), out);
@@ -55,7 +55,8 @@ public final class MandateCli {
      * fail before they see what the draft says, so the draft cannot put the thought in their head.
      * ask puts one question and returns the answer.
      */
-    public static int approve(Path root, String id, java.util.function.Function<String, String> ask, PrintStream out) throws IOException {
+    public static int approve(Path root, String id, java.util.function.Function<String, String> ask, PrintStream to) throws IOException {
+        PrintStream out = sdlc.util.SafeOut.stream(to); // names and sentences of the repository are printed here
         // read once: what is shown, what is rewritten and what is approved all come from these bytes
         Mandate.Loaded read = Mandate.loaded(root, id);
         Mandate draft = read.mandate();
@@ -141,7 +142,8 @@ public final class MandateCli {
         return args[2];
     }
 
-    static int check(Path root, String id, PrintStream out) {
+    static int check(Path root, String id, PrintStream to) {
+        PrintStream out = sdlc.util.SafeOut.stream(to); // names and sentences of the repository are printed here
         Path f = Mandate.file(root, id);
         String rel = Mandate.DIR + "/" + id + ".json";
         if (!Files.isRegularFile(f)) {
@@ -186,13 +188,15 @@ public final class MandateCli {
         return out;
     }
 
-    static int show(Path root, String id, PrintStream out) {
+    static int show(Path root, String id, PrintStream to) {
+        PrintStream out = sdlc.util.SafeOut.stream(to); // names and sentences of the repository are printed here
         Mandate m = Mandate.load(root, id);
         out.print(MandateCard.render(m, Mandate.blobId(root, id)));
         return 0;
     }
 
-    static int list(Path root, PrintStream out) throws IOException {
+    static int list(Path root, PrintStream to) throws IOException {
+        PrintStream out = sdlc.util.SafeOut.stream(to); // names and sentences of the repository are printed here
         Path dir = root.resolve(Mandate.DIR);
         List<Path> files = new ArrayList<>();
         if (Files.isDirectory(dir)) {

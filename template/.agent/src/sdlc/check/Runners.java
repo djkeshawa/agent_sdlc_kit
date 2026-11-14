@@ -39,6 +39,16 @@ public final class Runners {
         return null;
     }
 
+    /** Removes a folder and what is in it. A link is removed, never followed. */
+    static void deleteTree(Path dir) {
+        if (!Files.exists(dir, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return;
+        try (Stream<Path> s = Files.walk(dir)) {
+            for (Path p : s.sorted(java.util.Comparator.reverseOrder()).toList()) Files.deleteIfExists(p);
+        } catch (IOException e) {
+            // what stays is seen by the next run, which then reports what it finds
+        }
+    }
+
     private static String tail(String text, int lines) {
         String[] all = text.strip().split("\\R");
         return String.join("\n", List.of(all).subList(Math.max(0, all.length - lines), all.length));
@@ -111,6 +121,22 @@ public final class Runners {
             return path.contains("src/test/");
         }
 
+        /** What Maven prints when code does not compile. These lines are kept of an output of any size. */
+        private static final Pattern DOES_NOT_COMPILE = Pattern.compile("COMPILATION ERROR|Compilation failure");
+
+        @Override
+        public void forgetBuilt(Path checkout, List<String> files) {
+            for (String f : files) {
+                String module = nearest(checkout, f, d -> Files.isRegularFile(d.resolve("pom.xml")));
+                if (module == null) continue;
+                // compiled tests, and the compiler's own record of what it compiled
+                for (String built : List.of("target/test-classes", "target/maven-status")) {
+                    Path dir = checkout.resolve(module).resolve(built);
+                    if (inside(checkout, dir)) deleteTree(dir);
+                }
+            }
+        }
+
         private static String className(String path) {
             String rel = path.substring(path.indexOf(ROOT) + ROOT.length());
             return rel.substring(0, rel.length() - ".java".length()).replace('/', '.');
@@ -147,7 +173,7 @@ public final class Runners {
                         "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false"));
                 if (!within.isEmpty()) cmd.addAll(List.of("-pl", within, "-am"));
                 cmd.add("test");
-                Proc p = Proc.runBuild(checkout.resolve(root), Map.of(), timeoutSeconds, cmd.toArray(new String[0]));
+                Proc p = Proc.runBuild(checkout.resolve(root), Map.of(), timeoutSeconds, DOES_NOT_COMPILE, cmd.toArray(new String[0]));
                 List<JUnitXml.Case> cases = new ArrayList<>();
                 String unreadable = null;
                 if (p.code() == 124) {
@@ -172,7 +198,7 @@ public final class Runners {
                     if (!mine.isEmpty()) out.put(f, new FileRun(mine, null));
                     else if (unreadable != null) out.put(f, FileRun.failed("its report cannot be read (" + unreadable + ")"));
                     else if (p.code() == 124) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
-                    else if (text.contains("COMPILATION ERROR") || text.contains("Compilation failure")) out.put(f, FileRun.broken(Witness.DOES_NOT_COMPILE));
+                    else if (DOES_NOT_COMPILE.matcher(text).find()) out.put(f, FileRun.broken(Witness.DOES_NOT_COMPILE));
                     else if (p.code() == 127) out.put(f, FileRun.failed("Maven could not be started (" + tail(text, 1) + ")"));
                     else out.put(f, FileRun.failed("did not run (Maven exit " + p.code() + ": " + firstError(text) + ")"));
                 }
@@ -271,12 +297,63 @@ public final class Runners {
         /** Files that decide which packages are installed. Both sides run with the one installed set. */
         private static final Pattern PACKAGES = Pattern.compile("(^|.*/)(package\\.json|package-lock\\.json|npm-shrinkwrap\\.json|yarn\\.lock|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|bun\\.lockb?|\\.npmrc|\\.yarnrc(\\.yml)?|\\.pnpmfile\\.cjs)$");
 
+        /** The lines "did not load" is read from: the ones that say so, and the ones that name a test file. */
+        private static final Pattern LOAD_FAILURE_LINES = Pattern.compile(DID_NOT_LOAD.pattern() + "|\\.(test|spec)\\.[cm]?[jt]sx?");
+        /** The parts of a package.json that decide what is installed. */
+        private static final List<String> INSTALLS = List.of("dependencies", "devDependencies", "peerDependencies", "optionalDependencies", "bundledDependencies",
+                "bundleDependencies", "overrides", "resolutions", "workspaces", "pnpm", "packageManager");
+
+        /**
+         * Counts a changed package file when it decides what this test's project has installed: one
+         * in the project's folder or above it (the workspace root and its lock file), or the
+         * package.json of another package this project names as a dependency. A package.json counts
+         * only when its lists of packages changed, not for a new script or description.
+         */
         @Override
-        public String sharedBySides(Change change) {
-            List<String> packages = change.files.stream().map(Change.File::path).filter(f -> PACKAGES.matcher(f).matches()).toList();
+        public String sharedBySides(Change change, Path checkout, String file) {
+            String project = project(checkout, file);
+            if (project == null) return null;
+            List<String> packages = new ArrayList<>();
+            for (Change.File f : change.files) {
+                String path = f.path();
+                if (!PACKAGES.matcher(path).matches()) continue;
+                String dir = path.contains("/") ? path.substring(0, path.lastIndexOf('/')) : "";
+                boolean above = dir.isEmpty() || project.equals(dir) || project.startsWith(dir + "/");
+                boolean manifest = path.equals("package.json") || path.endsWith("/package.json");
+                if (above ? !manifest || installsDiffer(change, path) : manifest && namedBy(checkout, project, change, path) && installsDiffer(change, path)) packages.add(path);
+            }
             if (packages.isEmpty()) return null;
             return "the change touches what is installed (" + packages.get(0) + (packages.size() > 1 ? " and " + (packages.size() - 1) + " more" : "")
                     + ") and both sides ran with the packages installed now, so the side before the change was not without all of it";
+        }
+
+        /** True unless both versions of a package.json can be read and list the same packages. */
+        private static boolean installsDiffer(Change change, String path) {
+            try {
+                return !installs(change.before(path)).equals(installs(change.after(path)));
+            } catch (RuntimeException e) {
+                return true; // one that cannot be read may hold anything
+            }
+        }
+
+        private static Map<String, Object> installs(String text) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            if (text == null) return out;
+            Map<String, Object> json = sdlc.util.Json.map(sdlc.util.Json.parse(text));
+            for (String key : INSTALLS) if (json.containsKey(key)) out.put(key, json.get(key));
+            return out;
+        }
+
+        /** True when the project's package.json names the package that the other package.json declares. */
+        private static boolean namedBy(Path checkout, String project, Change change, String path) {
+            try {
+                String text = change.after(path) != null ? change.after(path) : change.before(path);
+                String name = text == null ? "" : sdlc.util.Json.str(sdlc.util.Json.parse(text), "name");
+                if (name == null || name.isBlank()) return false;
+                return Files.readString(checkout.resolve(project).resolve("package.json")).contains("\"" + name + "\"");
+            } catch (IOException | RuntimeException e) {
+                return true; // not known: count it
+            }
         }
 
         /** The nearest folder whose package.json names vitest. */
@@ -323,7 +400,7 @@ public final class Runners {
                         continue;
                     }
                     cmd.addAll(rel);
-                    Proc p = Proc.runBuild(project, Map.of("CI", "1"), timeoutSeconds, cmd.toArray(new String[0]));
+                    Proc p = Proc.runBuild(project, Map.of("CI", "1"), timeoutSeconds, LOAD_FAILURE_LINES, cmd.toArray(new String[0]));
                     List<JUnitXml.Case> cases = new ArrayList<>();
                     String unreadable = null;
                     if (p.code() == 124) {

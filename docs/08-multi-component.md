@@ -207,7 +207,9 @@ files is compared with the base branch (OpenAPI 3 / 2 paths, AsyncAPI 2 / 3 mess
 - `tasks create` (lanes on) writes `docs/agent/contracts/<STORY>.json`: what the story's lane
   allows. Patch: nothing. Component: additions to its own APIs. Cross-component: exactly the
   operations its slice lists, and breaking changes only if the solution says `compatibility: breaking`.
-  Commit it with the story; it is protected, so agents cannot widen it.
+  It is protected, so agents cannot widen it. In a pull request build `check-pr` reads it from
+  the base branch, so it is merged first, in a pull request of its own that architects review;
+  the copy inside the pull request that changes the contract is not used.
 - `check-pr` and the PR gate fail an added or removed operation the allowance does not list,
   and a breaking change it does not allow. In CI the story comes from the branch name.
 - Breaking changes detected: removed operations or messages, removed response codes, new

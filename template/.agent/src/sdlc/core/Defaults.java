@@ -153,7 +153,10 @@ public final class Defaults {
                 - .git/hooks/**
                 - .git/info/**
                 - .git/sdlc/**
-                - .git/worktrees/*/sdlc/**
+                - .git/worktrees/**
+                - .git/config.worktree
+                - .git/commondir
+                - .git
               agentWritable:
                 - ".sdlc/*/drafts/**"
                 - ".sdlc/*/inbox/**"

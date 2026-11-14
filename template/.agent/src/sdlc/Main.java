@@ -118,7 +118,7 @@ public final class Main {
             if (guard) {
                 code = Hooks.emit(Decision.deny("the guard could not decide (" + e.getMessage() + ")."), hookFormat(args));
             } else {
-                System.err.println(e.getMessage());
+                System.err.println(sdlc.util.SafeOut.clean(e.getMessage())); // the message may quote a file name or a line of the repository
                 code = 3;
             }
         } catch (Http.ApiException e) {

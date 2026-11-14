@@ -155,6 +155,9 @@ final class MandateFlowTests {
         write(repo, "tests/fix.t", "one(a) > fixed: needs fixed\none(b) > fixed: needs fixed\n");
         String twoHomes = verdict();
         check("mandate: a scenario name that fits two tests of one file names neither", twoHomes.contains("unknown   scenarios found, ran and passed: 0 of 1") && twoHomes.contains("more than one test has that name"));
+        write(repo, "tests/fix.t", "fixed: needs fixed\nfixed: pass\n");
+        String twins = verdict();
+        check("mandate: nor does a name that two tests report alike", twins.contains("unknown   scenarios found, ran and passed: 0 of 1"));
         write(repo, "tests/fix.t", "other: pass\n");
         String missing = verdict();
         check("mandate: a scenario that is not found is unknown, not passed", missing.contains("unknown   scenarios found, ran and passed: 0 of 1") && missing.contains("was not found among the tests that ran"));
@@ -234,6 +237,44 @@ final class MandateFlowTests {
         Files.delete(repo.resolve("tests/fx.t"));
         write(repo, "tests/fx.t", "old shape: pass\n");
 
+        // a link in the base that the change turns into a folder: what the link leads to is never touched
+        Path elsewhere = Files.createTempDirectory("sdlc-elsewhere").toRealPath();
+        Path sentinel = elsewhere.resolve("sub");
+        try {
+            Files.writeString(sentinel, "not ours\n");
+            Files.createSymbolicLink(repo.resolve("tests/linked"), elsewhere);
+            commit(repo, "a fixture folder that is a link");
+            Files.delete(repo.resolve("tests/linked"));
+            write(repo, "tests/linked/sub/case.t", "inside: pass\n");
+            String overLink = report(Map.of("mandate", "prodonly", "selftest-runner", "true", "runs", "1"));
+            check("mandate: preparing the checkout never removes a file behind a link", Files.isRegularFile(sentinel) && overLink.contains("Evidence"));
+            Files.delete(repo.resolve("tests/linked/sub/case.t"));
+            Files.delete(repo.resolve("tests/linked/sub"));
+            Files.delete(repo.resolve("tests/linked"));
+            Files.createSymbolicLink(repo.resolve("tests/linked"), elsewhere);
+        } catch (IOException | UnsupportedOperationException e) {
+            // no links on this file system: nothing to protect
+        } finally {
+            Files.deleteIfExists(sentinel);
+            Files.deleteIfExists(elsewhere);
+        }
+
+        // text of the repository that is printed without being a valid mandate
+        write(repo, "docs/mandates/odd.json", "{\"mandate\": \"v0\", \"id\": \"odd\", \"intent\": \"All is \u202ellew\u001b[2J\"}");
+        PrintStream console = System.out;
+        ByteArrayOutputStream listed = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(listed, true, StandardCharsets.UTF_8));
+        try {
+            MandateCli.run(new String[] {"mandate", "list"}, Map.of());
+            MandateCli.run(new String[] {"mandate", "check", "odd"}, Map.of());
+        } finally {
+            System.setOut(console);
+        }
+        String shownList = listed.toString(StandardCharsets.UTF_8);
+        check("mandate: the list and the diagnostics never print a direction mark or an escape of a file that is not valid",
+                shownList.contains("odd") && shownList.contains("not valid") && shownList.indexOf('\u202e') < 0 && shownList.indexOf('\u001b') < 0);
+        Files.delete(repo.resolve("docs/mandates/odd.json"));
+
         // a linked worktree keeps its git folder outside the checkout: the approval record and the hooks there are guarded all the same
         Path linked = Files.createTempDirectory("sdlc-linked").toRealPath();
         Files.delete(linked);
@@ -246,6 +287,9 @@ final class MandateFlowTests {
             check("guard: a shell write to the approval record of a linked worktree is refused", Asserts.shell("echo '{}' > " + store).denied());
             check("guard: also by a relative path", Asserts.shell("cp forged.json " + linked.relativize(store).toString().replace('\\', '/')).denied());
             check("guard: and a write to the repository's git hooks from a linked worktree", Asserts.shell("echo 'exit 0' > " + hook).denied());
+            check("guard: and to the worktree's own git configuration", Asserts.shell("echo '[core] hooksPath=/tmp/none' > " + store.getParent().getParent().resolve("config.worktree")).denied());
+            check("guard: and to the files that say where the git folder is", Asserts.shell("echo 'gitdir: /tmp/other' > .git").denied()
+                    && Asserts.shell("echo /tmp/other > " + store.getParent().getParent().resolve("commondir")).denied());
             check("guard: other files outside the checkout are judged as before", !Asserts.shell("echo x > " + linked.getParent().resolve("sdlc-elsewhere-note.txt")).denied());
         } finally {
             Ctx.init(repo);
