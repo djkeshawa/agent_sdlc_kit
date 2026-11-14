@@ -299,14 +299,15 @@ final class CheckTests {
         commit(repo, "more");
         write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\nidle: pass\n");
         commit(repo, "a test that proves nothing");
-        write(repo, "checks/judged.t", JUDGED.replace("turned off: pass", "turned off: skip"));
-        commit(repo, "a test switched off");
+        write(repo, "checks/judged.t", JUDGED.replace("turned off: pass", "turned off: skip").replace("goes too: pass\n", ""));
+        commit(repo, "a test switched off and one removed");
         String history = report(Map.of("selftest-runner", "true", "runs", "1", "since", "1d"));
         check("check: --since replays each recent commit", history.contains("commits on this branch since 1 days ago") && history.contains("  the fix")
                 && history.contains("tests: 1 fail before and pass after") && history.contains("does not test the change: tests/old.t  idle")
                 && history.contains("new tests pass on both sides, so do not test their commit") && code == 0);
-        check("check: --since names the tests a commit switched off", history.contains("tests: 1 ran before, skipped after\n")
-                && history.contains("ran before, skipped after: checks/judged.t  turned off") && history.contains("1 test ran before its commit and is skipped after it"));
+        check("check: --since names the tests a commit switched off or removed", history.contains("tests: 1 ran before, skipped after; 1 removed\n")
+                && history.contains("ran before, skipped after: checks/judged.t  turned off") && history.contains("removed: checks/judged.t  goes too")
+                && history.contains("1 test ran before its commit and is skipped after it; 1 test was removed"));
         check("check: --since wants a time span", Asserts.throwsUsage(() -> Check.run(Map.of("since", "true"))));
         git(repo, "reset", "-q", "--hard", "HEAD~3");
         write(repo, "prod.txt", "v1\nfixed\nmore\n");
@@ -318,7 +319,8 @@ final class CheckTests {
     private static final String JUDGED = "stays: pass\nturned off: pass\nwas off: skip\ngoes: pass\ngoes too: pass\n";
 
     /**
-     * Which tests are new: read from the run of the file as it was, on the code as it was. Comes in
+     * Which tests are new, which ran before and are skipped now, and which are gone: read from the
+     * run of the file as it was, on the code as it was. Comes in
      * with the fix and a sensitive test in tests/old.t, so a run that says nothing else exits with 0.
      */
     private static void judgedByTheRun(Path repo) throws IOException {
@@ -358,6 +360,53 @@ final class CheckTests {
                 later.contains("1 is skipped\n      checks/judged.t  [self test]\n        later\n") && !later.contains("skipped now") && code == 0);
         write(repo, "checks/judged.t", JUDGED);
 
+        // two gone and only one new in their place: removed
+        write(repo, "checks/judged.t", "stays: pass\nturned off: pass\nwas off: skip\nidle: pass\n");
+        String fewer = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: tests the file had and does not report now, with fewer new ones, were removed",
+                fewer.contains("2 tests were removed: the edited file had them before the change, and fewer new tests came than went\n      checks/judged.t  [self test]\n        goes\n        goes too\n")
+                && fewer.contains("1 new test passes before and after") && code == 1);
+        reasons.reset();
+        try {
+            System.setErr(new PrintStream(reasons, true, StandardCharsets.UTF_8));
+            System.setIn(new java.io.ByteArrayInputStream("{}".getBytes(StandardCharsets.UTF_8)));
+            int blocked = Check.run(Map.of("selftest-runner", "true", "stop-hook", "true"));
+            check("check: the stop hook blocks on tests removed", blocked == 2
+                    && reasons.toString(StandardCharsets.UTF_8).contains("removed: checks/judged.t » goes too (the file had it before your change)"));
+        } finally {
+            System.setIn(in);
+            System.setErr(err);
+        }
+
+        // one gone and one new: a rename cannot be told from a replacement, and the new one is judged on its own
+        write(repo, "checks/judged.t", JUDGED.replace("goes too: pass", "renamed: needs fixed"));
+        String renamed = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a renamed test is a note, not a problem", code == 0 && !renamed.contains("removed")
+                && renamed.contains("Note: tests renamed, replaced or moved (1 note; each new test is judged on its own)\n      checks/judged.t  [self test]\n"
+                        + "        1 test is no longer reported under its name and 1 new one is: renamed or replaced. No longer reported: goes too. New: renamed\n")
+                && renamed.contains("2 fail before the change and pass after it"));
+
+        // a renamed group: the test keeps its own title, and is the same test
+        write(repo, "checks/judged.t", JUDGED.replace("stays: pass", "group > stays: pass"));
+        String regrouped = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a test under a renamed group, with its title unchanged, is the same test and a note", code == 0 && !regrouped.contains("removed")
+                && regrouped.contains("1 test is reported under another group, with its own title unchanged, and counts as the same test: stays is now group > stays")
+                && regrouped.contains("5 tests that were already in the edited files pass before and after (not counted)"));
+        // but not when the title fits two new tests: then which one it is cannot be told
+        write(repo, "checks/judged.t", JUDGED.replace("stays: pass", "one > stays: pass\ntwo > stays: pass"));
+        String twoGroups = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a title that fits two new tests pairs with neither", code == 1
+                && twoGroups.contains("2 new tests pass before and after") && twoGroups.contains("1 test is no longer reported under its name and 2 new ones are"));
+
+        // a test that went to another changed file has moved
+        write(repo, "checks/judged.t", JUDGED.replace("goes too: pass\n", ""));
+        write(repo, "checks/moved.t", "goes too: needs fixed\n");
+        String moved = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a test now in another changed file has moved, and is not counted as removed", code == 0 && !moved.contains("removed")
+                && moved.contains("1 test moved to another changed file: goes too (now in checks/moved.t)"));
+        Files.delete(repo.resolve("checks/moved.t"));
+        write(repo, "checks/judged.t", JUDGED);
+
         // the file as it was gives no result (its slow test is cut off): whether a test is new cannot be told
         write(repo, "checks/legacy.t", "held: pass\nadded: pass\n");
         String legacy = report(Map.of("selftest-runner", "true", "runs", "1"));
@@ -366,7 +415,7 @@ final class CheckTests {
                 && legacy.contains("held: passes before and after, but run as it was before the change")
                 && legacy.contains("checks/legacy.t  [self test]\n        held: ") && !legacy.contains("so it does not test the change") && code == 0);
         check("check: and the report says so for the file as a whole",
-                legacy.contains("        run as it was before the change, the file timed out after 900 s, so it cannot be told which of its tests are new or were switched off\n"));
+                legacy.contains("        run as it was before the change, the file timed out after 900 s, so it cannot be told which of its tests are new, were switched off or were removed\n"));
         write(repo, "checks/legacy.t", LEGACY);
     }
 

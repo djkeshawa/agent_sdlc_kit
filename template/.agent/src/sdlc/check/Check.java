@@ -54,11 +54,14 @@ public final class Check {
             failed |= section(out, w, Kind.PASSES_ON_BOTH, n -> n + (n == 1 ? " new test passes" : " new tests pass") + " before and after, so "
                     + (n == 1 ? "it does" : "they do") + " not test the change", false);
             failed |= section(out, w, Kind.SKIPPED_NOW, n -> n + " ran before the change and " + (n == 1 ? "is" : "are") + " skipped now", false);
+            failed |= section(out, w, Kind.REMOVED, n -> n + (n == 1 ? " test was" : " tests were") + " removed: the edited file had "
+                    + (n == 1 ? "it" : "them") + " before the change, and fewer new tests came than went", false);
             section(out, w, Kind.UNSTABLE, n -> n + " gave different results from run to run", true);
             if (section(out, w, Kind.UNKNOWN, n -> n + " could not be judged", true)) {
                 out.println("      A test of code that did not exist before the change cannot fail there for the right reason, so it is not counted either way.");
             }
             section(out, w, Kind.SKIPPED, n -> n + (n == 1 ? " is" : " are") + " skipped", false);
+            section(out, w, Kind.RENAMED, n -> "Note: tests renamed, replaced or moved (" + n + (n == 1 ? " note" : " notes") + "; each new test is judged on its own)", true);
             long old = w.count(Kind.EXISTING_PASSES_ON_BOTH);
             if (old > 0) out.println("  " + old + " test" + (old == 1 ? "" : "s") + " that " + (old == 1 ? "was" : "were") + " already in the edited files " + (old == 1 ? "passes" : "pass") + " before and after (not counted)");
             long off = w.count(Kind.EXISTING_SKIPPED);
@@ -102,7 +105,7 @@ public final class Check {
         List<String> commits = log.out().isBlank() ? List.of() : List.of(log.out().strip().split("\\R"));
         out.println("sdlc check --since " + opt.get("since") + ": " + commits.size() + " commit" + (commits.size() == 1 ? "" : "s") + " on this branch since " + window
                 + (commits.size() > max ? ", the newest " + max + " checked (--max N for more)" : ""));
-        long sensitive = 0, both = 0, unknown = 0, failing = 0, untested = 0, problems = 0, switchedOff = 0;
+        long sensitive = 0, both = 0, unknown = 0, failing = 0, untested = 0, problems = 0, switchedOff = 0, removed = 0;
         int checked = 0;
         for (String line : commits) {
             if (checked++ >= max) break;
@@ -123,18 +126,21 @@ public final class Check {
                 part(parts, w.count(Kind.PASSES_ON_BOTH), "new, pass on both sides");
                 part(parts, w.count(Kind.FAILS_AFTER), "fail after");
                 part(parts, w.count(Kind.SKIPPED_NOW), "ran before, skipped after");
+                part(parts, w.count(Kind.REMOVED), "removed");
                 part(parts, w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE), "could not be judged");
                 part(parts, w.count(Kind.SKIPPED), "skipped");
                 out.println("    tests: " + (parts.isEmpty() ? "only tests that were already there, passing on both sides" : String.join("; ", parts)));
                 for (Verdict v : w.verdicts()) {
                     if (v.kind() == Kind.PASSES_ON_BOTH) out.println("        does not test the change: " + v.file() + "  " + v.name());
                     else if (v.kind() == Kind.SKIPPED_NOW) out.println("        ran before, skipped after: " + v.file() + "  " + v.name());
+                    else if (v.kind() == Kind.REMOVED) out.println("        removed: " + v.file() + "  " + v.name());
                 }
                 sensitive += w.count(Kind.SENSITIVE);
                 both += w.count(Kind.PASSES_ON_BOTH);
                 failing += w.count(Kind.FAILS_AFTER);
                 unknown += w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE);
                 switchedOff += w.count(Kind.SKIPPED_NOW);
+                removed += w.count(Kind.REMOVED);
             }
             for (Finding x : findings) {
                 if (x.level() != Finding.Level.PROBLEM) continue;
@@ -149,7 +155,8 @@ public final class Check {
             out.println("  " + sensitive + (sensitive == 1 ? " new or edited test fails before its commit and passes after it" : " new or edited tests fail before their commit and pass after it"));
             out.println("  " + both + (both == 1 ? " new test passes on both sides, so does not test its commit" : " new tests pass on both sides, so do not test their commit"));
             out.println("  " + unknown + " could not be judged; " + failing + " fail after their commit");
-            out.println("  " + switchedOff + (switchedOff == 1 ? " test ran" : " tests ran") + " before its commit and " + (switchedOff == 1 ? "is" : "are") + " skipped after it");
+            out.println("  " + switchedOff + (switchedOff == 1 ? " test ran" : " tests ran") + " before its commit and " + (switchedOff == 1 ? "is" : "are") + " skipped after it; "
+                    + removed + (removed == 1 ? " test was" : " tests were") + " removed");
             out.println("  " + untested + " commit" + (untested == 1 ? "" : "s") + " add or edit no test this version can run");
             out.println("  " + problems + " integrity problem" + (problems == 1 ? "" : "s"));
         }
@@ -160,8 +167,8 @@ public final class Check {
      * --stop-hook: for an agent's Stop hook (Claude Code: exit code 2 keeps the agent working, and
      * what is on stderr is the reason it is given). It blocks on what the agent can fix and is
      * certain: a changed test that fails, a new test that passes with or without the change, a test
-     * that ran before the change and is skipped after it, a test switched off. Never on "could not
-     * be judged". Says nothing when all is well.
+     * that ran before the change and is skipped after it, tests removed, a test switched off. Never
+     * on "could not be judged", nor on a note. Says nothing when all is well.
      *
      * The host says on stdin whether the agent is already continuing because of a stop hook
      * (stop_hook_active). Then the result is printed and the agent is let go: a second block on
@@ -183,6 +190,7 @@ public final class Check {
             if (v.kind() == Kind.FAILS_AFTER) reasons.add("fails: " + test + (v.detail().isBlank() ? "" : " (" + v.detail() + ")"));
             else if (v.kind() == Kind.PASSES_ON_BOTH) reasons.add("passes with and without your change, so it does not test it: " + test);
             else if (v.kind() == Kind.SKIPPED_NOW) reasons.add("ran before your change and is skipped now: " + test);
+            else if (v.kind() == Kind.REMOVED) reasons.add("removed: " + test + " (the file had it before your change)");
         }
         for (Finding f : Integrity.scan(change)) if (f.level() == Finding.Level.PROBLEM) reasons.add(f.kind() + ": " + f.path() + (f.detail().isBlank() ? "" : " (" + f.detail().strip() + ")"));
         if (reasons.isEmpty()) return 0;
