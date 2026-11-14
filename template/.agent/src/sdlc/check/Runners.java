@@ -23,6 +23,24 @@ public final class Runners {
         return Maven.reactorRoot(checkout, module);
     }
 
+    /** For the self test: what the Maven runner makes of one test file in a checkout, in words (see said). */
+    public static String mavenRun(Path checkout, String file) {
+        return said(new Maven().run(checkout, List.of(file), 120).get(file));
+    }
+
+    /** For the self test: what the Vitest runner makes of a report vitest wrote and exited with 1, for one test file (its path in the project). */
+    public static String vitestReport(Path report, String file) throws IOException {
+        return said(Vitest.result(JUnitXml.read(report), file, null, 1, false, ""));
+    }
+
+    /** A file's run in words: "no result: why", "ran, no tests", or each case as "STATUS name", joined by "; ". */
+    private static String said(Runner.FileRun run) {
+        if (run == null) return "no result";
+        if (run.problem() != null) return "no result: " + run.problem();
+        if (run.cases().isEmpty()) return "ran, no tests";
+        return String.join("; ", run.cases().stream().map(c -> c.status() + " " + c.name()).toList());
+    }
+
     static List<Runner> all() {
         return List.of(new Maven(), new Vitest());
     }
@@ -305,8 +323,25 @@ public final class Runners {
             }
         }
 
-        /** How vitest's report begins the message of a file or a group that holds no test. */
-        private static final String NO_TEST = "No test found in suite";
+        /**
+         * What one test file's run comes to, from vitest's report (cases), the reason it could not be
+         * read (unreadable), vitest's exit code, whether its output said the file did not load, and the
+         * last lines it printed. Every case the report gives the file is kept as the report gives it:
+         * vitest writes a file or a group without tests ("No test found in suite ...") as a failed case
+         * exactly as it writes a test's own failure, and no message or name tells the two apart, as a
+         * test's author may write any of them.
+         */
+        static FileRun result(List<JUnitXml.Case> cases, String name, String unreadable, int exit, boolean didNotLoad, String said) {
+            List<JUnitXml.Case> mine = cases.stream().filter(c -> c.suite().replace('\\', '/').equals(name)).map(Runners::assertionOrError).toList();
+            if (!mine.isEmpty()) return new FileRun(mine, null);
+            if (unreadable != null) return FileRun.failed("its report cannot be read (" + unreadable + ")");
+            if (exit == 127) return FileRun.failed("node could not be started (is Node.js on the PATH?)");
+            // vitest gave this file no result. That is broken code only when vitest says it could not load the file;
+            // a worker that did not start, or a file its configuration leaves out, says nothing about the code.
+            // (and says so about this file: another file's syntax error says nothing about this one)
+            if (didNotLoad) return FileRun.broken("did not load (vitest exit " + exit + ": " + said + ")");
+            return FileRun.failed("gave no result (vitest exit " + exit + ": " + said + ")");
+        }
 
         private static final Pattern SUPPORT_DIR = Pattern.compile("(^|.*/)(__tests__|__mocks__|__fixtures__|__snapshots__|fixtures|tests?)/.*");
 
@@ -450,21 +485,9 @@ public final class Runners {
                     } catch (IOException ex) {
                         unreadable = ex.getMessage();
                     }
+                    String said = tail(p.out() + "\n" + p.err(), 3).replaceAll("\\s+", " ");
                     for (int i = 0; i < rel.size(); i++) {
-                        String name = rel.get(i);
-                        List<JUnitXml.Case> reported = cases.stream().filter(c -> c.suite().replace('\\', '/').equals(name)).toList();
-                        // vitest reports a file or a describe block without tests as an error case of that name: not a test
-                        List<JUnitXml.Case> mine = reported.stream().filter(c -> !c.message().startsWith(NO_TEST)).map(Runners::assertionOrError).toList();
-                        String f = e.getValue().get(i);
-                        if (!mine.isEmpty() || !reported.isEmpty()) out.put(f, new FileRun(mine, null));
-                        else if (unreadable != null) out.put(f, FileRun.failed("its report cannot be read (" + unreadable + ")"));
-                        else if (p.code() == 124) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
-                        else if (p.code() == 127) out.put(f, FileRun.failed("node could not be started (is Node.js on the PATH?)"));
-                        // vitest gave this file no result. That is broken code only when vitest says it could not load the file;
-                        // a worker that did not start, or a file its configuration leaves out, says nothing about the code.
-                        // (and says so about this file: another file's syntax error says nothing about this one)
-                        else if (didNotLoad.contains(name)) out.put(f, FileRun.broken("did not load (vitest exit " + p.code() + ": " + tail(p.out() + "\n" + p.err(), 3).replaceAll("\\s+", " ") + ")"));
-                        else out.put(f, FileRun.failed("gave no result (vitest exit " + p.code() + ": " + tail(p.out() + "\n" + p.err(), 3).replaceAll("\\s+", " ") + ")"));
+                        out.put(e.getValue().get(i), result(cases, rel.get(i), unreadable, p.code(), didNotLoad.contains(rel.get(i)), said));
                     }
                 } finally {
                     try {

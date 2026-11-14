@@ -33,6 +33,7 @@ final class CheckTests {
             Trusted.env = name -> null;
             output(repo);
             reports(repo);
+            adapters(repo);
             reactor(repo);
             scenarios(repo);
         } finally {
@@ -106,6 +107,72 @@ final class CheckTests {
                 .containsAll(java.util.Set.of("adds", "later")));
         check("check: a reported name is matched to the declared one", sdlc.check.TestNames.plain("ATest.java", "two(int)[1]").equals("two")
                 && sdlc.check.TestNames.plain("a.test.ts", "x > nested > adds").equals("adds"));
+    }
+
+    /** The runners' own reading of what the build tools leave behind: report files as Surefire and vitest write them. */
+    private static void adapters(Path repo) throws IOException {
+        // Vitest: a file without tests and a test whose own failure says the same words are written alike, and both stay failures
+        Path xml = repo.resolve("vitest.xml");
+        Files.writeString(xml, """
+                <?xml version="1.0" encoding="UTF-8" ?>
+                <testsuites name="vitest tests" tests="1" failures="1" errors="0" time="0.004">
+                    <testsuite name="src/app.test.ts" timestamp="2026-11-14T10:00:00.000Z" hostname="h" tests="1" failures="1" errors="0" skipped="0" time="0">
+                        <testcase classname="src/app.test.ts" name="app" time="0">
+                            <failure message="No test found in suite app" type="Error">
+                Error: No test found in suite app
+                            </failure>
+                        </testcase>
+                    </testsuite>
+                </testsuites>
+                """);
+        check("check: vitest's entry for a file without tests stays a failed case", sdlc.check.Runners.vitestReport(xml, "src/app.test.ts").equals("ERRORED app"));
+        Files.writeString(xml, """
+                <?xml version="1.0" encoding="UTF-8" ?>
+                <testsuites name="vitest tests" tests="2" failures="1" errors="0" time="0.004">
+                    <testsuite name="src/refund.test.ts" timestamp="2026-11-14T10:00:00.000Z" hostname="h" tests="2" failures="1" errors="0" skipped="0" time="0.002">
+                        <testcase classname="src/refund.test.ts" name="refunds &gt; rejects" time="0.001">
+                            <failure message="No test found in suite: business failure" type="Error">
+                Error: No test found in suite: business failure
+                 ❯ src/refund.test.ts:5:11
+                            </failure>
+                        </testcase>
+                        <testcase classname="src/refund.test.ts" name="refunds &gt; accepts" time="0.001">
+                        </testcase>
+                    </testsuite>
+                </testsuites>
+                """);
+        check("check: a test whose failure starts with vitest's words for an empty file is still a failure",
+                sdlc.check.Runners.vitestReport(xml, "src/refund.test.ts").equals("ERRORED refunds > rejects; PASSED refunds > accepts"));
+        Files.delete(xml);
+
+        // Maven: the build passes and no report names the class: the class ran and has no tests. A failed build says nothing.
+        if (Proc.WINDOWS) return; // the stand-in for Maven below is a shell script
+        Path m = repo.resolve("maven");
+        Files.createDirectories(m.resolve("src/test/java/demo"));
+        Files.writeString(m.resolve("pom.xml"), "<project/>");
+        Files.writeString(m.resolve("src/test/java/demo/ATest.java"), "package demo;\nclass ATest {}\n");
+        Files.writeString(m.resolve("mvnw"), """
+                #!/bin/sh
+                # stands in for Maven: copies the report it is given into place, says what Maven would, exits as told
+                mkdir -p target/surefire-reports
+                if [ -f given-report.xml ]; then cp given-report.xml target/surefire-reports/TEST-given.xml; fi
+                echo "[ERROR] Failed to execute goal: something outside the tests went wrong"
+                exit "$(cat given-exit)"
+                """);
+        Files.writeString(m.resolve("given-exit"), "0");
+        check("check: a Maven build that passes with no report for the class: it ran and has no tests", sdlc.check.Runners.mavenRun(m, "src/test/java/demo/ATest.java").equals("ran, no tests"));
+        Files.writeString(m.resolve("given-report.xml"), "<testsuite name=\"demo.OtherTest\"><testcase name=\"other\" classname=\"demo.OtherTest\"/></testsuite>");
+        check("check: a report of another class says nothing of this one", sdlc.check.Runners.mavenRun(m, "src/test/java/demo/ATest.java").equals("ran, no tests"));
+        Files.writeString(m.resolve("given-report.xml"), "<testsuite name=\"demo.ATest\"><testcase name=\"works\" classname=\"demo.ATest\"/></testsuite>");
+        check("check: and one of the class gives its cases", sdlc.check.Runners.mavenRun(m, "src/test/java/demo/ATest.java").equals("PASSED works"));
+        Files.delete(m.resolve("given-report.xml"));
+        Files.writeString(m.resolve("given-exit"), "1");
+        String failed = sdlc.check.Runners.mavenRun(m, "src/test/java/demo/ATest.java");
+        check("check: a Maven build that fails with no report for the class did not run it, and is not taken for no tests",
+                failed.startsWith("no result: did not run (Maven exit 1: Failed to execute goal: something outside the tests went wrong"));
+        try (Stream<Path> s = Files.walk(m)) {
+            for (Path p : s.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(p);
+        }
     }
 
     private static void reactor(Path repo) throws IOException {

@@ -156,9 +156,11 @@ Claude Code, in `.claude/settings.json`:
   file runs is found when the part of the title that changed is written out in the file
   (`'adds %i'` to `'sums %i'`). A test deleted and another written in its place with the very
   same lines apart from the name is taken for a rename.
-- A file whose tests were all taken out runs and reports none: its tests were removed. For
-  Maven this is a build that passes with no report for the class; a build that fails, or no
-  build tool, is not read as "no tests".
+- A file whose tests were all taken out: its tests were removed. For Maven the file runs and
+  reports none (a build that passes with no report for the class; a build that fails, or no
+  build tool, is not read as "no tests"). Vitest reports such a file, and a `describe` block
+  without tests, as a failed case ("No test found in suite ..."), which is listed as failing
+  after the change: a report writes it exactly as a test's own failure, so it is not left out.
 - A renamed group (`describe` block, nested class) renames every test in it. A test whose own
   title is unchanged and fits exactly one gone test and one new test of the file is taken to be
   the same test, so a test deleted in one group and a trivial one of the same title added in
