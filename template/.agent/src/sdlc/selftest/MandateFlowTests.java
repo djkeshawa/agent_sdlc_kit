@@ -55,6 +55,7 @@ final class MandateFlowTests {
         write(repo, "prod.txt", "v1\n");
         write(repo, "tests/keep.t", "stays: pass\n");
         write(repo, "tests/other.t", "on: pass\ngoes: pass\n");
+        write(repo, "tests/hurt.t", "guards: fails-with fixed\n");
         git(repo, "init", "-q", "-b", "main");
         commit(repo, "base");
         Ctx.init(repo);
@@ -184,6 +185,12 @@ final class MandateFlowTests {
         check("mandate: and so does a test deleted and another written in its stead", replaced.contains("unknown   the change's own tests: 1 fails before it and passes after it")
                 && replaced.contains("2 of the change's tests could not be judged") && !replaced.contains("does not test the change") && code == 0);
         write(repo, "tests/other.t", "on: pass\ngoes: pass\n");
+        // but an old test that passed before, fails as it was on the change, and is gone: violated
+        write(repo, "tests/hurt.t", "guarded: pass\n");
+        String hurt = verdict();
+        check("mandate: an old test that the change breaks and takes out of the way violates the witness", hurt.contains("violated  the change's own tests")
+                && hurt.contains("tests/hurt.t  guards: passed before the change; as the test was, on the code after the change guards fails: expected something else") && code == 1);
+        write(repo, "tests/hurt.t", "guards: fails-with fixed\n");
 
         // what must stay true breaks
         write(repo, "prod.txt", "v1\nfixed\nbroken\n");

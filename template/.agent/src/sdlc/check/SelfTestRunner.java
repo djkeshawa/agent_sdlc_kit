@@ -23,6 +23,8 @@ import sdlc.check.JUnitXml.Status;
  *   skip-without WORD   skipped where prod.txt lacks the word; where it holds it, the case does not exist
  *   skip-once WORD      where it holds the word, skipped in the first run in that checkout and passes in later ones; else passes
  *   pass-once           passes in the first run in that checkout, skipped in later ones
+ *   fails-with WORD     fails by assertion where prod.txt holds the word, else passes: a test the change breaks
+ *   breaks-once WORD    where it holds the word, fails in the first run in that checkout and passes in later ones; else passes
  * A name is reported as a script's string would give it: \' is a quote. A name with %i in it is
  * reported twice, with 1 and with 2 in its place (it.each, a parameterized method). A line
  * without ": " is not a case: it stands for the test's body. A name such as "check(int)[3]" is a
@@ -119,6 +121,8 @@ final class SelfTestRunner implements Runner {
                         case "skip", "skip-without" -> Status.SKIPPED;
                         case "skip-once" -> has && call == 1 ? Status.SKIPPED : Status.PASSED; // with the word: skipped only the first time
                         case "pass-once" -> call == 1 ? Status.PASSED : Status.SKIPPED;
+                        case "fails-with" -> has ? Status.FAILED : Status.PASSED;
+                        case "breaks-once" -> has && call == 1 ? Status.FAILED : Status.PASSED;
                         case "flaky" -> has || call > 1 ? Status.PASSED : Status.FAILED; // without the word: fails only the first time
                         case "needs" -> has ? Status.PASSED : Status.FAILED;
                         case "error-unless" -> has ? Status.PASSED : Status.ERRORED;

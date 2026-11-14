@@ -20,6 +20,10 @@ import sdlc.check.Runner.FileRun;
  *   old     the file as it was, on the code before the change (the base commit as it is); only
  *           for a file the change edits, as an added file has no earlier version
  *
+ * and, only when a test is gone, switched off or runs fewer times, a fourth way:
+ *
+ *   old tests  the file as it was, on the code after the change (see fourth)
+ *
  * A test that fails before and passes after is sensitive to the change; one that passes on both
  * sides does not test it. Which tests are new, which ran and are skipped now, and which are gone
  * is read from the reports of the old and the after run, not from the files' text: the test
@@ -42,6 +46,12 @@ final class Witness {
         EXISTING_PASSES_ON_BOTH,
         /** Fails after the change. */
         FAILS_AFTER,
+        /**
+         * An old test that passed before the change, fails or throws when its file as it was runs on
+         * the code after the change, and the change took out of the way: the file does not report
+         * it now, skips it, or runs its parameterized test fewer times (see fourth). In every run.
+         */
+        OLD_FAILS_AFTER,
         /** Nothing can be said: it could not run before the change, or threw something other than an assertion there, or the reports cannot tell two answers apart. */
         UNKNOWN,
         /** Runs disagreed with each other. */
@@ -367,7 +377,6 @@ final class Witness {
             else if (a.cases().isEmpty() && e.cases().isEmpty()) out.add(new Verdict(f, "", Kind.UNKNOWN, "the file ran after the change and reports no tests", runner.name()));
         }
         out.addAll(passingNew(passBoth, left, runner));
-        out.addAll(leftover(files, lineups, left, runner));
         // A test that was run alone before the change may have failed there for want of another changed test file,
         // not for want of the change. It is run alone after the change too, and must pass there as well.
         for (String f : new ArrayList<>(candidates.keySet())) {
@@ -385,14 +394,13 @@ final class Witness {
             restore(change, runner, head, files);
             restore(change, runner, base, files);
         }
-        if (candidates.isEmpty() && skips.isEmpty()) return out;
         List<String> sensitive = new ArrayList<>(candidates.keySet());
         List<String> switched = skips.stream().map(SkipGroup::file).distinct().toList();
         Set<String> again = new LinkedHashSet<>(sensitive);
         again.addAll(switched);
         Map<String, String> unstable = new LinkedHashMap<>(); // key -> why
         Set<SkipGroup> unsteady = new LinkedHashSet<>();
-        for (int i = 1; i < runs; i++) {
+        for (int i = 1; i < runs && !again.isEmpty(); i++) {
             Map<String, FileRun> a = runner.run(head.dir, new ArrayList<>(again), timeout);
             if (!sensitive.isEmpty()) {
                 List<String> together = sensitive.stream().filter(f -> !alone.contains(f)).toList();
@@ -413,9 +421,26 @@ final class Witness {
                 for (SkipGroup s : skips) if (off(runner, a.get(s.file()), o.get(s.file()), s) != s.off()) unsteady.add(s);
             }
         }
+        // the fourth run, where a test is gone, switched off or runs fewer times
+        Map<String, Set<String>> wanted = new LinkedHashMap<>();
+        for (String f : lineups.keySet()) {
+            Set<String> keys = new LinkedHashSet<>();
+            for (JUnitXml.Case c : left.get(f).lost()) keys.add(key(c));
+            for (Fewer x : lineups.get(f).fewer()) keys.addAll(runsOf(runner, earlier.get(f), x));
+            if (!keys.isEmpty()) wanted.put(f, keys);
+        }
+        for (SkipGroup s : skips) wanted.computeIfAbsent(s.file(), k -> new LinkedHashSet<>()).addAll(s.oldKeys()); // only YES and UNDECIDED are returned
+        Fourth fourth = fourth(change, runner, earlier, wanted, sides, runs, timeout);
+        out.addAll(leftover(files, lineups, left, earlier, fourth, runner));
         for (SkipGroup s : skips) {
-            if (unsteady.contains(s)) out.add(new Verdict(s.file(), s.name(), Kind.UNSTABLE, "skipped after the change in one run and not in another, or ran as the file was in one run and not in another", runner.name()));
-            else out.add(new Verdict(s.file(), s.name(), s.off() == Off.YES ? Kind.SKIPPED_NOW : Kind.UNKNOWN, s.detail(), runner.name()));
+            String f = s.file();
+            String tail = s.off() == Off.YES ? "the change switched it off" : "the change skips more of its runs than before";
+            if (unsteady.contains(s)) out.add(new Verdict(f, s.name(), Kind.UNSTABLE, "skipped after the change in one run and not in another, or ran as the file was in one run and not in another", runner.name()));
+            else if (fourth.broke(f, s.oldKeys())) out.add(new Verdict(f, s.name(), Kind.OLD_FAILS_AFTER, fourth.said(f, s.oldKeys()) + ", and " + tail
+                    + (s.detail().isBlank() || s.off() != Off.YES ? "" : " (" + s.detail() + ")"), runner.name()));
+            else if (s.off() == Off.YES) out.add(new Verdict(f, s.name(), Kind.SKIPPED_NOW, s.detail(), runner.name()));
+            else if (fourth.wavered(f, s.oldKeys())) out.add(new Verdict(f, s.name(), Kind.UNSTABLE, WAVERED, runner.name()));
+            else out.add(new Verdict(f, s.name(), Kind.UNKNOWN, s.detail() + fourth.note(f), runner.name()));
         }
         for (String f : sensitive) {
             for (String k : candidates.get(f)) {
@@ -425,8 +450,104 @@ final class Witness {
                 else out.add(new Verdict(f, name, Kind.SENSITIVE, "", runner.name()));
             }
         }
-        if (!alone.isEmpty()) restore(change, runner, base, files); // as the caller's other checks expect it
+        if (!alone.isEmpty() && runs > 1 && !sensitive.isEmpty()) restore(change, runner, base, files); // as the caller's other checks expect it
         return out;
+    }
+
+    /**
+     * What the fourth run said. first: each file's first run, null when it gave no result. broke:
+     * per file, the old tests that passed in the file as it was and failed or threw here in every
+     * run; wavered: those that did so in some runs only.
+     */
+    private record Fourth(Map<String, FileRun> first, Map<String, Set<String>> broke, Map<String, Set<String>> wavering) {
+        static final Fourth NONE = new Fourth(Map.of(), Map.of(), Map.of());
+
+        boolean broke(String file, java.util.Collection<String> keys) {
+            return keys.stream().anyMatch(broke.getOrDefault(file, Set.of())::contains);
+        }
+
+        boolean wavered(String file, java.util.Collection<String> keys) {
+            return keys.stream().anyMatch(wavering.getOrDefault(file, Set.of())::contains);
+        }
+
+        /** "passed before the change; as the test was, on the code after the change x fails: why", of those keys that broke. */
+        String said(String file, java.util.Collection<String> keys) {
+            List<String> which = keys.stream().filter(broke.getOrDefault(file, Set.of())::contains).toList();
+            FileRun run = first.get(file);
+            JUnitXml.Case one = run.cases().stream().filter(c -> key(c).equals(which.get(0))).findFirst().orElseThrow();
+            String names = which.size() == 1 ? one.name() + " " + describe(one) : shortList(which.stream().map(k -> k.substring(k.indexOf('#') + 1)).toList()) + " fail or throw";
+            return "passed before the change; as the test was, on the code after the change " + names;
+        }
+
+        /** For a verdict that could not be judged: why the fourth run of its file told nothing, or "". */
+        String note(String file) {
+            if (!first.containsKey(file)) return "";
+            FileRun run = first.get(file);
+            String problem = run == null ? "gave no result" : run.problem();
+            return problem == null ? "" : ". The file as it was, run on the code after the change, " + problem + ", so whether the change broke these tests is not known";
+        }
+    }
+
+    /** For a test whose old runs passed and failed on the code after the change in some runs only. */
+    private static final String WAVERED = "passed before the change, and as the test was, failed on the code after the change in one run and not in another";
+
+    /** The identities of the runs, in the file as it was, of a parameterized test that runs fewer times now. */
+    private static Set<String> runsOf(Runner runner, Earlier e, Fewer x) {
+        Set<String> out = new LinkedHashSet<>();
+        for (JUnitXml.Case o : e.cases()) if (x.key().equals(test(runner, o))) out.add(key(o));
+        return out;
+    }
+
+    /**
+     * The fourth run: the edited test files that have a test gone, switched off or run fewer times
+     * (wanted: per file, the identities of those old tests), as they were before the change, on
+     * the code after it. An old test that passed in the third run (its file as it was, on the code
+     * as it was) and fails or throws here was broken by the change, which then took it out of the
+     * way. Like a sensitive test it must do so in every run, on both sides: else it wavered.
+     *
+     * The checkout is the tree after the change with only these test files put back as the base
+     * has them (Sides.oldTests): production code, build files, fixtures, helpers and the other
+     * changed test files stay as the change has them. So a test renamed and not otherwise edited
+     * runs here exactly as its new name runs after the change, and cannot be accused for the
+     * rename. A test whose fixture the change rewrote or deleted may fail here because of that
+     * and not because of the production code; that is still a test that passed before, fails on
+     * what the change wrote, and was taken out, and the report says no more than that. A test
+     * file that does not compile or load here (the change renamed what it used), or gives no
+     * result, tells nothing: its tests stay as they were judged without it, and the report says
+     * why (note).
+     */
+    private static Fourth fourth(Change change, Runner runner, Map<String, Earlier> earlier, Map<String, Set<String>> wanted, Sides sides, int runs, int timeout) {
+        if (wanted.isEmpty()) return Fourth.NONE;
+        List<String> files = new ArrayList<>(wanted.keySet());
+        Map<String, FileRun> first = new LinkedHashMap<>();
+        Scratch mixed = sides.oldTests();
+        try {
+            mixed.write(change.base, files);
+            runner.forgetBuilt(mixed.dir, files);
+        } catch (java.io.IOException e) {
+            for (String f : files) first.put(f, FileRun.failed("could not be set up (" + e.getMessage() + ")"));
+            return new Fourth(first, Map.of(), Map.of());
+        }
+        Map<String, FileRun> ran = runner.run(mixed.dir, files, timeout);
+        for (String f : files) first.put(f, ran.get(f));
+        Map<String, Set<String>> broke = new LinkedHashMap<>(), wavering = new LinkedHashMap<>();
+        for (String f : files) {
+            FileRun was = new FileRun(earlier.get(f).cases(), null);
+            for (String k : wanted.get(f)) if (status(was, k) == Status.PASSED && failed(status(first.get(f), k))) broke.computeIfAbsent(f, x -> new LinkedHashSet<>()).add(k);
+        }
+        List<String> again = new ArrayList<>(broke.keySet());
+        for (int i = 1; i < runs && !again.isEmpty(); i++) {
+            Map<String, FileRun> o = runner.run(sides.old().dir, again, timeout), m = runner.run(mixed.dir, again, timeout);
+            for (String f : again) {
+                for (String k : broke.get(f)) if (status(o.get(f), k) != Status.PASSED || !failed(status(m.get(f), k))) wavering.computeIfAbsent(f, x -> new LinkedHashSet<>()).add(k);
+            }
+        }
+        for (Map.Entry<String, Set<String>> w : wavering.entrySet()) broke.get(w.getKey()).removeAll(w.getValue());
+        return new Fourth(first, broke, wavering);
+    }
+
+    private static boolean failed(Status s) {
+        return s == Status.FAILED || s == Status.ERRORED;
     }
 
     /** What a runner says when a file cannot be compiled; the Maven runner uses these words. */
@@ -614,14 +735,31 @@ final class Witness {
      *               tests that ran before do not run now: switched off under a new name, or
      *               removed while skipped tests were added. Otherwise it could not be judged: a
      *               rename looks exactly like a test deleted and another written.
+     *
+     * Before all of these, the fourth run (see fourth): a gone test that passed before the change
+     * and fails as it was on the code after it was broken by the change and taken out of the way,
+     * whatever the counts say. A gone test of which the runs disagree on that is unstable.
      */
-    private static List<Verdict> leftover(List<String> files, Map<String, Lineup> lineups, Map<String, Leftover> left, Runner runner) {
+    private static List<Verdict> leftover(List<String> files, Map<String, Lineup> lineups, Map<String, Leftover> left, Map<String, Earlier> earlier, Fourth fourth,
+            Runner runner) {
         List<Verdict> out = new ArrayList<>();
         String by = runner.name();
         for (String f : files) {
             Lineup l = lineups.get(f);
             if (l == null) continue;
             Leftover r = left.get(f);
+            Set<String> brokeTests = new LinkedHashSet<>(); // the tests (see group) of the gone cases the fourth run found broken
+            int judged = 0; // gone cases the fourth run said something of
+            for (JUnitXml.Case c : r.lost()) {
+                if (fourth.broke(f, List.of(key(c)))) {
+                    out.add(new Verdict(f, c.name(), Kind.OLD_FAILS_AFTER, fourth.said(f, List.of(key(c))) + ". The edited file does not report it now", by));
+                    brokeTests.add(group(runner, c));
+                    judged++;
+                } else if (fourth.wavered(f, List.of(key(c)))) {
+                    if (!r.fresh().isEmpty()) out.add(new Verdict(f, c.name(), Kind.UNSTABLE, WAVERED, by)); // with no new test it was removed all the same
+                    judged++;
+                }
+            }
             int n = l.regrouped().size();
             if (n > 0) out.add(new Verdict(f, "", Kind.RENAMED, n + (n == 1 ? " test is" : " tests are") + " reported under another group, with "
                     + (n == 1 ? "its own title unchanged, and counts as the same test" : "their own titles unchanged, and count as the same tests") + ": " + shortList(l.regrouped()), by));
@@ -630,7 +768,9 @@ final class Witness {
             List<String> gone = units(runner, r.lost()), fresh = units(runner, r.fresh());
             int g = gone.size(), nf = fresh.size();
             if (g > 0 && nf == 0) {
-                for (String t : gone) out.add(new Verdict(f, t, Kind.REMOVED, "", by));
+                // each removed; one the fourth run found broken is said there, with more
+                List<JUnitXml.Case> rest = r.lost().stream().filter(c -> !brokeTests.contains(group(runner, c))).toList();
+                for (String t : units(runner, rest)) out.add(new Verdict(f, t, Kind.REMOVED, "", by));
             } else if (g > nf) {
                 out.add(new Verdict(f, "", Kind.REMOVED, had(gone, fresh) + ": at least " + (g - nf) + (g - nf == 1 ? " was" : " were") + " removed, and which cannot be told", by, g - nf));
             } else if (g > 0) {
@@ -639,11 +779,18 @@ final class Witness {
                 if (ran > runs) out.add(new Verdict(f, "", Kind.SKIPPED_NOW, had(gone, fresh) + ". " + ran + " of the tests it does not report now ran before the change, and " + runs
                         + " of the new ones run: at least " + (ran - runs) + (ran - runs == 1 ? " test that ran does" : " tests that ran do")
                         + " not run now, switched off under a new name or removed while skipped tests were added", by, ran - runs));
-                else out.add(new Verdict(f, "", Kind.UNKNOWN, had(gone, fresh) + ". The reports cannot tell a test renamed from a test deleted and another written", by));
+                else if (judged < r.lost().size()) out.add(new Verdict(f, "", Kind.UNKNOWN, had(gone, fresh)
+                        + ". The reports cannot tell a test renamed from a test deleted and another written" + fourth.note(f), by));
             }
-            // a parameterized test that still runs is not removed; that fewer of its runs run cannot be judged either way
-            for (Fewer x : l.fewer()) out.add(new Verdict(f, x.test(), Kind.UNKNOWN, "ran " + x.before() + " times in the file as it was and runs " + x.after()
-                    + " times now. The report names its runs only by their place, so it cannot be told which arguments were taken out", by));
+            // a parameterized test that still runs is not removed; that fewer of its runs run cannot be judged either way, unless the fourth run tells
+            for (Fewer x : l.fewer()) {
+                Set<String> runs = runsOf(runner, earlier.get(f), x);
+                if (fourth.broke(f, runs)) out.add(new Verdict(f, x.test(), Kind.OLD_FAILS_AFTER, fourth.said(f, runs) + ", and the change runs it fewer times ("
+                        + x.before() + " before, " + x.after() + " now)", by));
+                else if (fourth.wavered(f, runs)) out.add(new Verdict(f, x.test(), Kind.UNSTABLE, WAVERED, by));
+                else out.add(new Verdict(f, x.test(), Kind.UNKNOWN, "ran " + x.before() + " times in the file as it was and runs " + x.after()
+                        + " times now. The report names its runs only by their place, so it cannot be told which arguments were taken out" + fourth.note(f), by));
+            }
         }
         return out;
     }

@@ -49,6 +49,8 @@ public final class Check {
             out.println("  none that this version can run" + (w.unsupported().isEmpty() ? "." : " (see Not checked)."));
         } else {
             failed |= section(out, w, Kind.FAILS_AFTER, n -> n + (n == 1 ? " fails" : " fail") + " after the change", true);
+            failed |= section(out, w, Kind.OLD_FAILS_AFTER, n -> n + (n == 1 ? " test passed before the change and fails" : " tests passed before the change and fail")
+                    + " on the code after it as the test was, and the change took " + (n == 1 ? "it" : "them") + " out of the way: removed, renamed, switched off or run fewer times", true);
             section(out, w, Kind.SENSITIVE, n -> n + (n == 1 ? " fails" : " fail") + " before the change and " + (n == 1 ? "passes" : "pass") + " after it"
                     + (w.runs() > 1 ? ", in " + w.runs() + " of " + w.runs() + " runs" : ""), false);
             failed |= section(out, w, Kind.PASSES_ON_BOTH, n -> n + (n == 1 ? " new test passes" : " new tests pass") + " before and after, so "
@@ -89,19 +91,46 @@ public final class Check {
     }
 
     /**
-     * For the self test: makes the three checkouts of a change and closes them. Returns their
+     * For the self test: makes the four checkouts of a change and closes them. Returns their
      * folders, which must all be gone now, or an empty list when one of them was not there while
      * open.
      */
     public static List<java.nio.file.Path> checkoutsAfterClose(Change change) {
         List<java.nio.file.Path> made = new ArrayList<>();
         try (Sides sides = new Sides(change, List.of(new SelfTestRunner()))) {
-            for (Scratch s : List.of(sides.head(), sides.base(), sides.old())) {
+            for (Scratch s : List.of(sides.head(), sides.base(), sides.old(), sides.oldTests())) {
                 if (!java.nio.file.Files.isDirectory(s.dir)) return List.of();
                 made.add(s.dir);
             }
         }
         return made;
+    }
+
+    /**
+     * For the self test: runs the witness of a change once with the stand-in runner, and says
+     * whether it made the fourth checkout ("made" or "not made") and whether the checkout after
+     * the change then still holds exactly the files of the change's tree ("head intact" or "head
+     * changed"; what the stand-in runner builds, .built/, is not part of the tree).
+     */
+    public static String fourthCheckout(Change change) throws java.io.IOException {
+        List<Runner> runners = List.of(new SelfTestRunner());
+        try (Sides sides = new Sides(change, runners); Scratch fresh = Scratch.of(change.head, "compare")) {
+            Witness.run(change, runners, 1, 900, sides);
+            boolean intact = files(sides.head().dir).equals(files(fresh.dir));
+            return (sides.madeOldTests() ? "made" : "not made") + ", " + (intact ? "head intact" : "head changed");
+        }
+    }
+
+    /** Every file under a folder, outside .built/, by its path, with its bytes as text. */
+    private static Map<String, String> files(java.nio.file.Path dir) throws java.io.IOException {
+        Map<String, String> out = new java.util.TreeMap<>();
+        try (java.util.stream.Stream<java.nio.file.Path> s = java.nio.file.Files.walk(dir)) {
+            for (java.nio.file.Path p : s.filter(java.nio.file.Files::isRegularFile).toList()) {
+                String rel = dir.relativize(p).toString().replace('\\', '/');
+                if (!rel.startsWith(".built/")) out.put(rel, java.util.HexFormat.of().formatHex(java.nio.file.Files.readAllBytes(p)));
+            }
+        }
+        return out;
     }
 
     private static List<Runner> runners(Map<String, String> opt) {
@@ -121,7 +150,7 @@ public final class Check {
         List<String> commits = log.out().isBlank() ? List.of() : List.of(log.out().strip().split("\\R"));
         out.println("sdlc check --since " + opt.get("since") + ": " + commits.size() + " commit" + (commits.size() == 1 ? "" : "s") + " on this branch since " + window
                 + (commits.size() > max ? ", the newest " + max + " checked (--max N for more)" : ""));
-        long sensitive = 0, both = 0, unknown = 0, failing = 0, untested = 0, problems = 0, switchedOff = 0, removed = 0;
+        long sensitive = 0, both = 0, unknown = 0, failing = 0, untested = 0, problems = 0, switchedOff = 0, removed = 0, takenAway = 0;
         java.util.Set<Kind> least = java.util.EnumSet.noneOf(Kind.class); // kinds whose total is a least number
         int checked = 0;
         for (String line : commits) {
@@ -142,6 +171,7 @@ public final class Check {
                 part(parts, w, Kind.SENSITIVE, "fail before and pass after");
                 part(parts, w, Kind.PASSES_ON_BOTH, "new, pass on both sides");
                 part(parts, w, Kind.FAILS_AFTER, "fail after");
+                part(parts, w, Kind.OLD_FAILS_AFTER, "passed before, fail as they were after, taken out");
                 part(parts, w, Kind.SKIPPED_NOW, "ran before, skipped after");
                 part(parts, w, Kind.REMOVED, "removed");
                 part(parts, w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE), "could not be judged");
@@ -152,6 +182,7 @@ public final class Check {
                     if (v.kind() == Kind.PASSES_ON_BOTH) out.println("        does not test the change: " + which);
                     else if (v.kind() == Kind.SKIPPED_NOW) out.println("        ran before, skipped after: " + which);
                     else if (v.kind() == Kind.REMOVED) out.println("        removed: " + which);
+                    else if (v.kind() == Kind.OLD_FAILS_AFTER) out.println("        passed before, fails as it was after, taken out: " + which);
                 }
                 for (Kind k : List.of(Kind.PASSES_ON_BOTH, Kind.SKIPPED_NOW, Kind.REMOVED)) if (w.atLeast(k)) least.add(k);
                 sensitive += w.count(Kind.SENSITIVE);
@@ -160,6 +191,7 @@ public final class Check {
                 unknown += w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE);
                 switchedOff += w.count(Kind.SKIPPED_NOW);
                 removed += w.count(Kind.REMOVED);
+                takenAway += w.count(Kind.OLD_FAILS_AFTER);
             }
             for (Finding x : findings) {
                 if (x.level() != Finding.Level.PROBLEM) continue;
@@ -177,6 +209,8 @@ public final class Check {
             out.println("  " + unknown + " could not be judged; " + failing + " fail after their commit");
             out.println("  " + (least.contains(Kind.SKIPPED_NOW) ? "at least " : "") + switchedOff + (switchedOff == 1 ? " test ran" : " tests ran") + " before its commit and "
                     + (switchedOff == 1 ? "is" : "are") + " skipped after it; " + (least.contains(Kind.REMOVED) ? "at least " : "") + removed + (removed == 1 ? " test was" : " tests were") + " removed");
+            out.println("  " + takenAway + (takenAway == 1 ? " test passed before its commit, fails on it as it was, and was" : " tests passed before their commit, fail on it as they were, and were")
+                    + " taken out of the way");
             out.println("  " + untested + " commit" + (untested == 1 ? "" : "s") + " add or edit no test this version can run");
             out.println("  " + problems + " integrity problem" + (problems == 1 ? "" : "s"));
         }
@@ -187,8 +221,9 @@ public final class Check {
      * --stop-hook: for an agent's Stop hook (Claude Code: exit code 2 keeps the agent working, and
      * what is on stderr is the reason it is given). It blocks on what the agent can fix and is
      * certain: a changed test that fails, a new test that passes with or without the change, a test
-     * that ran before the change and is skipped after it, tests removed, a test switched off. Never
-     * on "could not be judged", nor on a note. Says nothing when all is well.
+     * that ran before the change and is skipped after it, tests removed, a test switched off, an
+     * old test that fails on the change as it was and was taken out of the way. Never on "could
+     * not be judged", nor on a note. Says nothing when all is well.
      *
      * The host says on stdin whether the agent is already continuing because of a stop hook
      * (stop_hook_active). Then the result is printed and the agent is let go: a second block on
@@ -211,6 +246,7 @@ public final class Check {
             String file = v.file() + " (" + v.detail() + ")";
             boolean whole = v.name().isEmpty();
             if (v.kind() == Kind.FAILS_AFTER) reasons.add("fails: " + test + (v.detail().isBlank() ? "" : " (" + v.detail() + ")"));
+            else if (v.kind() == Kind.OLD_FAILS_AFTER) reasons.add("passed before your change, fails on your code as it was, and your change took it out of the way: " + test + " (" + v.detail() + ")");
             else if (v.kind() == Kind.PASSES_ON_BOTH) reasons.add(whole ? "new tests pass with and without your change, so they do not test it: " + file
                     : "passes with and without your change, so it does not test it: " + test);
             else if (v.kind() == Kind.SKIPPED_NOW) reasons.add(whole ? "tests that ran before your change do not run now: " + file : "ran before your change and is skipped now: " + test);

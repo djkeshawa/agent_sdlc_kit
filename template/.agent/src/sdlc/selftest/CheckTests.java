@@ -213,6 +213,7 @@ final class CheckTests {
         write(repo, "checks/titles.vitest.t", TITLES);
         write(repo, "checks/once.t", ONCE);
         write(repo, "checks/nested.t", NESTED);
+        write(repo, "checks/broken.t", BROKEN);
         write(repo, ".gitignore", "ignored/\n");
         git(repo, "init", "-q", "-b", "main");
         commit(repo, "base");
@@ -387,7 +388,17 @@ final class CheckTests {
         commit(repo, "a skipped test");
         write(repo, "checks/quiet.t", "asleep: skip\n  still later\n");
         commit(repo, "an edit of a skipped test");
+        String later = MENDED.replace("holds: pass", "holds: fails-with later");
+        write(repo, "checks/broken.t", later);
+        commit(repo, "a test that a later word breaks");
+        write(repo, "prod.txt", "v1\nfixed\nmore\nlater\n");
+        write(repo, "checks/broken.t", later.replace("holds: fails-with later", "kept up: pass"));
+        commit(repo, "a test broken and taken out of the way");
         String history = report(Map.of("selftest-runner", "true", "runs", "1", "since", "1d"));
+        check("check: --since names a test its commit broke and took out of the way",
+                history.contains("a test broken and taken out of the way\n    tests: 1 passed before, fail as they were after, taken out; 1 could not be judged\n"
+                        + "        passed before, fails as it was after, taken out: checks/broken.t  holds\n")
+                && history.contains("  1 test passed before its commit, fails on it as it was, and was taken out of the way\n"));
         check("check: --since says of a commit whose tests were only skipped before and after that they were",
                 history.contains("an edit of a skipped test\n    tests: only tests that were already there, skipped as before\n"));
         check("check: --since replays each recent commit", history.contains("commits on this branch since 1 days ago") && history.contains("  the fix")
@@ -397,7 +408,7 @@ final class CheckTests {
                 && history.contains("ran before, skipped after: checks/judged.t  turned off") && history.contains("removed: checks/judged.t  goes too")
                 && history.contains("1 test ran before its commit and is skipped after it; 1 test was removed"));
         check("check: --since wants a time span", Asserts.throwsUsage(() -> Check.run(Map.of("since", "true"))));
-        git(repo, "reset", "-q", "--hard", "HEAD~5");
+        git(repo, "reset", "-q", "--hard", "HEAD~7");
         write(repo, "prod.txt", "v1\nfixed\nmore\n");
         branch = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: commits on the branch and uncommitted edits are one change", branch.contains("2 files changed against main") && branch.contains("1 fails before the change and passes after it"));
@@ -528,6 +539,7 @@ final class CheckTests {
 
         renamedOrNot(repo);
         switchedOff(repo);
+        oldTestsOnTheChange(repo);
 
         // a test that went to another changed file has moved
         write(repo, "checks/judged.t", JUDGED.replace("goes too: pass\n", ""));
@@ -559,9 +571,9 @@ final class CheckTests {
         write(repo, "checks/era.t", ERA);
         write(repo, "prod.txt", "v1\nfixed\n");
 
-        // the three checkouts are made outside the repository and removed when done
+        // the four checkouts are made outside the repository and removed when done
         java.util.List<Path> made = Check.checkoutsAfterClose(sdlc.check.Change.of(null));
-        check("check: the checkouts after, before and as it was are all removed", made.size() == 3 && made.stream().noneMatch(Files::exists));
+        check("check: the checkouts after, before, as it was and of the old tests are all removed", made.size() == 4 && made.stream().noneMatch(Files::exists));
     }
 
     /**
@@ -730,6 +742,95 @@ final class CheckTests {
         check("check: a test skipped after the change, where the file as it was gave no result, is listed as skipped",
                 unknown.contains("1 is skipped\n      checks/legacy.t  [self test]\n        held\n") && !unknown.contains("skipped now") && code == 0);
         write(repo, "checks/legacy.t", LEGACY);
+    }
+
+    /**
+     * A test file of the base whose tests pass on the base's code and fail on the code of the fix
+     * (holds, fragile, the first run of rows), or fail there in the first run only (wobbly).
+     */
+    private static final String BROKEN = "holds: fails-with fixed\nfragile: fails-with fixed\nsteady: pass\nrows(int)[1]: fails-with fixed\nrows(int)[2]: pass\nwobbly: breaks-once fixed\n";
+
+    /** BROKEN as a change that keeps every test and makes each pass on its code: edited tests, nothing gone. */
+    private static final String MENDED = "holds: pass\nfragile: pass\nsteady: pass\nrows(int)[1]: pass\nrows(int)[2]: pass\nwobbly: pass\n";
+
+    /**
+     * The fourth run: an edited test file as it was, on the code after the change, only where a
+     * test is gone, switched off or runs fewer times. An old test that passed before the change and
+     * fails there was broken by the change and taken out of the way.
+     */
+    private static void oldTestsOnTheChange(Path repo) throws IOException {
+        write(repo, "checks/judged.t", JUDGED);
+        // every old test kept under its name, each edited to pass: the old versions fail on the change, and nothing is said of it
+        write(repo, "checks/broken.t", MENDED);
+        String mended = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: old tests kept under their names are not run as they were, and their old versions are not reported",
+                code == 0 && !mended.contains("out of the way") && mended.contains("7 tests that were already in the edited files pass before and after (not counted)"));
+        check("check: the fourth run is not made when no test is gone, switched off or run fewer times", Check.fourthCheckout(sdlc.check.Change.of(null)).equals("not made, head intact"));
+
+        // a test the change breaks, renamed to one that passes: the old one as it was fails on the change
+        write(repo, "checks/broken.t", MENDED.replace("holds: pass", "kept up: pass"));
+        String renamed = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("check: a gone test that passed before and fails as it was on the change was taken out of the way: the check fails, in every run",
+                renamed.contains("1 test passed before the change and fails on the code after it as the test was, and the change took it out of the way: "
+                        + "removed, renamed, switched off or run fewer times\n      checks/broken.t  [self test]\n        holds: passed before the change; as the test was, "
+                        + "on the code after the change holds fails: expected something else. The edited file does not report it now\n") && code == 1);
+        check("check: the old tests of that file that are still there under their names are not reported, though their old versions fail too",
+                !renamed.contains("fragile") && !renamed.contains("rows(int)") && !renamed.contains("wobbly") && !renamed.contains("The reports cannot tell"));
+        check("check: the fourth run is made then, in a checkout of its own, and the checkout after the change is left as the change has it",
+                Check.fourthCheckout(sdlc.check.Change.of(null)).equals("made, head intact"));
+        java.io.InputStream in = System.in;
+        java.io.PrintStream err = System.err;
+        ByteArrayOutputStream reasons = new ByteArrayOutputStream();
+        try {
+            System.setErr(new PrintStream(reasons, true, StandardCharsets.UTF_8));
+            System.setIn(new java.io.ByteArrayInputStream("{}".getBytes(StandardCharsets.UTF_8)));
+            int blocked = Check.run(Map.of("selftest-runner", "true", "stop-hook", "true"));
+            check("check: the stop hook blocks on it", blocked == 2
+                    && reasons.toString(StandardCharsets.UTF_8).contains("passed before your change, fails on your code as it was, and your change took it out of the way: checks/broken.t » holds"));
+        } finally {
+            System.setIn(in);
+            System.setErr(err);
+        }
+
+        // deleted: the same, said once, not also as removed
+        write(repo, "checks/broken.t", MENDED.replace("holds: pass\n", ""));
+        String deleted = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a deleted test the change breaks is said to be taken out of the way, and not also listed as removed",
+                deleted.contains("        holds: passed before the change; as the test was, on the code after the change holds fails") && !deleted.contains("removed: the edited file") && code == 1);
+
+        // fails as it was on the change in one run and not in another: unstable
+        write(repo, "checks/broken.t", MENDED.replace("wobbly: pass", "wobbled: pass"));
+        String wobbly = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("check: a gone test that fails as it was on the change in one run and not in another is unstable, not taken out",
+                wobbly.contains("1 gave different results from run to run\n      checks/broken.t  [self test]\n        wobbly: passed before the change, and as the test was, "
+                        + "failed on the code after the change in one run and not in another\n") && !wobbly.contains("out of the way") && code == 0);
+
+        // a run of a parameterized test the change breaks, switched off
+        write(repo, "checks/broken.t", MENDED.replace("rows(int)[1]: pass", "rows(int)[1]: skip"));
+        String rowOff = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("check: a switched-off run of a parameterized test that fails as it was on the change was taken out of the way",
+                rowOff.contains("      checks/broken.t  [self test]\n        rows(int): passed before the change; as the test was, on the code after the change rows(int)[1] fails: "
+                        + "expected something else, and the change switched it off (1 of 2 are skipped after the change; 2 of 2 ran before it)\n")
+                && !rowOff.contains("skipped now") && code == 1);
+
+        // and one taken out of the arguments: the test runs fewer times
+        write(repo, "checks/broken.t", MENDED.replace("rows(int)[2]: pass\n", ""));
+        String rowGone = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a parameterized test that runs fewer times, one of whose old runs fails as it was on the change, was taken out of the way",
+                rowGone.contains("        rows(int): passed before the change; as the test was, on the code after the change rows(int)[1] fails: expected something else, "
+                        + "and the change runs it fewer times (2 before, 1 now)\n") && code == 1);
+        write(repo, "checks/broken.t", BROKEN);
+
+        // the file as it was does not compile on the change (it needs v1, which the change takes out): nothing is known
+        write(repo, "prod.txt", "fixed\n");
+        write(repo, "checks/era.t", "era: pass\nenduring: pass\n");
+        String era = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a gone test whose old file does not compile on the change could not be judged, and the report says why",
+                era.contains("        the file had 1 test that it does not report now (lasting), and reports 1 that it did not have (enduring). The reports cannot tell a test renamed "
+                        + "from a test deleted and another written. The file as it was, run on the code after the change, does not compile, so whether the change broke these tests is not known\n")
+                && !era.contains("out of the way") && code == 0);
+        write(repo, "checks/era.t", ERA);
+        write(repo, "prod.txt", "v1\nfixed\n");
     }
 
     /** A test file of the base, named as Vitest names its tests: two tests whose titles differ only by "[3]". */

@@ -166,14 +166,14 @@ final class MandateVerdict {
             // 5. the witness
             Witness.Result w = Witness.run(change, runners, runs, timeout, sides);
             long sensitive = w.count(Kind.SENSITIVE), both = w.count(Kind.PASSES_ON_BOTH), failing = w.count(Kind.FAILS_AFTER);
-            long switchedOff = w.count(Kind.SKIPPED_NOW), removed = w.count(Kind.REMOVED);
+            long switchedOff = w.count(Kind.SKIPPED_NOW), removed = w.count(Kind.REMOVED) + w.count(Kind.OLD_FAILS_AFTER);
             long preApproved = w.verdicts().stream().filter(v -> v.kind() == Kind.SENSITIVE && m.locked().containsKey(v.file())).count();
             detail = new ArrayList<>();
             for (Witness.Verdict v : w.verdicts()) {
                 // a verdict about a file (no name) says in its detail which tests it means
                 boolean whole = v.name().isEmpty();
                 if (v.kind() == Kind.PASSES_ON_BOTH) detail.add(v.file() + (whole ? ": " + v.detail() : "  " + v.name() + ": passes before and after, so it does not test the change"));
-                else if (v.kind() == Kind.FAILS_AFTER) detail.add(v.file() + (whole ? "" : "  " + v.name()) + ": " + v.detail());
+                else if (v.kind() == Kind.FAILS_AFTER || v.kind() == Kind.OLD_FAILS_AFTER) detail.add(v.file() + (whole ? "" : "  " + v.name()) + ": " + v.detail());
                 else if (v.kind() == Kind.SKIPPED_NOW) detail.add(v.file() + (whole ? ": " + v.detail()
                         : "  " + v.name() + ": ran before the change and is skipped now" + (v.detail().isBlank() ? "" : " (" + v.detail() + ")")));
                 else if (v.kind() == Kind.REMOVED) detail.add(v.file() + (whole ? ": " + v.detail() : "  " + v.name() + ": the file had it before the change, and it is gone"));
