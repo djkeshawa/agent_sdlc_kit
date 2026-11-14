@@ -66,8 +66,8 @@ public final class Check {
             long old = w.count(Kind.EXISTING_PASSES_ON_BOTH);
             if (old > 0) out.println("  " + old + " test" + (old == 1 ? "" : "s") + " that " + (old == 1 ? "was" : "were") + " already in the edited files " + (old == 1 ? "passes" : "pass") + " before and after (not counted)");
             long off = w.count(Kind.EXISTING_SKIPPED);
-            if (off > 0) out.println("  " + off + (off == 1 ? " test is skipped as before the change: it was skipped before it too, or its test skips"
-                    : " tests are skipped as before the change: each was skipped before it too, or its test skips") + " as many of its cases as before, or fewer (not counted)");
+            if (off > 0) out.println("  " + off + (off == 1 ? " test is skipped as before the change: the file skipped a test of its name before it too"
+                    : " tests are skipped as before the change: the file skipped tests of their names before it too") + " (not counted)");
             if (w.count(Kind.SENSITIVE) > 0) {
                 out.println("  A test that fails before and passes after is sensitive to the change. That is not evidence that the change is correct.");
             }

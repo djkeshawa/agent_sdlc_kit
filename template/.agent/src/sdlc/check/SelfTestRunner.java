@@ -25,6 +25,7 @@ import sdlc.check.JUnitXml.Status;
  *   pass-once           passes in the first run in that checkout, skipped in later ones
  *   fails-with WORD     fails by assertion where prod.txt holds the word, else passes: a test the change breaks
  *   breaks-once WORD    where it holds the word, fails in the first run in that checkout and passes in later ones; else passes
+ *   skip-later          not reported in the first run in that checkout; skipped in later ones
  * A name is reported as a script's string would give it: \' is a quote. A name with %i in it is
  * reported twice, with 1 and with 2 in its place (it.each, a parameterized method). A line
  * without ": " is not a case: it stands for the test's body. A name such as "check(int)[3]" is a
@@ -115,10 +116,11 @@ final class SelfTestRunner implements Runner {
                     String[] how = line.substring(line.indexOf(": ") + 2).trim().split(" ");
                     boolean has = how.length > 1 && prod.contains(how[1]);
                     if (how[0].equals("skip-without") && has) continue; // a test declared only where the word is missing
+                    if (how[0].equals("skip-later") && call == 1) continue; // a case a provider gives only from the second run on
                     Status s = switch (how[0]) {
                         case "pass" -> Status.PASSED;
                         case "fail" -> Status.FAILED;
-                        case "skip", "skip-without" -> Status.SKIPPED;
+                        case "skip", "skip-without", "skip-later" -> Status.SKIPPED;
                         case "skip-once" -> has && call == 1 ? Status.SKIPPED : Status.PASSED; // with the word: skipped only the first time
                         case "pass-once" -> call == 1 ? Status.PASSED : Status.SKIPPED;
                         case "fails-with" -> has ? Status.FAILED : Status.PASSED;
