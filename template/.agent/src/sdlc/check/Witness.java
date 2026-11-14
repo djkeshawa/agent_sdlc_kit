@@ -679,9 +679,10 @@ final class Witness {
      *      switched off. A case skipped on both sides under one name is skipped as before; a case
      *      skipped under a new name, in a file none of whose tests ran, is a skipped test (listed).
      *   2. Fewer cases run and more are skipped (r1 < r0, s1 > s0), whatever the names: at least
-     *      min(r0 - r1, s1 - s0) tests that ran do not run now; could not be judged where the
-     *      report as it was holds a failure, as a case that failed or threw need not be a test that
-     *      ran (see listing). Sound under any naming and whatever a skipped case or an empty
+     *      min(r0 - r1, s1 - s0) tests that ran do not run now; could not be judged where a
+     *      report holds a failure, as a case that failed or threw need not be a test that ran, and
+     *      a failure after the change can skip the tests after it (see listing). Sound under any
+     *      naming, and whatever a skipped case or an empty
      *      report hides: the counts are of the whole file; r0 counts tests that ran (each case that
      *      passed is one), r1 is never fewer than the tests that run now (a hidden test does not
      *      run), so at least r0 - r1 tests that ran do not run now, and the least said is never
@@ -712,8 +713,8 @@ final class Witness {
         String counts = counts(n);
         if (n.r1() < n.r0() && n.s1() > n.s0()) {
             long least = Math.min(n.r0() - n.r1(), n.s1() - n.s0());
-            // a case that failed or threw as it was, under any name, need not be a test that ran (see listing)
-            if (n.listing().failedOld() != null) answer.add(new Verdict(f, "", Kind.UNKNOWN, counts + skippedNow(n) + ". But " + n.listing().failedOld()
+            // a case that failed or threw, under any name, need not be a test that ran, nor say why tests after it are skipped (see listing)
+            if (n.listing().failures() != null) answer.add(new Verdict(f, "", Kind.UNKNOWN, counts + skippedNow(n) + ". But " + n.listing().failures()
                     + ": whether a test that ran does not run now is not known", by, (int) least));
             else answer.add(new Verdict(f, "", Kind.SKIPPED_NOW, fewerRun(n, least, 0), by, (int) least));
             return new Skips(answer, listed);
@@ -1073,11 +1074,13 @@ final class Witness {
      *   it hid may come out under a new name. A test hidden after the change does not pass, and a
      *   case after the change that stands for many tests or none is one of the X.
      *   Tests that ran and do not run now, min(r0 - r1, s1 - s0) (see skips, rule 2): only that
-     *   the report as it was holds no failure (failedOld), so that r0 counts tests that ran. A test
-     *   hidden anywhere does not run, so r1 is never fewer than the tests that run now, and
-     *   skipped cases only make the least smaller. So a switch-off stays a definite verdict where
-     *   the change skips a class, a factory or a template as one case, and is said so, by count;
-     *   what it may hide besides is not counted.
+     *   neither report holds a failure (failures). As it was, so that r0 counts tests that ran;
+     *   after the change, as a failure there can make the build skip the tests after it
+     *   (Surefire's skipAfterFailureCount), which is then no switch-off, and the failure fails the
+     *   check anyway. A test hidden anywhere does not run, so r1 is never fewer than the tests
+     *   that run now, and skipped cases and an empty report only make the least smaller. So a
+     *   switch-off stays a definite verdict where the change skips a class, a factory or a
+     *   template as one case, and is said so, by count; what it may hide besides is not counted.
      *   Old tests taken out of the way, B - M (see broken): only that no report after the change
      *   holds a failure. B counts old tests by cases that passed as the file was, one test each;
      *   M counts cases that pass after the change, and a hidden test does not pass, so it is no
@@ -1108,9 +1111,11 @@ final class Witness {
             return say(all, !before.isEmpty() && !after.isEmpty());
         }
 
-        /** Why the report as it was may not count tests that ran: it holds a failure. Null when it does not. */
-        String failedOld() {
-            return failedBefore ? say(List.of("the file as it was reported failures" + FAILURES), false) : null;
+        /** Why the reports may not count the tests that ran and that are skipped: one holds a failure. Null when neither does. */
+        String failures() {
+            if (!failedBefore && !failedAfter) return null;
+            return say(List.of((failedBefore && failedAfter ? "the file as it was and after the change reported failures" : failedBefore ? "the file as it was reported failures"
+                    : "after the change the file reports failures") + FAILURES), failedBefore && failedAfter);
         }
 
         private static String say(List<String> why, boolean both) {

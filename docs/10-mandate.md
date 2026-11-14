@@ -98,7 +98,7 @@ skipped case for any number of tests (an ignored class, a disabled factory), and
 test at all for a class stopped in its set-up. So tests removed are counted only where both
 reports hold no failure, report a test, and skip each case as often under its name as the other;
 new tests only where the report as it was does so; tests that ran and are skipped now only where
-the report as it was holds no failure; and old tests taken out of the way only where no report
+neither report holds a failure; and old tests taken out of the way only where no report
 after the change holds one. What only such a report would prove is `unknown`, and so is an old
 test the run of its file as it was, on the code after the change, could not judge (it did not
 compile, load or report it). Where the counts cannot tell two stories apart, one of them fine (a test renamed, or

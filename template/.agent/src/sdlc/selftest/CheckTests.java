@@ -1223,6 +1223,17 @@ final class CheckTests {
                 && failedBefore.contains("whether tests were removed is not known") && !failedBefore.contains("is skipped now\n") && !failedBefore.contains("was removed") && code == 0);
         write(repo, "checks/failing.t", FAILING);
 
+        // after the change a test fails and another is skipped: a failure can make the build skip the tests after it (Surefire's skipAfterFailureCount),
+        // so the skip is not said to be a switch-off; the failure fails the check
+        write(repo, "checks/off.t", OFF.replace("target: pass", "target: skip").replace("params(int)[1]: pass", "params(int)[1]: fail"));
+        String failedAfter = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a skip beside a failure after the change could not be judged as a switch-off, and the failure fails the check",
+                failedAfter.contains("        the file runs 2 of its tests where it ran 3 before the change, and skips 3 where it skipped 2 (skipped now under a name that ran before: "
+                        + "target). But after the change the file reports failures (a failure outside a test's body, in its set-up, tear-down or loading, may be reported in place of "
+                        + "the file's tests or as a case of its own), so that report may not list every test: whether a test that ran does not run now is not known\n")
+                && failedAfter.contains("1 fails after the change") && !failedAfter.contains("ran before the change and is skipped now") && code == 1);
+        write(repo, "checks/off.t", OFF);
+
         // after the change a failure stands in place of the tests: it fails the check, and the counts of that report are not said on top of it
         write(repo, "checks/side/both.t", "initializationError: error-unless never\n");
         String standIn = report(Map.of("selftest-runner", "true", "runs", "1"));
