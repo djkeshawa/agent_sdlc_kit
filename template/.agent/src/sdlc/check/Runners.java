@@ -241,6 +241,16 @@ public final class Runners {
     static final class Vitest implements Runner {
         private static final Pattern TEST_FILE = Pattern.compile(".*\\.(test|spec)\\.[cm]?[jt]sx?");
         private static final Pattern DID_NOT_LOAD = Pattern.compile("SyntaxError|Failed to load|Failed to resolve import|Cannot find module|Transform failed|Failed to parse source");
+        /** True when vitest's output reports a load failure within a few lines of this file's name. */
+        private static boolean didNotLoad(String output, String file) {
+            String[] lines = output.split("\\R");
+            for (int i = 0; i < lines.length; i++) {
+                if (!lines[i].contains(file)) continue;
+                for (int k = i; k < Math.min(lines.length, i + 6); k++) if (DID_NOT_LOAD.matcher(lines[k]).find()) return true;
+            }
+            return false;
+        }
+
         private static final Pattern SUPPORT_DIR = Pattern.compile("(^|.*/)(__tests__|__mocks__|__fixtures__|__snapshots__|fixtures|tests?)/.*");
 
         @Override
@@ -324,7 +334,8 @@ public final class Runners {
                         else if (p.code() == 127) out.put(f, FileRun.failed("node could not be started (is Node.js on the PATH?)"));
                         // vitest gave this file no result. That is broken code only when vitest says it could not load the file;
                         // a worker that did not start, or a file its configuration leaves out, says nothing about the code.
-                        else if (DID_NOT_LOAD.matcher(p.out() + "\n" + p.err()).find()) out.put(f, FileRun.broken("did not load (vitest exit " + p.code() + ": " + tail(p.out() + "\n" + p.err(), 3).replaceAll("\\s+", " ") + ")"));
+                        // (and says so about this file: another file's syntax error says nothing about this one)
+                        else if (didNotLoad(p.out() + "\n" + p.err(), name)) out.put(f, FileRun.broken("did not load (vitest exit " + p.code() + ": " + tail(p.out() + "\n" + p.err(), 3).replaceAll("\\s+", " ") + ")"));
                         else out.put(f, FileRun.failed("gave no result (vitest exit " + p.code() + ": " + tail(p.out() + "\n" + p.err(), 3).replaceAll("\\s+", " ") + ")"));
                     }
                 } finally {

@@ -105,9 +105,18 @@ public final class Integrity {
     private static final Pattern PASS_EMPTY = Pattern.compile("--passWithNoTests\\b(?!\\s*=\\s*false)|[\"']?passWithNoTests[\"']?\\s*:\\s*true\\b");
     private static final Pattern PLUGIN_SKIP = Pattern.compile("<skip>\\s*true\\s*</skip>");
     private static final Pattern OR_TAIL = Pattern.compile("(?:true|:|exit\\s+0)(?=\\s|$|[\"'`;&)])");
-    private static final Pattern TEST_COMMAND = Pattern.compile(
-            "\\b(?:npm|yarn|pnpm)\\s+(?:run\\s+)?test\\b|\\b(?:npx\\s+)?(?:jest|vitest|mocha|pytest|karma|ava)\\b|\\bgo\\s+test\\b|\\bcypress\\s+run\\b|\\bplaywright\\s+test\\b"
-                    + "|(?:^|[\\s/])(?:mvnw?|mvnw\\.cmd|gradlew?|gradlew\\.bat)\\b.*\\b(?:test|verify|check|build|install)\\b");
+    /** A test command by its own name, and a build tool that is asked to run tests. Both without ".*": every pattern here walks a line once. */
+    private static final Pattern TEST_RUNNER = Pattern.compile(
+            "\\b(?:npm|yarn|pnpm)\\s+(?:run\\s+)?test\\b|\\b(?:npx\\s+)?(?:jest|vitest|mocha|pytest|karma|ava)\\b|\\bgo\\s+test\\b|\\bcypress\\s+run\\b|\\bplaywright\\s+test\\b");
+    private static final Pattern BUILD_TOOL = Pattern.compile("(?:^|[\\s/])(?:mvnw?|mvnw\\.cmd|gradlew?|gradlew\\.bat)(?=\\s|$)");
+    private static final Pattern TEST_GOAL = Pattern.compile("\\b(?:test|verify|check|build|install)\\b");
+
+    /** True when the command runs tests: a test runner anywhere in it, or a build tool followed, anywhere later, by a goal that runs tests. */
+    private static boolean runsTests(String command) {
+        if (TEST_RUNNER.matcher(command).find()) return true;
+        Matcher tool = BUILD_TOOL.matcher(command);
+        return tool.find() && TEST_GOAL.matcher(command).region(tool.end(), command.length()).find();
+    }
 
     // ---------------- coverage ----------------
 
@@ -261,8 +270,15 @@ public final class Integrity {
         int depth = 0;
         for (int i = open; i < limit; i++) {
             char c = t.charAt(i);
-            if (c == '{') depth++;
-            else if (c == '}' && --depth == 0) return i;
+            if (c == '"' || c == '\'' || c == '`') {
+                int end = closing(t, i); // a brace inside a string is text
+                if (end < 0 || end >= limit) return -1;
+                i = end;
+            } else if (c == '{') {
+                depth++;
+            } else if (c == '}' && --depth == 0) {
+                return i;
+            }
         }
         return -1;
     }
@@ -497,9 +513,7 @@ public final class Integrity {
      */
     private void madeToPass(String path, String line) {
         for (String command : commandsMadeToPass(line)) {
-            String c = command.replaceAll("\\s+", " ");
-            if (c.length() > 2 * MAX_LINE) c = c.substring(0, MAX_LINE) + " " + c.substring(c.length() - MAX_LINE);
-            if (!TEST_COMMAND.matcher(c).find()) continue;
+            if (!runsTests(command)) continue;
             String shown = line.trim().replaceAll("\\s+", " ");
             problem("test failures ignored by the build", path, "a failing test command still counts as success: " + shown);
         }
@@ -508,12 +522,15 @@ public final class Integrity {
     /** The command just before each "|| true", "|| :" or "|| exit 0" of a line, found by walking the line once. */
     private static List<String> commandsMadeToPass(String line) {
         List<String> out = new ArrayList<>();
+        Matcher tail = OR_TAIL.matcher(line);
         int from = 0;
         while (true) {
             int at = line.indexOf("||", from);
             if (at < 0) return out;
             from = at + 2;
-            if (!OR_TAIL.matcher(line.substring(from).stripLeading()).lookingAt()) continue;
+            int after = from;
+            while (after < line.length() && Character.isWhitespace(line.charAt(after))) after++;
+            if (!tail.region(after, line.length()).lookingAt()) continue;
             int start = at;
             while (start > 0 && "|;&\"'`(".indexOf(line.charAt(start - 1)) < 0) start--;
             out.add(line.substring(start, at).trim());

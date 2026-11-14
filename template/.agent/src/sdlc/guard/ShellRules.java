@@ -192,7 +192,7 @@ public final class ShellRules {
             // ordinary rules judge the rest.
             // (and only where it is run: as the command itself, or as what java or a shell is given to run. In `cp x .agent/bin/sdlc`
             // it is a file being written, which the write rules must judge.)
-            boolean run = i == 0 || INTERPRETERS.contains(baseName(words.get(0)));
+            boolean run = i == 0 || isRunBy(words, i);
             boolean kit = run && (w.endsWith(".agent/Sdlc.java") || w.endsWith(".agent/bin/sdlc") || w.endsWith(".agent/bin/sdlc.cmd") || w.equals("sdlc.Main"));
             boolean plain = w.equals("sdlc") && i == 0;
             boolean named = run && (w.equals("sdlc") || w.endsWith("/sdlc") || w.endsWith("sdlc.cmd") || w.endsWith("Sdlc.java")) || w.equals("sdlc");
@@ -217,7 +217,22 @@ public final class ShellRules {
         return null;
     }
 
-    private static final Set<String> INTERPRETERS = Set.of("java", "sh", "bash", "dash", "zsh", "cmd");
+    private static final Set<String> INTERPRETERS = Set.of("java", "sh", "bash", "dash", "zsh", "ksh", "cmd");
+
+    /**
+     * True when the word at i is the program the interpreter in front runs: its first operand.
+     * In `sh payload.sh .agent/bin/sdlc` the program is payload.sh, and the launcher is only
+     * something handed to it. For java, options before the launcher also count as running it:
+     * `java -cp /tmp sdlc.Main` is the tool started with another class path, which is refused.
+     */
+    private static boolean isRunBy(List<String> words, int i) {
+        String interpreter = baseName(words.get(0));
+        if (!INTERPRETERS.contains(interpreter)) return false;
+        int operand = 1;
+        while (operand < i && (words.get(operand).startsWith("-") || words.get(operand).equalsIgnoreCase("/c"))) operand++;
+        if (operand == i) return true;
+        return interpreter.equals("java") && words.subList(1, i).stream().anyMatch(o -> o.startsWith("-")) && words.subList(1, i).stream().noneMatch(o -> o.endsWith(".java") || o.endsWith(".jar"));
+    }
     private static final Set<String> BEFORE_A_COMMAND = Set.of("env", "command", "exec", "nohup", "time", "nice", "sudo", "doas", "stdbuf", "timeout", "builtin", "xargs");
 
     /** True when every word is a command wrapper (env, exec, ...), one of its options or values, or a NAME=value: what follows is still the command. */
