@@ -172,6 +172,26 @@ final class Code {
         return to;
     }
 
+    /**
+     * True when the brackets of masked code pair up: every one that opens is closed by its own
+     * kind, in order. When they do not, the reader took text for code or code for text somewhere
+     * (an apostrophe or a bracket in the text of a JSX element), and no extent it finds in the
+     * file can be relied on.
+     */
+    static boolean balanced(String code) {
+        Deque<Character> open = new ArrayDeque<>();
+        for (int i = 0; i < code.length(); i++) {
+            char c = code.charAt(i);
+            if (c == '(' || c == '[' || c == '{') open.push(c);
+            else if (c == ')' || c == ']' || c == '}') {
+                if (open.isEmpty()) return false;
+                char o = open.pop();
+                if (o == '(' && c != ')' || o == '[' && c != ']' || o == '{' && c != '}') return false;
+            }
+        }
+        return open.isEmpty();
+    }
+
     /** The place of the bracket that closes the one at open, in masked code; -1 when there is none. */
     static int closing(String code, int open) {
         char in = code.charAt(open);

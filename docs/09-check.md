@@ -163,31 +163,33 @@ Claude Code, in `.claude/settings.json`:
   a variable as the name): a test of such a file that passes on both sides is "could not be
   judged" when its name is declared nowhere in the file as plain text, because it cannot be
   read from the file whether it is new. A test declared by a plain name is judged as usual.
-- A test is "switched off" when the file has a skip, a to-do mark or a focus that it did not
-  have before on that test. A test is known by where it stands and what it is called (the
-  groups or classes around it, then its title), so a skip moved to another test of the same
-  title is found. The whole file is read for this: a call written over several lines is found,
-  and text in a comment, a string or a regular expression is not a switch.
-- That reading knows the tokens of the language, not its grammar. Three rules keep it honest
-  where it cannot follow a file:
-  - A switch it sees in code is never dropped. When the declaration around it cannot be read
-    (a helper of your own that wraps `it`, a shape of call the reader does not know), the
-    switch is still counted, named by what stands after it.
-  - A test or group whose end it cannot find (it lost count of the brackets) is marked, the
-    report says so in a note, and tests of that file are then matched by their own names
-    without the groups around them. Such a file is also never the proof that a test is new.
-  - When a change adds something that looks like a skipped test inside a comment or a string,
-    the report says so as a note (a warning in `check-pr`), and a person looks at it: a file
-    can be written so that code is taken for text.
+- A test is "switched off" when the change puts a skip, a to-do mark or a focus into a test
+  file. The change itself says where to look: a switch is new when it stands on a line the
+  change wrote, and the lines it replaced did not hold the same switch on the same thing. So a
+  skip taken off one test and put on another is found, however the tests are grouped, and a
+  line that is only written differently (other quotes, another indent) is not a new skip.
+  Neither is a skipped test that was moved as a whole to another place of the file.
+- The switch word itself is looked for in the file's code, whatever calls it (`it.skip`,
+  `test.describe.skip`, `vitest.it.skip`, a helper of your own with `.skip`). A call written
+  over several lines is found; text in a comment, a string or a regular expression is not a
+  switch.
+- The reading of a file knows the tokens of the language, not its grammar. Where it cannot
+  follow a file (its brackets do not pair up for the reader: text of a JSX element with a
+  bracket or a quote in it does this), the report says so in a note. Switches in such a file
+  are still found. What is not relied on there: which tests the file declares, so a test of
+  it that passes on both sides is "could not be judged", not "new and proves nothing".
+- When a change adds something that looks like a skipped test inside a comment or a string,
+  the report says so as a note (a warning in `check-pr`), and a person looks at it: a file
+  can be written so that code is taken for text.
 - What it cannot see: a switch reached through another name (`const later = it.skip`, then
-  `later('x', ...)`), and a test skipped from inside its body by the test framework's context.
-  When the tests are run, a skipped test of a changed file is listed as skipped whatever the
+  `later('x', ...)`), a test skipped from inside its body by the test framework's context, and
+  two tests of one title whose bodies are exchanged while the skip stays where it is. When
+  the tests are run, a skipped test of a changed file is listed as skipped whatever the
   source says.
-- A test whose title is computed is named by the expression (`?(name)`), so a skip moved
-  between two such tests is found when their expressions differ.
-- Reported as switched off: `skip`, `todo`, `only`, `xit`/`xdescribe`, `fit`/`fdescribe`,
-  `@Disabled`, `@DisabledIf...`, `@Ignore`, an assumption that always fails (`assumeTrue(false)`,
-  with or without a reason; `Assumptions.abort`), `@pytest.mark.skip`
+- Reported as switched off: `skip`, `todo`, `only`, `fixme`, `xit`/`xdescribe`, `fit`/`fdescribe`,
+  `@Disabled`, `@DisabledIf...`, `@Ignore`, an assumption that always fails (`assumeTrue` with a
+  plain `false` among its arguments, `assumeFalse` with a plain `true`, `Assumptions.abort`,
+  also as a statically imported `abort`), `@pytest.mark.skip`
   and its forms, `@unittest.skip` and its forms, `t.Skip`. Not reported: `it.skipIf`,
   `it.runIf`, `@DisabledOnOs`, `@EnabledIf...` and other JUnit conditions.
 - In a pull request build the base branch must be fetched, with enough history to reach the

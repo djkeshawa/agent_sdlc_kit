@@ -217,7 +217,8 @@ final class MultiRepoTests {
                 Contracts.diff(v1, Contracts.parse(OPENAPI.replace("/orders/{orderId}/refunds", "/orders/{id}/refunds"))).isEmpty());
         check("contracts: operation names normalise", Contracts.normalize("post  /orders/{orderId}/refunds").equals(Contracts.normalize("POST /orders/{id}/refunds"))
                 && !Contracts.normalize("GET /orders/").equals(Contracts.normalize("GET /orders")) && !Contracts.normalize("message A on Orders").equals(Contracts.normalize("message A on orders"))
-                && !Contracts.normalize("message A on room 1").equals(Contracts.normalize("message A on room  1")));
+                && !Contracts.normalize("message A on room 1").equals(Contracts.normalize("message A on room  1"))
+                && !Contracts.normalize("message A on orders").equals(Contracts.normalize("message A on orders ")));
         check("contracts: called paths match templates", Contracts.pathMatches("/orders/{id}", "/orders/{orderId}") && Contracts.pathMatches("/orders/{id}", "/orders/42?x=1")
                 && !Contracts.pathMatches("/orders/{id}", "/orders/42/lines"));
     }

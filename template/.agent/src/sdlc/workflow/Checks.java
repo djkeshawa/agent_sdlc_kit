@@ -192,6 +192,7 @@ public final class Checks {
             if (!Glob.any(Ctx.cfg.list("paths.test"), f)) continue;
             String was = Trusted.read(branchPoint, f), now = Trusted.read("HEAD", f);
             for (sdlc.check.Integrity.Switch s : sdlc.check.Integrity.addedSwitches(f, was, now)) disabled.add(f + ": " + s.shown());
+            if (sdlc.check.Integrity.unsure(f, now)) warns.add(f + ": the reader could not follow this file to its end (its brackets do not pair up for it); its switches are still found, a reviewer looks at its tests");
             List<String> inText = sdlc.check.Integrity.addedSwitchesInText(f, was, now);
             if (!inText.isEmpty()) warns.add(f + ": " + inText.size() + " place(s) that look like a skipped or focused test stand inside a comment or a string (" + inText.get(0)
                     + "); that switches nothing off unless the file is written so that it was misread: a reviewer looks at it");

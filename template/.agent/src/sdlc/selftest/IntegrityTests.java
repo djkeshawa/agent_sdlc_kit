@@ -312,40 +312,177 @@ final class IntegrityTests {
         check("integrity: a file whose switches stay on their tests has none added", sdlc.check.Integrity.addedSwitches("src/app.test.ts", skipOnOld, skipOnOld + "\nit('more', () => {})\n").isEmpty());
         check("integrity: an annotation is read with the method it stands on",
                 sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n  @Test void b() {}\n}\n", "class ATest {\n  @Test void a() {}\n  @ Disabled\n  @Test void b() {}\n}\n")
-                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > b"))));
+                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "b"))));
         // a test is known by where it stands, not by its title alone
         String inA = "describe('A', () => {\n  it.skip('works', () => {})\n})\ndescribe('B', () => {\n  it('works', () => {})\n})\n";
         String inB = "describe('A', () => {\n  it('works', () => {})\n})\ndescribe('B', () => {\n  it.skip('works', () => {})\n})\n";
         check("integrity: a skip moved to a test of the same title in another group is found",
-                sdlc.check.Integrity.addedSwitches("a.test.ts", inA, inB).equals(List.of(new sdlc.check.Integrity.Switch("skip", "B > works"))));
-        check("integrity: also when the groups change places", sdlc.check.Integrity.addedSwitches("a.test.ts", inA,
-                "describe('B', () => {\n  it.skip('works', () => {})\n})\ndescribe('A', () => {\n  it('works', () => {})\n})\n").size() == 1);
+                sdlc.check.Integrity.addedSwitches("a.test.ts", inA, inB).equals(List.of(new sdlc.check.Integrity.Switch("skip", "works"))));
+        check("integrity: two groups that only get other names keep the skip on the test that had it", sdlc.check.Integrity.addedSwitches("a.test.ts", inA,
+                "describe('B', () => {\n  it.skip('works', () => {})\n})\ndescribe('A', () => {\n  it('works', () => {})\n})\n").isEmpty());
         check("integrity: a disabled method moved between two nested classes is found", sdlc.check.Integrity.addedSwitches("ATest.java",
                 "class ATest {\n  class X { @Disabled @Test void works() {} }\n  class Y { @Test void works() {} }\n}\n",
-                "class ATest {\n  class X { @Test void works() {} }\n  class Y { @Disabled @Test void works() {} }\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > Y > works"))));
+                "class ATest {\n  class X { @Test void works() {} }\n  class Y { @Disabled @Test void works() {} }\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "works"))));
         check("integrity: a switch on something that is no void method is not lost", sdlc.check.Integrity.addedSwitches("ATest.java",
                 "class ATest {\n  @TestFactory Stream<DynamicTest> all() { return null; }\n}\n",
-                "class ATest {\n  @Disabled @TestFactory Stream<DynamicTest> all() { return null; }\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > all"))));
+                "class ATest {\n  @Disabled @TestFactory Stream<DynamicTest> all() { return null; }\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "all"))));
         check("integrity: an annotation moved onto the declaration before, which is no void method, is found", sdlc.check.Integrity.addedSwitches("ATest.java",
                 "class ATest {\n  @TestFactory Stream<DynamicTest> all() { return null; }\n  @Disabled @Test void works() {}\n}\n",
-                "class ATest {\n  @Disabled @TestFactory Stream<DynamicTest> all() { return null; }\n  @Test void works() {}\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > all"))));
+                "class ATest {\n  @Disabled @TestFactory Stream<DynamicTest> all() { return null; }\n  @Test void works() {}\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "all"))));
         check("integrity: an assumption that never holds is found with a reason after it too", sdlc.check.Integrity.addedSwitches("ATest.java",
                 "class ATest {\n  @Test void a() { run(); }\n}\n", "class ATest {\n  @Test void a() { assumeTrue(false, \"temporarily unsupported\"); run(); }\n}\n")
-                .equals(List.of(new sdlc.check.Integrity.Switch("assume", "ATest > a"))));
+                .equals(List.of(new sdlc.check.Integrity.Switch("assume", "a"))));
+        // files as people write them: the reader must follow each to its end, and find every test and every switch
+        String vitest = """
+                import { describe, it, expect, vi } from 'vitest';
+                // it's a comment with an apostrophe and a (bracket
+                const pattern = /^(\\d+)[-/'"`](\\d+)$/;
+                const half = (a: number, b: number) => (a + b) / 2;
+                type Row = { input: number; expected: number };
+                const identity = <T,>(x: T): T => x;
+                describe('refunds', () => {
+                  const rows: Row[] = [{ input: 1, expected: 2 }];
+                  beforeEach(async () => { vi.useFakeTimers(); });
+                  it('subtracts what was refunded', async () => {
+                    const label = `total: ${format({ amount: half(4, 6) })} of ${rows.length}`;
+                    expect(label).toMatch(/total: \\d+/);
+                    expect(identity<number>(1) as number).toBe(1);
+                  });
+                  describe('rounding', () => {
+                    it.each<Row>(rows)('rounds $input', ({ input, expected }) => {
+                      expect(input < expected && expected > 0).toBe(true);
+                    });
+                    it.todo('rounds half up');
+                    test.skip("isn't ready", () => {});
+                  });
+                });
+                """;
+        check("reader: a vitest file with types, templates, regular expressions and tables is read to its end",
+                !sdlc.check.Integrity.unsure("src/refund.test.ts", vitest)
+                && sdlc.check.TestNames.counts("src/refund.test.ts", vitest).keySet().equals(java.util.Set.of("subtracts what was refunded", "rounds $input", "rounds half up", "isn't ready"))
+                && sdlc.check.Integrity.switches("src/refund.test.ts", vitest).equals(List.of(new sdlc.check.Integrity.Switch("todo", "rounds half up"), new sdlc.check.Integrity.Switch("skip", "isn't ready"))));
+        String jsxFile = """
+                import { render, screen } from '@testing-library/react';
+                describe('<Banner />', () => {
+                  it('renders the text', () => {
+                    render(<Banner title="It's ready" onClose={() => close({ now: true })}>Don't wait</Banner>);
+                    expect(screen.getByText("Don't wait")).toBeVisible();
+                  });
+                  it.skip('renders a list', () => {
+                    render(
+                      <ul>
+                        {items.map((item) => (
+                          <li key={item.id}>{item.name}</li>
+                        ))}
+                      </ul>
+                    );
+                  });
+                });
+                """;
+        check("reader: a test file with JSX is read to its end",
+                !sdlc.check.Integrity.unsure("src/Banner.test.tsx", jsxFile)
+                && sdlc.check.TestNames.counts("src/Banner.test.tsx", jsxFile).keySet().equals(java.util.Set.of("renders the text", "renders a list"))
+                && sdlc.check.Integrity.switches("src/Banner.test.tsx", jsxFile).equals(List.of(new sdlc.check.Integrity.Switch("skip", "renders a list"))));
+        String playwright = """
+                import { test, expect } from '@playwright/test';
+                test.describe('checkout', () => {
+                  test.beforeEach(async ({ page }) => { await page.goto('/cart'); });
+                  test('pays', async ({ page }) => {
+                    await expect(page.getByRole('button', { name: /pay/i })).toBeEnabled();
+                  });
+                  test.describe.serial('refund', () => {
+                    test.fixme('partial', async ({ page }) => {});
+                    test.skip('full', async ({ page }) => {});
+                  });
+                });
+                """;
+        check("reader: a playwright file is read to its end, groups and all",
+                !sdlc.check.Integrity.unsure("e2e/checkout.spec.ts", playwright)
+                && sdlc.check.TestNames.counts("e2e/checkout.spec.ts", playwright).keySet().equals(java.util.Set.of("pays", "partial", "full"))
+                && sdlc.check.Integrity.switches("e2e/checkout.spec.ts", playwright).equals(List.of(new sdlc.check.Integrity.Switch("skip", "partial"), new sdlc.check.Integrity.Switch("skip", "full"))));
+        String junit = """
+                package demo;
+
+                import static org.junit.jupiter.api.Assertions.assertEquals;
+
+                class RefundsTest {
+                    private static final char QUOTE = '"';
+                    private static final char TICK = '\\'';
+                    record Case(int paid, int refunded) {}
+
+                    @Test
+                    @DisplayName("what's left (after a refund)")
+                    void subtracts() {
+                        assertEquals(3, new Refunds().left(5, 2), () -> "paid " + 5);
+                    }
+
+                    @ParameterizedTest(name = "{0} -> {1}")
+                    @CsvSource(textBlock = \"\"\"
+                            1, 2   # it's (a row
+                            3, 4
+                            \"\"\")
+                    void table(int paid, int left) throws Exception {
+                        assertEquals(left, paid + 1);
+                    }
+
+                    @Nested
+                    class Partial {
+                        @Disabled("until PAY-12 (the bank's fix)")
+                        @Test
+                        void roundsDown() {}
+
+                        @TestFactory
+                        Stream<DynamicTest> all() { return Stream.of(); }
+                    }
+                }
+                """;
+        check("reader: a JUnit file with nested classes, a text block, records and character literals is read to its end",
+                !sdlc.check.Integrity.unsure("src/test/java/demo/RefundsTest.java", junit)
+                && sdlc.check.TestNames.counts("src/test/java/demo/RefundsTest.java", junit).keySet().equals(java.util.Set.of("subtracts", "table", "roundsDown"))
+                && sdlc.check.Integrity.switches("src/test/java/demo/RefundsTest.java", junit).equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "roundsDown"))));
+        // round 8
+        check("integrity: the reason before the condition (JUnit 4) and an imported abort are found too", sdlc.check.Integrity.addedSwitches("ATest.java",
+                "class ATest {\n  @Test void a() { run(); }\n  @Test void b() { run(); }\n}\n",
+                "import static org.junit.jupiter.api.Assumptions.abort;\nclass ATest {\n  @Test void a() { Assume.assumeTrue(\"temporarily unsupported\", false); run(); }\n  @Test void b() { abort(\"later\"); run(); }\n}\n")
+                .equals(List.of(new sdlc.check.Integrity.Switch("assume", "a"), new sdlc.check.Integrity.Switch("assume", "b"))));
+        check("integrity: an assumption with a matcher is not a test switched off", sdlc.check.Integrity.addedSwitches("ATest.java",
+                "class ATest {\n  @Test void a() { run(); }\n}\n", "class ATest {\n  @Test void a() { Assume.assumeThat(false, is(false)); assumeTrue(ready(false)); run(); }\n}\n").isEmpty());
+        check("integrity: a test that gains @Disabled is still a declared test, and one that loses it is not a new one",
+                sdlc.check.TestNames.counts("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n}\n").equals(sdlc.check.TestNames.counts("ATest.java", "class ATest {\n  @Test void a() {}\n}\n"))
+                && sdlc.check.TestNames.counts("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n}\n").containsKey("a"));
+        check("integrity: two computed titles that differ by a space inside a string are two tests", sdlc.check.Integrity.addedSwitches("a.test.ts",
+                "it.skip('case ' + n, () => {})\nit('case' + n, () => {})\n", "it('case ' + n, () => {})\nit.skip('case' + n, () => {})\n").size() == 1);
+        check("integrity: a table of cases with an object type is read", sdlc.check.TestNames.counts("a.test.ts", "it.each<{input: number; expected: number}>(rows)('adds', checks);\n").containsKey("adds")
+                && sdlc.check.TestNames.namesBuiltAtRunTime("a.test.ts", "it.each<{input: number; expected: number}>(rows)('adds', checks);\n"));
+        check("integrity: a skip moved between two calls through a namespace is found", sdlc.check.Integrity.addedSwitches("a.test.ts",
+                "vitest.it.skip('legacy', () => {})\nvitest.it('critical', () => {})\n", "vitest.it('legacy', () => {})\nvitest.it.skip('critical', () => {})\n")
+                .equals(List.of(new sdlc.check.Integrity.Switch("skip", "critical"))));
+        String playwrightA = "test.describe('A', () => {\n  test.skip('works', async () => {})\n})\ntest.describe('B', () => {\n  test('works', async () => {})\n})\n";
+        String playwrightB = "test.describe('A', () => {\n  test('works', async () => {})\n})\ntest.describe('B', () => {\n  test.skip('works', async () => {})\n})\n";
+        check("integrity: a skip moved between two groups of another framework is found, whatever the groups are called",
+                sdlc.check.Integrity.addedSwitches("a.spec.ts", playwrightA, playwrightB).size() == 1 && sdlc.check.Integrity.addedSwitches("a.spec.ts", playwrightA, playwrightA).isEmpty());
+        String proseA = "describe('A', () => {\n  it('shows', () => { render(<p>It's (John's)</p>); })\n  it.skip('works', () => {})\n})\ndescribe('B', () => {\n  it('works', () => {})\n})\n";
+        String proseB = "describe('A', () => {\n  it('shows', () => { render(<p>It's (John's)</p>); })\n  it('works', () => {})\n})\ndescribe('B', () => {\n  it.skip('works', () => {})\n})\n";
+        check("integrity: nor does text of a JSX element with quotes and a bracket hide such a move, and the file is said to be unsure",
+                sdlc.check.Integrity.addedSwitches("a.test.tsx", proseA, proseB).size() == 1 && sdlc.check.Integrity.unsure("a.test.tsx", proseB));
+        check("integrity: a line that is only written differently adds no switch, and a skipped test moved as a whole is not a new skip",
+                sdlc.check.Integrity.addedSwitches("a.test.ts", "it.skip('later', () => {})\n", "  it.skip( \"later\", () => {})\n").isEmpty()
+                && sdlc.check.Integrity.addedSwitches("a.test.ts", "it.skip('later', () => {})\nit('a', () => {})\nit('b', () => {})\n", "it('a', () => {})\nit('b', () => {})\nit.skip('later', () => {})\n").isEmpty());
         check("integrity: type arguments before the call do not hide the test", sdlc.check.Integrity.addedSwitches("a.test.ts",
                 "it.each<[number, number]>([[1, 2]])(\n  'adds %i', async (a, b) => { expect(a + b).toBe(3) }\n)\n",
                 "it.skip.each<[number, number]>([[1, 2]])(\n  'adds %i', async (a, b) => { expect(a + b).toBe(3) }\n)\n").equals(List.of(new sdlc.check.Integrity.Switch("skip", "adds %i"))));
         String jsx = "('renders', () => {\n  render(<div>It's ready</div>);\n  expect(screen.getByText(\"It's ready\")).toBeVisible();\n});\n";
         check("integrity: an apostrophe in the text of a JSX element does not hide the test around it",
                 sdlc.check.Integrity.addedSwitches("a.test.tsx", "it" + jsx, "it.skip" + jsx).equals(List.of(new sdlc.check.Integrity.Switch("skip", "renders")))
-                && sdlc.check.TestNames.counts("a.test.tsx", "it" + jsx).containsKey("renders") && sdlc.check.Integrity.unsure("a.test.tsx", "it" + jsx) == 0);
+                && sdlc.check.TestNames.counts("a.test.tsx", "it" + jsx).containsKey("renders") && !sdlc.check.Integrity.unsure("a.test.tsx", "it" + jsx));
         check("integrity: a skip moved between two tests whose titles are computed is found", sdlc.check.Integrity.addedSwitches("a.test.ts",
                 "it.skip(legacy, () => { expect(1).toBe(1) });\nit(critical, () => { expect(1).toBe(1) });\n",
                 "it(legacy, () => { expect(1).toBe(1) });\nit.skip(critical, () => { expect(1).toBe(1) });\n").equals(List.of(new sdlc.check.Integrity.Switch("skip", "?(critical)"))));
+        check("integrity: another name for the variable of a computed title is not another test body", sdlc.check.Integrity.switches("a.test.ts", "it(title, () => {})\n").isEmpty());
         check("integrity: a skip on something the reading does not know as a test is still a skip",
                 sdlc.check.Integrity.addedSwitches("a.test.ts", "helpers.it('a', () => {})\n", "helpers.it.skip('a', () => {})\n").size() == 1);
         check("integrity: a bracket the reader cannot close makes a declaration unsure, and its skip is kept",
-                sdlc.check.Integrity.unsure("a.test.ts", "it.skip('open', () => {\n  expect(f(1).toBe(1)\n") == 1
+                sdlc.check.Integrity.unsure("a.test.ts", "it.skip('open', () => {\n  expect(f(1).toBe(1)\n")
                 && sdlc.check.Integrity.addedSwitches("a.test.ts", "", "it.skip('open', () => {\n  expect(f(1).toBe(1)\n").size() == 1);
         Config own = Ctx.cfg;
         Ctx.cfg = Config.parse("stack: node\ntests:\n  disabledPatterns: [\"testWithDb\\\\.skip\", \"\\\\b(it|test)\\\\.skip\\\\(\"]\n");

@@ -94,6 +94,7 @@ final class Witness {
             FileRun a = after.get(f), b = before.get(f);
             Map<String, Integer> declaredBefore = TestNames.counts(f, change.before(f)), declaredNow = TestNames.counts(f, change.after(f));
             boolean builtAtRunTime = TestNames.namesBuiltAtRunTime(f, change.before(f)) || TestNames.namesBuiltAtRunTime(f, change.after(f));
+            boolean unsure = TestNames.unsure(f, change.before(f)) || TestNames.unsure(f, change.after(f));
             if (a == null || a.problem() != null) {
                 // code that does not compile or load is the change's own failure; a missing build tool, a timeout or a name that cannot be passed on is not
                 boolean broken = a != null && a.broken();
@@ -121,6 +122,7 @@ final class Witness {
                 else if (p == null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "was not found before the change", runner.name()));
                 else if (p.status() == Status.PASSED && shared != null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after, but " + shared, runner.name()));
                 else if (p.status() == Status.PASSED && oneIsNew) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after; the file now has more tests of this name than before, so a new one cannot be told from the old one", runner.name()));
+                else if (p.status() == Status.PASSED && !old && unsure) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after; the file could not be read with confidence, so it cannot be told whether this test is new", runner.name()));
                 else if (p.status() == Status.PASSED && !old && builtAtRunTime && !declaredNow.containsKey(plain)) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after; the file builds test names while it runs, so it cannot be read from the file whether this test is new", runner.name()));
                 else if (p.status() == Status.PASSED) out.add(new Verdict(f, c.name(), old ? Kind.EXISTING_PASSES_ON_BOTH : Kind.PASSES_ON_BOTH, "", runner.name()));
                 else if (p.status() == Status.SKIPPED) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "was skipped before the change", runner.name()));

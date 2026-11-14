@@ -292,7 +292,7 @@ public final class Contracts {
         if (m.matches() && METHODS.contains(m.group(1).toLowerCase(Locale.ROOT))) {
             return m.group(1).toUpperCase(Locale.ROOT) + " " + m.group(2).replaceAll("\\{[^}/]*\\}", "{}");
         }
-        return s; // a message and its channel: as written, white space inside included
+        return op; // a message and its channel: byte for byte as written, white space at its ends included
     }
 
     private static final java.util.regex.Pattern HTTP_OPERATION = java.util.regex.Pattern.compile("(\\S+)\\s+(\\S.*)");
