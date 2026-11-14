@@ -79,7 +79,15 @@ public final class Checks {
     // ---------------- tests ----------------
 
     public static boolean containsDisabled(String text) {
-        for (String re : Ctx.cfg.list("tests.disabledPatterns")) if (Pattern.compile(re).matcher(text).find()) return true;
+        for (String re : Ctx.cfg.list("tests.disabledPatterns")) {
+            try {
+                if (Pattern.compile(re).matcher(text).find()) return true;
+            } catch (StackOverflowError e) {
+                // a repository's own pattern that recurses once per repetition, on text made to drive it deep: the
+                // pattern could not be applied, and text written to break the check is not let through as clean
+                return true;
+            }
+        }
         return false;
     }
 
@@ -87,7 +95,9 @@ public final class Checks {
         List<String> hits = new ArrayList<>();
         for (Map.Entry<String, List<String>> e : added.entrySet()) {
             if (!Glob.any(Ctx.cfg.list("paths.test"), e.getKey())) continue;
-            for (String line : e.getValue()) if (containsDisabled(line)) hits.add(e.getKey() + ": " + line.trim());
+            // a line longer than the switch lint reads is not read here either (check-pr and check say how many were not read):
+            // the configured patterns are a repository's own, and their cost on a very long line is not known
+            for (String line : e.getValue()) if (line.length() <= sdlc.check.Integrity.LONGEST && containsDisabled(line)) hits.add(e.getKey() + ": " + line.trim());
         }
         return hits;
     }

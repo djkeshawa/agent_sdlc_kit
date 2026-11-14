@@ -236,6 +236,18 @@ final class TrustTests {
                 Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No switch that turns a test off or focuses one was found") && f.contains("web.test.ts: it.skip('later'") && f.contains("web.test.ts: it .skip('sooner'")
                         && f.contains("web.test.ts: const r = /'/; it.skip('a'")));
 
+        // a line made to drive a configured pattern deep does not crash check-pr: it is not read, and a warning says so
+        git(repo, "switch", "-q", "-c", "feature/PROJ-19-deep", "origin/main");
+        write(repo, "src/test/java/DeepTest.java", "class DeepTest {\n  @" + "a.".repeat(10000) + "Disabled\n  @Test void t() {}\n}\n");
+        write(repo, "src/main/java/A.java", "class A { int g; }\n");
+        commit(repo, "feat(PROJ-19): a very long annotation line");
+        Ctx.init(repo);
+        Checks.Result deep = Checks.prPolicy(null, false);
+        check("trust: a very long line that would overflow a configured pattern is not read, and check-pr says so instead of crashing",
+                deep.warns().stream().anyMatch(w -> w.contains("DeepTest.java") && w.contains("were not read for switches")));
+        check("trust: a configured pattern that overflows on a text is taken as a hit, not as clean",
+                Checks.containsDisabled("@" + "a.".repeat(200000) + "Disabled"));
+
         // a Java test file is linted by the lines the change adds, as a script test file is
         git(repo, "switch", "-q", "-c", "feature/PROJ-18-java", "origin/main");
         write(repo, "src/test/java/OffTest.java", "class OffTest {\n  @Disabled(\"later\")\n  @Test void later() {}\n  @Test void sooner() { assumeTrue(false); }\n  @Test void never() { Assumptions.<Void>abort(\"later\"); }\n}\n");
