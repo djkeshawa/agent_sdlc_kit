@@ -880,7 +880,8 @@ final class Witness {
      *               a skipped case gone may have stood for none
      *   G <= F      it could not be judged: a rename looks exactly like a test deleted and
      *               another written. Unless the counts of the whole file say that fewer tests
-     *               run (see skips): that is said there, once.
+     *               run (see skips), and that is printed (stable, and not all of it said as
+     *               old tests taken out of the way): it is said there, once.
      *
      * Sound under any naming: the file reports G - F fewer cases than it did (each name it reports
      * on both sides has as many cases on each), so at least G - F cases it had are not there. A
