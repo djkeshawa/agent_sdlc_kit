@@ -10,20 +10,59 @@ public final class Json {
     /** Deeper than any real payload; a document nested further is refused instead of overflowing the stack. */
     private static final int MAX_DEPTH = 200;
     private final String s;
+    private final boolean strict;
     private int i;
     private int depth;
 
-    private Json(String s) {
+    private Json(String s, boolean strict) {
         this.s = s;
+        this.strict = strict;
     }
 
     public static Object parse(String text) {
-        Json j = new Json(text);
+        Json j = new Json(text, false);
         j.ws();
         Object v = j.value();
         j.ws();
         if (j.i != j.s.length()) throw new IllegalArgumentException("trailing characters in JSON at " + j.i);
         return v;
+    }
+
+    /**
+     * As parse, for a file whose every byte counts (a mandate). Also an error: a key that appears
+     * twice in one object, anything after the top-level value, a number or an escape that JSON
+     * does not allow, and a raw line break or control character inside a string. The message
+     * says where, by line and column.
+     */
+    public static Object parseStrict(String text) {
+        Json j = new Json(text, true);
+        try {
+            j.ws();
+            Object v = j.value();
+            j.ws();
+            if (j.i != j.s.length()) throw new IllegalArgumentException("there is more text after the end of the JSON value");
+            return v;
+        } catch (IndexOutOfBoundsException e) {
+            throw new IllegalArgumentException("the JSON ends too early (" + j.where(j.s.length()) + ")");
+        } catch (IllegalArgumentException e) {
+            String m = e.getMessage() == null ? "bad JSON" : e.getMessage().replaceFirst(" (in JSON )?at \\d+$", "").replace("unexpected end of JSON", "the JSON ends too early");
+            throw new IllegalArgumentException(m + " (" + j.where(Math.min(j.i, j.s.length())) + ")");
+        }
+    }
+
+    /** "line L, column C" of a character offset, both counted from 1. */
+    private String where(int offset) {
+        int line = 1;
+        int col = 1;
+        for (int k = 0; k < offset; k++) {
+            if (s.charAt(k) == '\n') {
+                line++;
+                col = 1;
+            } else {
+                col++;
+            }
+        }
+        return "line " + line + ", column " + col;
     }
 
     @SuppressWarnings("unchecked")
@@ -70,7 +109,12 @@ public final class Json {
         int start = i;
         while (i < s.length() && "+-0123456789.eE".indexOf(s.charAt(i)) >= 0) i++;
         if (start == i) throw new IllegalArgumentException("bad JSON at " + i);
-        return Double.parseDouble(s.substring(start, i));
+        String number = s.substring(start, i);
+        if (strict && !number.matches("-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?")) {
+            i = start;
+            throw new IllegalArgumentException("\"" + number + "\" is not a JSON number");
+        }
+        return Double.parseDouble(number);
     }
 
     private Map<String, Object> object() {
@@ -89,7 +133,12 @@ public final class Json {
         if (s.charAt(i) == '}') { i++; return m; }
         while (true) {
             ws();
+            int at = i;
             String k = string();
+            if (strict && m.containsKey(k)) {
+                i = at;
+                throw new IllegalArgumentException("the key \"" + k + "\" appears twice in one object");
+            }
             ws();
             expect(':');
             ws();
@@ -130,8 +179,20 @@ public final class Json {
         StringBuilder sb = new StringBuilder();
         while (s.charAt(i) != '"') {
             char c = s.charAt(i++);
+            if (strict && c < 0x20) {
+                i--;
+                throw new IllegalArgumentException("a line break or control character inside a string; write it as an escape such as \\n");
+            }
             if (c != '\\') { sb.append(c); continue; }
             char e = s.charAt(i++);
+            if (strict && "\"\\/bfnrtu".indexOf(e) < 0) {
+                i -= 2;
+                throw new IllegalArgumentException("\"\\" + e + "\" is not a JSON escape");
+            }
+            if (strict && e == 'u' && !s.substring(i, i + 4).matches("[0-9a-fA-F]{4}")) {
+                i -= 2;
+                throw new IllegalArgumentException("\\u must be followed by four hexadecimal digits");
+            }
             switch (e) {
                 case 'n' -> sb.append('\n');
                 case 't' -> sb.append('\t');

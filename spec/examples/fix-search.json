@@ -1,0 +1,15 @@
+{
+  "mandate": "v0",
+  "id": "fix-search",
+  "intent": "Searching with an empty query returns an empty list, not an error",
+  "mustStayTrue": [
+    { "is": "A query with text returns the same results as before",
+      "test": "src/test/java/com/acme/search/SearchRegressionTest.java" }
+  ],
+  "failsIf": "an empty query reaches the database",
+  "scope": { "paths": ["src/main/java/com/acme/search/**", "src/test/java/com/acme/search/**"] },
+  "oracle": {
+    "scenarios": ["src/test/java/com/acme/search/SearchServiceTest.java#emptyQueryReturnsEmptyList"],
+    "locked": { "src/test/java/com/acme/search/SearchRegressionTest.java": "3b18e512dba79e4c8300dd08aeb37f8e728b8dad" }
+  }
+}
