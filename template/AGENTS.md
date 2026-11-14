@@ -2,8 +2,9 @@
 
 These rules apply to every coding agent (GitHub Copilot, Claude Code, Codex). Read
 `docs/agent/project-profile.md` before writing code: its rules (P-.., T-..) win over the generic
-skills. Hooks, git hooks and the PR gate enforce the rules below; a refusal means "change your
-approach", never "find a way around it". One tool does everything:
+skills. Hooks, git hooks and the PR gate check the rules below where a tool can (for a disabled
+test, the usual ways of writing one; `java .agent/Sdlc.java check` shows any test that no longer
+runs); a refusal means "change your approach", never "find a way around it". One tool does everything:
 `java .agent/Sdlc.java <command>` (run `java .agent/Sdlc.java help`).
 
 ## The flow

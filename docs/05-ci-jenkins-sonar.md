@@ -25,8 +25,8 @@ Status links like `.../job/payments/job/PR-12/5/display/redirect` are understood
 2. Run the same build developers run (`./mvnw -B -ntp verify`) and publish JUnit results
    (`junit 'target/surefire-reports/*.xml'`), so the kit can list failed tests by name.
 3. Run the SonarQube analysis **as a PR analysis** and fail the build when the gate fails.
-4. Optional but recommended: run the kit's PR policy, so the branch, commit, secret and
-   disabled-test rules hold even for someone who skipped the git hooks. The disabled-test rule
+4. Optional but recommended: run the kit's PR policy, so the branch, commit and secret rules
+   hold, and the disabled-test check runs, even for someone who skipped the git hooks. That check
    reads the lines a pull request adds for the usual ways of switching a test off: it catches
    mistakes and plain attempts, not an author set on hiding one. The guard is a test run:
    `sdlc check` reports every test that ran before the change and does not run now.

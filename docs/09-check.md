@@ -380,41 +380,62 @@ Claude Code, in `.claude/settings.json`:
   no test (`check-pr`, `--no-run`) and for files no runner owns. **It is not a guard.** A check
   that reads text cannot stop an author who sets out to hide a switch from it: a switch reached
   through another name (`const later = it.skip`), a quote in a regular expression before a
-  comment written between a switch's words, or a switch spread over more than three lines is not
-  seen. The guard is the run: `sdlc check` reports every test that ran before the change and does
-  not run now, whatever the source says. A pipeline that must be sure runs `sdlc check`, not only
-  `check-pr`. Where a runner ran the file, a test switched off is said twice, as a test that ran
-  and does not run now under the test results and as switched off under Integrity.
-- What the lint finds, on the lines added to any test file: `@Disabled`, `@DisabledIf...`,
-  `@Ignore` (also qualified, `@org.junit.jupiter.api.Disabled`); an assumption with a plain
-  `false` among its arguments (`assumeTrue(false, () -> "later")`) or `assumeFalse` with a plain
-  `true`; `Assumptions.abort` (also `Assumptions.<Void>abort`), the line that imports it
-  statically, and `abort(` called alone; `skip`, `todo`, `only` and `fixme` on `it`, `test`,
-  `describe`, `context` or `suite` (also `it.concurrent.skip`, `it?.skip`), `xit`/`xdescribe`,
-  `fit`/`fdescribe`; `@pytest.mark.skip` and `@unittest.skip` (also in parentheses); `t.Skip`.
-  White space of any kind a language allows may stand between the words, and Unicode escapes
-  (`\u0040Disabled`) are read as a compiler reads them. A switch written over two or three added
-  lines (`it`, then `.skip(` on the next; a block comment that closes on the next line; a Python
-  line ending in `\`) is found too.
-- Not reported: `it.skipIf`, `it.runIf`, `@DisabledOnOs`, `@EnabledIf...` and other conditions; an
-  assumption whose condition is computed (`assumeTrue(ready())`); a method declared with the name
-  `abort` or another object's `abort` (`controller . abort()`).
-- Each added line is read several ways: with its comments dropped and the insides of its strings
-  emptied, and as it is written (unless the whole line is a comment: it starts with `//`, or with a
-  `#` that no name follows), with its block comments taken out. One line cannot tell its quotes for
-  certain, so what a line shows as written is never hidden: a switch's words inside a string, a
-  text block, a trailing comment or a block comment's line are reported too, and `check-pr` shows
-  the line. A long line is linted in overlapping pieces, so its words count only where they stand
-  within 300 characters of each other, its white space taken as one space.
+  comment written between a switch's words, a switch spread over more than three lines or one on
+  a line longer than 2,000 characters is not seen. The guard is the run: `sdlc check` reports
+  every test that ran before the change and does not run now, whatever the source says. A
+  pipeline that must be sure runs `sdlc check`, not only `check-pr`. Where a runner ran the file,
+  a test switched off is said twice, as a test that ran and does not run now under the test
+  results and as switched off under Integrity.
+- What the lint finds, on the lines added to any test file: `@Disabled`, `@Ignore` (also
+  qualified, `@org.junit.jupiter.api.Disabled`), and `@DisabledIf("true")` or `@EnabledIf("false")`;
+  an assumption with a plain `false` among its arguments (`assumeTrue(false, () -> "later")`) or
+  `assumeFalse` with a plain `true`; `Assumptions.abort` (also `Assumptions.<Void>abort`), the line
+  that imports it statically, and `abort(` called alone; `skip`, `todo`, `only` and `fixme` on
+  `it`, `test`, `describe`, `context` or `suite` (also `it.concurrent.skip`, `it?.skip`,
+  `test.skip.each`), `xit`/`xdescribe`, `fit`/`fdescribe` (also with `.each`); an option object
+  that says `skip`, `only` or `todo: true` in a test declaration (`test('x', { skip: true }, fn)`);
+  a test declared without a body, its whole declaration on one line (`it('pending');`);
+  `@pytest.mark.skip` (also in parentheses, in `pytestmark = ...` and in `marks=...`),
+  `skipif(True, ...)` and `xfail(run=False)`; `@unittest.skip`, `skipIf(True, ...)`,
+  `skipUnless(False, ...)`. A skip from inside a test as a statement of its own (`pytest.skip(...)`,
+  `self.skipTest(...)`, `raise unittest.SkipTest(...)`, Mocha's `this.skip()`, `t.Skip`,
+  `t.Skipf`, `t.SkipNow`, Playwright's `test.skip()`) is found where the added lines show it
+  unconditional: not on a line, or under an added line, that holds `if`, `else`, `except`, a
+  ternary, `&&` or `||`. White space of any kind a language allows may stand between the words,
+  and Unicode escapes (`\u0040Disabled`) are read as a compiler reads them. A switch written over
+  two or three added lines (`it`, then `.skip(` on the next; a block comment that closes on the
+  next line; a Python line ending in `\`) is found too.
+- Not reported: conditions, which are ordinary for tests that only some platforms run:
+  `it.skipIf`, `it.runIf`, `@pytest.mark.skipif(...)`, `@unittest.skipIf(...)` and
+  `skipUnless(...)`, Playwright's `test.skip(browserName === 'webkit', 'reason')` and
+  `test.fixme(condition, ...)` (a first argument that is not a title), JUnit's `@DisabledIf...`,
+  `@DisabledOn...`, `@EnabledIf...`; unless the condition is a plain `true` (`test.skip(true, ...)`,
+  `skipif(True, ...)`). Also not: an assumption whose condition is computed
+  (`assumeTrue(ready())`); a method declared with the name `abort`, with or without a return type
+  (`abort(): void {}`), or another object's `abort` (`controller . abort()`); another object's
+  `fit` (`model.fit(X, y)`) or a function declared `fit`; a skip from inside a test under a
+  condition (`if not has_gpu: pytest.skip(...)`, `if testing.Short() { t.Skip(...) }`).
+- Each added line of at most 2,000 characters is read two ways: its code (comments dropped, the
+  insides of strings emptied), and as it is written (unless the whole line is a comment: it starts
+  with `//`, or with a `#` that no name follows). Two or three added lines are read the same two
+  ways together: their code read across the line breaks, and the lines as written joined by a
+  space. One line cannot tell its quotes for certain, so what a line shows as written is never
+  hidden: a switch's words inside a string, a text block, a trailing comment or a block comment's
+  line are reported too, and `check-pr` shows the line. A longer added line is not read: Integrity
+  says how many lines of the file were not (a note), `check-pr` warns. The lint's work grows with
+  the lines it is given and no faster, whatever they hold.
 - Not seen by the lint, as examples: a switch reached through another name (`const later =
-  it.skip`, then `later('x', ...)`; a custom annotation that carries `@Disabled`); a switch of which
-  the change wrote only a part (`.skip(` under an `it` that was there) or one written over more
-  than three lines; a quote in a regular expression before a comment between a switch's words
-  (`const r = /'\//; it //'`, then `.skip(` on the next line); a test moved into a class or a
-  `describe` block that is already switched off; a test skipped from inside its body. For a file a
-  runner owns (Maven Surefire, Vitest), `sdlc check` reports how many tests that ran before the
-  change do not run now, whatever the source says; for a file no runner owns, and in `check-pr`,
-  which runs no test, nothing does.
+  it.skip`, then `later('x', ...)`; a custom annotation that carries `@Disabled`; `@skip` imported
+  from `unittest`); a switch of which the change wrote only a part (`.skip(` under an `it` that was
+  there) or one written over more than three lines; a switch on an added line longer than 2,000
+  characters; a quote in a regular expression before a comment between a switch's words
+  (`const r = /'/; it /* ' */ .skip(...)`, or `const r = /'\//; it //'` and `.skip(` on the next
+  line); a pytest skip mark kept in a variable and applied elsewhere (`skip_slow =
+  pytest.mark.skip(...)`, `item.add_marker(...)`); a skip from inside a test whose condition is not
+  on its line or the added line above it; a test moved into a class or a `describe` block that is
+  already switched off; an empty test. For a file a runner owns (Maven Surefire, Vitest),
+  `sdlc check` reports how many tests that ran before the change do not run now, whatever the
+  source says; for a file no runner owns, and in `check-pr`, which runs no test, nothing does.
 - A switch on an added line is reported as that line, whatever the change did with the test: a
   skipped test that is moved, given another title or edited on the line of its switch is
   reported as switched off. When overloads of a method change places, git shows one of them
@@ -423,11 +444,12 @@ Claude Code, in `.claude/settings.json`:
 - Which tests a file holds is not read from its source. A test removed, renamed or moved is
   said by the run when a runner owns the file, and by nothing otherwise (nor by `check-pr`). A
   deleted test file (named or placed like one, or under `paths.test`) is read by the lines the
-  change removes: it is a problem when it is named like a test file, or the code of one of its
-  lines calls `it`, `test` or `describe`, defines a test function or carries a JUnit test
-  annotation (`@Test`, `@ParameterizedTest`, ...); a note when only a comment or a string in it
-  mentions one, or it is not a source file (a fixture that holds sample source); otherwise a note
-  (a fixture or a helper). A test file deleted and added elsewhere with exactly the same lines is
+  change removes, which are all of its lines in order: it is a problem when it is named like a
+  test file, or its code calls `it`, `test` or `describe`, defines a test function or carries a
+  JUnit test annotation (`@Test`, `@ParameterizedTest`, ...). That code is read as one text, so an
+  example inside a comment or a template string that runs over several lines is text, not code. A
+  note when only a comment or a string in it mentions one, or it is not a source file (a fixture
+  that holds sample source); otherwise a note (a fixture or a helper). A test file deleted and added elsewhere with exactly the same lines is
   a note; so is a JVM test class moved to another package (only its package line differs). One
   whose import lines differ too is a note, "moved and its imports changed": an import can change
   what a name in it means, and the run of the moved file is its judge. One edited otherwise on the

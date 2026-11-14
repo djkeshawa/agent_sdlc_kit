@@ -34,8 +34,9 @@ unit and integration tests, Playwright or Cypress for end-to-end tests.
   it), random values without a seed, the network (mock `fetch` with MSW or the project's
   helper), or shared files. Reset mocks between tests.
 - **JST-08 No disabling.** Never `it.skip`, `xit`, `describe.skip`, `.only`, `.todo` left in,
-  `--passWithNoTests`, or a deleted assertion. The hook, git hook and PR policy refuse them. Fix
-  the flake: usually time, order, unawaited promises or shared state.
+  `--passWithNoTests`, or a deleted assertion. The hook refuses `--passWithNoTests`; the git hook
+  and the PR policy look for the usual forms of the others on the lines you add, and
+  `java .agent/Sdlc.java check` shows a test that no longer runs. Fix the flake: usually time, order, unawaited promises or shared state.
 - **JST-09 Test data** through small builders in the test file, not giant shared fixtures. Fake
   secrets in tests carry `// guard:allow-secret` on that line.
 - **JST-10 Coverage is a floor, not a goal.** The runner writes `coverage/lcov.info` for
