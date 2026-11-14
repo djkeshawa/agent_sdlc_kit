@@ -557,7 +557,8 @@ final class IntegrityTests {
         // names that hold the words of a switch
         check("integrity: another object's fit, a function declared fit, and words that hold a switch's letters are not switches",
                 Integrity.lintedSwitches(List.of("    model.fit(X_train, y_train)", "    def fit(self, X, y):", "    fitAddon.fit();", "    const skipped = rows.filter(r => r.only);",
-                        "    expect(benefit).toBe(1);", "    const opts = { skip: 10, take: 5 };", "    it('paginates', async () => { await repo.find({ skip: true }) })")).isEmpty());
+                        "    expect(benefit).toBe(1);", "    const opts = { skip: 10, take: 5 };", "    it('paginates', async () => { await repo.find({ skip: true }) })",
+                        "    result = fit(data)", "  next() { this.skip(10); }")).isEmpty());
         // a skip from inside a test under a condition, on its line or the added line above it
         check("integrity: a skip from inside a test under a condition is not a switch",
                 Integrity.lintedSwitches(List.of("    if not has_gpu: pytest.skip(\"needs a GPU\")", "    if testing.Short() { t.Skip(\"short mode\") }",
@@ -565,7 +566,11 @@ final class IntegrityTests {
                 && Integrity.lintedSwitches(List.of("    if not has_gpu:", "        pytest.skip(\"needs a GPU\")")).isEmpty()
                 && Integrity.lintedSwitches(List.of("\tif testing.Short() {", "\t\tt.Skipf(\"short mode: %s\", why)", "\t}")).isEmpty()
                 && Integrity.lintedSwitches(List.of("    except ImportError:", "        raise unittest.SkipTest(\"needs numpy\")")).isEmpty()
-                && Integrity.lintedSwitches(List.of("  if (browserName === 'webkit') {", "    test.skip();")).isEmpty());
+                && Integrity.lintedSwitches(List.of("  if (browserName === 'webkit') {", "    test.skip();")).isEmpty()
+                && !Integrity.lintedSwitch("  if (!process.env.CI) test.skip(true, 'local only');"));
+        check("integrity: a switch chosen by a condition is not a switch; one kept for later use is",
+                !Integrity.lintedSwitch("const describeIf = process.env.DB ? describe : describe.skip;") && !Integrity.lintedSwitch("(isCI ? it.skip : it)('x', () => {});")
+                && Integrity.lintedSwitch("const later = it.skip;") && Integrity.lintedSwitch("test.skip(true, 'later');"));
     }
 
     /** Audit round 3, finding 4: the usual spellings, each beside an honest neighbour. */
@@ -594,6 +599,14 @@ final class IntegrityTests {
         check("integrity: the same words that are not such a statement are not",
                 !Integrity.lintedSwitch("    # pytest.skip(\"later\")") && !Integrity.lintedSwitch("    doc = 'pytest.skip(x)'") && !Integrity.lintedSwitch("    s = mocker.skip(1)")
                 && !Integrity.lintedSwitch("    result = pytest.importorskip(\"numpy\")"));
+        check("integrity: Mocha's specify, TestNG's enabled = false, Vitest's skipIf(true) and runIf(false), and Jasmine's pending() are switches",
+                Integrity.lintedSwitch("specify.skip('x', () => {})") && Integrity.lintedSwitch("xspecify('x', () => {})") && Integrity.lintedSwitch("  @Test(enabled = false)")
+                && Integrity.lintedSwitch("  @Test(description = \"x\", enabled = false)") && Integrity.lintedSwitch("it.skipIf(true)('x', () => {})")
+                && Integrity.lintedSwitch("describe.runIf(false)('x', () => {})") && Integrity.lintedSwitch("    pending('later');"));
+        check("integrity: their honest neighbours are not",
+                !Integrity.lintedSwitch("  @Test(enabled = true)") && !Integrity.lintedSwitch("  @Test(expected = IllegalStateException.class)") && !Integrity.lintedSwitch("it.skipIf(isWindows)('x', () => {})")
+                && !Integrity.lintedSwitch("describe.runIf(process.env.DB)('x', () => {})") && !Integrity.lintedSwitch("    const p = pending(order);")
+                && !Integrity.lintedSwitch("    if (!ready) pending('not ready');") && !Integrity.lintedSwitch("specify('x', () => {})"));
         check("integrity: a pending test, its whole declaration on one line, is a switch; a test with a body is not",
                 Integrity.lintedSwitch("it('pending test');") && Integrity.lintedSwitch("  test(\"later\")") && !Integrity.lintedSwitch("it('works', () => {});")
                 && !Integrity.lintedSwitch("it('works', async () => {") && !Integrity.lintedSwitch("  it(name);"));
@@ -622,7 +635,8 @@ final class IntegrityTests {
         for (int i = 0; near.length() < 1980; i++) near.append('w').append(i).append("\\u000a");
         List<String> shapes = List.of("const x = '" + "/* ".repeat(660) + "';", "const skip" + "x".repeat(1980) + " = 1;", near + "\";",
                 "abort(".repeat(330), "assumeTrue(x, ".repeat(140), "it.".repeat(660) + "x;", "@a.".repeat(660), "test.skip(".repeat(190), "marks=[".repeat(280),
-                "it('x', { skip: 1 }, ".repeat(95), "`${`".repeat(490), "'".repeat(1990), "\\u".repeat(990));
+                "it('x', { skip: 1 }, ".repeat(95), "`${`".repeat(490), "'".repeat(1990), "\\u".repeat(990), "it.skip ".repeat(249), "@Test(".repeat(330),
+                "@pytest.mark.skipif(".repeat(99));
         for (String shape : shapes) {
             long once = work(Collections.nCopies(60, shape)), twice = work(Collections.nCopies(120, shape));
             long chars = 120L * shape.length();

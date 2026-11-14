@@ -111,13 +111,20 @@ public final class Integrity {
     private static final String DOT = "\\s*\\??\\.\\s*";
     /** it.skip, test.only, describe.todo, test.fixme; also it.concurrent.skip, it?.skip. Group 1 is the modifier. */
     private static final Pattern SCRIPT_SWITCH = Pattern.compile(
-            "(?=[itdcs])\\b(?:it|test|describe|context|suite)(?:" + DOT + "\\w+){0,8}?" + DOT + "(skip|todo|only|fixme)\\b");
-    /** xit, xtest, xdescribe, xcontext, fit, fdescribe, called or with .each: not another object's (model.fit(x)) nor a declaration (def fit(...)). */
-    private static final Pattern ALIAS = Pattern.compile(
-            "(?=[xf])(?<![\\w$.])(?<!def )(?<!function )(?<!fun )(?:x(?:it|test|describe|context)|f(?:it|describe))(?=\\s*(?:\\(|\\.\\s*each\\b))");
+            "(?=[itdcs])\\b(?:it|test|describe|context|suite|specify)(?:" + DOT + "\\w+){0,8}?" + DOT + "(skip|todo|only|fixme)\\b");
+    /** Vitest's conditions with a plain literal that always skips: it.skipIf(true), describe.runIf(false). */
+    private static final Pattern LITERAL_IF = Pattern.compile(
+            "(?=[itdcs])\\b(?:it|test|describe|context|suite)(?:" + DOT + "\\w+){0,8}?" + DOT + "(?:skipIf\\s*\\(\\s*true|runIf\\s*\\(\\s*false)\\s*\\)");
+    /**
+     * xit, xtest, xdescribe, xcontext, xspecify, fdescribe, called or with .each; fit with a
+     * title (fit('x', ...)), as fit(data) may be any function. Not another object's (model.fit(x))
+     * nor a declaration (def fit(...)).
+     */
+    private static final Pattern ALIAS = Pattern.compile("(?=[xf])(?<![\\w$.])(?<!def )(?<!function )(?<!fun )"
+            + "(?:(?:x(?:it|test|describe|context|specify)|fdescribe)(?=\\s*(?:\\(|\\.\\s*each\\b))|fit(?=\\s*(?:\\(\\s*['\"`]|\\.\\s*each\\b)))");
     private static final String TYPE_ARGUMENTS = "(?:<[^()<>]{0,200}>\\s*)?";
-    /** @Disabled and @Ignore, also qualified; @DisabledIf("true") and @EnabledIf("false"), whose condition is a plain literal. */
-    private static final Pattern ANNOTATION = Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*){0,12}(?:(?:Disabled|Ignore)\\b"
+    /** @Disabled and @Ignore, also qualified; @DisabledIf("true") and @EnabledIf("false"), whose condition is a plain literal; TestNG's @Test(enabled = false). */
+    private static final Pattern ANNOTATION = Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*){0,12}(?:(?:Disabled|Ignore)\\b|Test\\s*\\([^()]{0,300}?\\benabled\\s*=\\s*false\\b"
             + "|DisabledIf\\s*\\(\\s*(?:(?:value|expression)\\s*=\\s*)?\"\\s*true\\s*\"|EnabledIf\\s*\\(\\s*(?:(?:value|expression)\\s*=\\s*)?\"\\s*false\\s*\")");
     /** Assumptions.abort (also Assumptions.<Void>abort), and the line that imports it statically. */
     private static final Pattern ABORTS = Pattern.compile("(?=A)\\bAssumptions\\s*\\.\\s*" + TYPE_ARGUMENTS + "abort\\b");
@@ -126,15 +133,19 @@ public final class Integrity {
             "(?=[@pm])(?:@\\s*(?:\\(\\s*)?|\\b(?:pytestmark|marks)\\s*=\\s*(?:\\[[^\\]=]{0,200}?)?)pytest\\s*\\.\\s*mark\\s*\\.\\s*(skip|skipif|xfail)\\b");
     /** unittest's decorators. Group 1: skip, skipIf or skipUnless. */
     private static final Pattern UNITTEST_SKIP = Pattern.compile("@\\s*(?:\\(\\s*)?unittest\\s*\\.\\s*(skip|skipIf|skipUnless)\\b");
-    /** A skip from inside a test, as a statement of its own: pytest.skip(...), self.skipTest(...), raise unittest.SkipTest(...), Mocha's this.skip(), Go's t.Skip, t.Skipf, t.SkipNow. */
-    private static final Pattern BODY_SKIP = Pattern.compile("(?:^|[;{}:])\\s*(?:pytest\\s*\\.\\s*skip|self\\s*\\.\\s*skipTest|raise\\s+(?:unittest\\s*\\.\\s*)?SkipTest"
-            + "|this\\s*\\.\\s*skip|t\\s*\\.\\s*Skip(?:f|Now)?)\\s*\\(");
+    /**
+     * A skip from inside a test, as a statement of its own: pytest.skip(...), self.skipTest(...),
+     * raise unittest.SkipTest(...), Mocha's this.skip() (no argument), Go's t.Skip, t.Skipf, t.SkipNow,
+     * Jasmine's pending('reason').
+     */
+    private static final Pattern BODY_SKIP = Pattern.compile("(?:^|[;{}:])\\s*(?:(?:pytest\\s*\\.\\s*skip|self\\s*\\.\\s*skipTest|raise\\s+(?:unittest\\s*\\.\\s*)?SkipTest"
+            + "|t\\s*\\.\\s*Skip(?:f|Now)?)\\s*\\(|this\\s*\\.\\s*skip\\s*\\(\\s*\\)|pending\\s*\\(\\s*(?:['\"`]|\\)))");
     /** What makes a skip from inside a test conditional, on its line or the one above it: if, else, a ternary, &&, || and their kin. */
     private static final Pattern CONDITION = Pattern.compile("(?=[iuewcf?&|])(?:\\b(?:if|unless|elif|else|when|except|catch|case|while|for)\\b|\\?(?![.?])|&&|\\|\\|)");
     /** A test declared without a body, on one line of its own (its code: strings emptied): it('pending'); Mocha and Vitest report it as pending. */
     private static final Pattern PENDING = Pattern.compile("^(?:it|test|specify)\\s*\\(\\s*(?:''|\"\"|``)\\s*\\)\\s*;?$");
     /** A test declaration, for its option object (Vitest: test('x', { skip: true }, fn)). */
-    private static final Pattern DECLARATION = Pattern.compile("(?=[itdsc])\\b(?:it|test|describe|suite|context)(?:" + DOT + "\\w+){0,3}?\\s*\\(");
+    private static final Pattern DECLARATION = Pattern.compile("(?=[itdsc])\\b(?:it|test|describe|suite|context|specify)(?:" + DOT + "\\w+){0,3}?\\s*\\(");
     private static final Pattern OPTION = Pattern.compile("(?=[sot])\\b(?:skip|only|todo)\\s*:\\s*true\\b");
     private static final Pattern ABORT = Pattern.compile("(?=a)\\babort\\s*" + TYPE_ARGUMENTS + "\\(");
     private static final Pattern ASSUME = Pattern.compile("(?=a)\\bassume(True|False)\\s*\\(");
@@ -149,7 +160,7 @@ public final class Integrity {
      * insides of strings, and makes white space one space), so the line's words stand for its readings'.
      */
     private static final Pattern KEY = Pattern.compile(
-            "(?=[sStofDIEaxf])(?:skip|Skip|todo|only|fixme|Disabled|Ignore|EnabledIf|abort|assume|xfail|xit|xtest|xdescribe|xcontext|fit|fdescribe)");
+            "(?=[sStofDIEaxfepr])(?:skip|Skip|todo|only|fixme|runIf|pending|Disabled|Ignore|EnabledIf|enabled|abort|assume|xfail|xit|xtest|xdescribe|xcontext|xspecify|fit|fdescribe)");
     private static final int SKIP = 1, MODIFIER = 2, ANNOTATED = 4, ABORTED = 8, ASSUMED = 16, XFAIL = 32, ALIASED = 64;
 
     /** The kinds of switch a line's words allow (see KEY), in one pass. */
@@ -157,9 +168,9 @@ public final class Integrity {
         int keys = 0;
         for (Matcher k = KEY.matcher(new Counted(decodedLine)); k.find();) {
             keys |= switch (k.group()) {
-                case "skip", "Skip" -> SKIP | MODIFIER;
-                case "todo", "only", "fixme" -> MODIFIER;
-                case "Disabled", "Ignore", "EnabledIf" -> ANNOTATED;
+                case "skip", "Skip", "pending" -> SKIP | MODIFIER;
+                case "todo", "only", "fixme", "runIf" -> MODIFIER;
+                case "Disabled", "Ignore", "EnabledIf", "enabled" -> ANNOTATED;
                 case "abort" -> ABORTED;
                 case "assume" -> ASSUMED;
                 case "xfail" -> XFAIL;
@@ -432,54 +443,61 @@ public final class Integrity {
      * declaration on one line) is not looked for.
      */
     private static boolean switched(Reading r, int keys, String above, boolean single) {
-        String around = r.code() + " " + above;
-        return switched(r.code(), keys, true, around, single) || r.written() != null && switched(r.written(), keys, false, around, single);
+        if (keys == 0 && !single) return false;
+        // whether a skip from inside a test is conditional: read once, for every skip of the line
+        boolean conditional = keys != 0 && (CONDITION.matcher(new Counted(r.code())).find() || CONDITION.matcher(new Counted(above)).find());
+        return switched(r.code(), keys, true, conditional, single) || r.written() != null && switched(r.written(), keys, false, conditional, single);
     }
 
     /** True when one reading holds a switch; keys are its line's (see keys): each kind of switch is looked for only where its word stands. */
-    private static boolean switched(String text, int keys, boolean code, String around, boolean single) {
+    private static boolean switched(String text, int keys, boolean code, boolean conditional, boolean single) {
         CharSequence s = new Counted(text);
         if (single && code && PENDING.matcher(s).lookingAt()) return true;
         if (keys == 0) return false;
-        if (code && (keys & SKIP) != 0 && BODY_SKIP.matcher(s).find() && !conditional(around)) return true;
+        if (code && (keys & SKIP) != 0 && BODY_SKIP.matcher(s).find() && !conditional) return true;
         if ((keys & ANNOTATED) != 0 && ANNOTATION.matcher(s).find() || (keys & ABORTED) != 0 && ABORTS.matcher(s).find()
                 || (keys & ALIASED) != 0 && ALIAS.matcher(s).find()) {
             return true;
         }
         Budget budget = new Budget(s.length());
-        if ((keys & MODIFIER) != 0 && (scriptSwitch(s, around, budget) || options(s, budget))) return true;
+        if ((keys & MODIFIER) != 0 && (scriptSwitch(s, conditional, budget) || options(s, budget))) return true;
         if ((keys & (SKIP | XFAIL)) != 0 && pythonSwitch(s, budget)) return true;
         return (keys & ABORTED) != 0 && !bareAborts(s, budget, true).isEmpty() || (keys & ASSUMED) != 0 && !assumptions(s, budget, true).isEmpty();
     }
 
-    private static boolean conditional(String around) {
-        return CONDITION.matcher(new Counted(around)).find();
-    }
-
     /**
      * it.skip, test.only and their kin. A skip or a fixme whose first argument is a title (a
-     * string) or a plain true is a switch, and so is one followed by another member (.each) or
-     * by nothing (a reference); one with no arguments skips from inside a test (Playwright's
-     * test.skip()), a switch where it is unconditional; one whose first argument is a condition,
-     * and whose second is a description or absent, is a conditional skip (Playwright's
+     * string) is a switch, and so is one followed by another member (.each). One with no
+     * arguments or a plain true skips from inside a test (Playwright's test.skip(),
+     * test.skip(true, 'reason')), and one followed by nothing is a reference (const later =
+     * it.skip): each a switch where it is unconditional (see lintedSwitches), not in an if or a
+     * ternary (cond ? describe : describe.skip). One whose first argument is a condition, and
+     * whose second is a description or absent, is a conditional skip (Playwright's
      * test.skip(browserName === 'webkit', 'reason')): not a switch. A function as the second
      * argument makes it a declaration with a computed title (it.skip(name, () => {})): a switch.
+     * Vitest's it.skipIf(true) and runIf(false) are switches.
      */
-    private static boolean scriptSwitch(CharSequence s, String around, Budget budget) {
+    private static boolean scriptSwitch(CharSequence s, boolean conditional, Budget budget) {
+        if (LITERAL_IF.matcher(s).find()) return true;
         Matcher m = SCRIPT_SWITCH.matcher(s);
         while (m.find()) {
             String modifier = m.group(1);
             if (modifier.equals("only") || modifier.equals("todo")) return true;
             int at = m.end();
             while (at < s.length() && blank(s.charAt(at))) at++;
-            if (at >= s.length() || s.charAt(at) != '(') return true;
-            Arguments a = arguments(s, at, budget);
-            if (a.list().isEmpty()) {
-                if (!a.closed() || !conditional(around)) return true;
+            if (at < s.length() && s.charAt(at) == '.') return true;
+            if (at >= s.length() || s.charAt(at) != '(') {
+                if (!conditional) return true;
                 continue;
             }
-            String first = a.list().get(0);
-            if (first.isEmpty() && !a.closed() || literal(first) || first.equals("true")) return true;
+            Arguments a = arguments(s, at, budget);
+            if (a.list().isEmpty() && !a.closed()) return true;
+            String first = a.list().isEmpty() ? "" : a.list().get(0);
+            if (a.list().isEmpty() || first.equals("true")) {
+                if (!conditional) return true;
+                continue;
+            }
+            if (first.isEmpty() && !a.closed() || literal(first)) return true;
             if (a.list().size() >= 2 && !a.list().get(1).isEmpty() && !literal(a.list().get(1))) return true;
         }
         return false;
@@ -664,7 +682,7 @@ public final class Integrity {
     }
 
     /** What withoutBuiltInSwitches takes out: the words of every switch the lint judges, conditional ones too (it judges them not switches). */
-    private static final Pattern BUILT_IN = Pattern.compile(SCRIPT_SWITCH.pattern() + "|\\b[xf](?:it|test|describe|context)\\b"
+    private static final Pattern BUILT_IN = Pattern.compile(SCRIPT_SWITCH.pattern() + "|\\b[xf](?:it|test|describe|context|specify)\\b"
             + "|@\\s*(?:[\\w$]+\\s*\\.\\s*){0,12}(?:Disabled\\w*|Ignore|EnabledIf\\w*)\\b|" + ABORTS.pattern()
             + "|\\bpytest\\s*\\.\\s*(?:mark\\s*\\.\\s*)?(?:skip\\w*|xfail)\\b|\\bunittest\\s*\\.\\s*skip\\w*|\\bself\\s*\\.\\s*skipTest\\b|\\bSkipTest\\b"
             + "|\\bthis\\s*\\.\\s*skip\\b|\\bt\\s*\\.\\s*Skip\\w*");
@@ -692,7 +710,7 @@ public final class Integrity {
     }
 
     /** How a reported line is named: focused (only this test runs) or switched off. */
-    private static final Pattern FOCUSED = Pattern.compile("\\b(?:it|test|describe|context|suite)(?:" + DOT + "\\w+){0,8}" + DOT + "only\\b"
+    private static final Pattern FOCUSED = Pattern.compile("\\b(?:it|test|describe|context|suite|specify)(?:" + DOT + "\\w+){0,8}" + DOT + "only\\b"
             + "|(?<![\\w$.])f(?:it|describe)(?=\\s*(?:\\(|\\.\\s*each\\b))|\\bonly\\s*:\\s*true\\b");
     private static final Pattern JAVA_ASSERT = Pattern.compile(
             "\\b(?:assert|verify)\\w*\\s*\\(|\\b(?=\\w*?(?i:expect))\\w++\\s*\\(|\\.should\\w*\\s*\\(|\\bfail\\s*\\(|\\bassert\\s|\\bexpected\\s*=");

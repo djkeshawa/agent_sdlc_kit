@@ -390,18 +390,20 @@ Claude Code, in `.claude/settings.json`:
   qualified, `@org.junit.jupiter.api.Disabled`), and `@DisabledIf("true")` or `@EnabledIf("false")`;
   an assumption with a plain `false` among its arguments (`assumeTrue(false, () -> "later")`) or
   `assumeFalse` with a plain `true`; `Assumptions.abort` (also `Assumptions.<Void>abort`), the line
-  that imports it statically, and `abort(` called alone; `skip`, `todo`, `only` and `fixme` on
-  `it`, `test`, `describe`, `context` or `suite` (also `it.concurrent.skip`, `it?.skip`,
-  `test.skip.each`), `xit`/`xdescribe`, `fit`/`fdescribe` (also with `.each`); an option object
+  that imports it statically, and `abort(` called alone; TestNG's `@Test(enabled = false)`;
+  `skip`, `todo`, `only` and `fixme` on `it`, `test`, `describe`, `context`, `suite` or `specify`
+  (also `it.concurrent.skip`, `it?.skip`, `test.skip.each`), `xit`/`xdescribe`/`xspecify`,
+  `fit`/`fdescribe` (also with `.each`), `it.skipIf(true)` and `runIf(false)`; an option object
   that says `skip`, `only` or `todo: true` in a test declaration (`test('x', { skip: true }, fn)`);
   a test declared without a body, its whole declaration on one line (`it('pending');`);
   `@pytest.mark.skip` (also in parentheses, in `pytestmark = ...` and in `marks=...`),
   `skipif(True, ...)` and `xfail(run=False)`; `@unittest.skip`, `skipIf(True, ...)`,
   `skipUnless(False, ...)`. A skip from inside a test as a statement of its own (`pytest.skip(...)`,
   `self.skipTest(...)`, `raise unittest.SkipTest(...)`, Mocha's `this.skip()`, `t.Skip`,
-  `t.Skipf`, `t.SkipNow`, Playwright's `test.skip()`) is found where the added lines show it
-  unconditional: not on a line, or under an added line, that holds `if`, `else`, `except`, a
-  ternary, `&&` or `||`. White space of any kind a language allows may stand between the words,
+  `t.Skipf`, `t.SkipNow`, Jasmine's `pending('reason')`, Playwright's `test.skip()` and
+  `test.skip(true, ...)`), and a switch kept for later (`const later = it.skip`), are found where
+  the added lines show them unconditional: not on a line, or under an added line, that holds `if`,
+  `else`, `except`, a ternary, `&&` or `||` (`cond ? describe : describe.skip` is a condition). White space of any kind a language allows may stand between the words,
   and Unicode escapes (`\u0040Disabled`) are read as a compiler reads them. A switch written over
   two or three added lines (`it`, then `.skip(` on the next; a block comment that closes on the
   next line; a Python line ending in `\`) is found too.
@@ -413,7 +415,8 @@ Claude Code, in `.claude/settings.json`:
   `skipif(True, ...)`). Also not: an assumption whose condition is computed
   (`assumeTrue(ready())`); a method declared with the name `abort`, with or without a return type
   (`abort(): void {}`), or another object's `abort` (`controller . abort()`); another object's
-  `fit` (`model.fit(X, y)`) or a function declared `fit`; a skip from inside a test under a
+  `fit` (`model.fit(X, y)`), `fit` called without a title (`fit(data)`) or a function declared
+  `fit`; `this.skip(10)` (Mocha's takes no argument); a skip from inside a test under a
   condition (`if not has_gpu: pytest.skip(...)`, `if testing.Short() { t.Skip(...) }`).
 - Each added line of at most 2,000 characters is read two ways: its code (comments dropped, the
   insides of strings emptied), and as it is written (unless the whole line is a comment: it starts
