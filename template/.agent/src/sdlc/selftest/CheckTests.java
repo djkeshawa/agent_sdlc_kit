@@ -877,6 +877,15 @@ final class CheckTests {
                         + "expected something else, and the change skips it now\n")
                 && !rowOff.contains("ran before the change and is skipped now") && code == 1);
 
+        // a row the change breaks, switched off, with a new row after it: the skips could not be judged (more are skipped while as many run),
+        // and the fourth run finds the row skipped now failing on the change, with no case that could be it rewritten
+        write(repo, "checks/broken.t", MENDED.replace("rows(int)[1]: pass", "rows(int)[1]: skip").replace("rows(int)[2]: pass", "rows(int)[2]: pass\nrows(int)[3]: pass"));
+        String behind = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a row switched off behind a new one could not be judged by its skips, and the fourth run fails it when the change breaks it",
+                behind.contains("(skipped now under a name that ran before: rows(int)[1]). So more are skipped while as many or more run")
+                && behind.contains("      checks/broken.t  [self test]\n        rows(int)[1]: passed before the change; as the test was, on the code after the change "
+                        + "rows(int)[1] fails: expected something else, and the change skips it now\n") && code == 1);
+
         // and a row taken out of the arguments: the file runs fewer cases. Named by place, taking out the last row (as here) and taking out the first,
         // which the change breaks, so that the last takes its place, give the same reports: the check fails either way, as the file reports fewer cases
         write(repo, "checks/broken.t", MENDED.replace("rows(int)[2]: pass\n", ""));

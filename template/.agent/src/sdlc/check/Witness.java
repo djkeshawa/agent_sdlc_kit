@@ -350,18 +350,10 @@ final class Witness {
     /**
      * What the fourth run said. first: each file's first run, null when it gave no result. broke:
      * per file, the old tests that passed in the file as it was and failed or threw here in every
-     * run; wavered: those that did so in some runs only.
+     * run; wavering: those that did so in some runs only.
      */
     private record Fourth(Map<String, FileRun> first, Map<String, Set<String>> broke, Map<String, Set<String>> wavering) {
         static final Fourth NONE = new Fourth(Map.of(), Map.of(), Map.of());
-
-        boolean broke(String file, java.util.Collection<String> keys) {
-            return keys.stream().anyMatch(broke.getOrDefault(file, Set.of())::contains);
-        }
-
-        boolean wavered(String file, java.util.Collection<String> keys) {
-            return keys.stream().anyMatch(wavering.getOrDefault(file, Set.of())::contains);
-        }
 
         /** "passed before the change; as the test was, on the code after the change x fails: why", of those keys that broke. */
         String said(String file, java.util.Collection<String> keys) {
@@ -634,7 +626,7 @@ final class Witness {
      *
      *   the file reports F names it did not report before and no longer reports G, so it has at
      *   least F - G tests it did not have, whatever the names (each name it reports on both sides
-     *   stands for one case on each side, so the rest of the cases are counted by F and G alone).
+     *   has as many cases on each side, so the rest of the cases are counted by F and G alone).
      *   Of all its cases after the change, X do not pass on both sides (they fail before, fail
      *   after, could not be judged, or are skipped where a skip may hide a test). A new test is
      *   one of the cases after the change, so at least F - G - X new tests pass on both sides.
