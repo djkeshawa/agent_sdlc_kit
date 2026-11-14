@@ -229,7 +229,7 @@ final class Witness {
     /**
      * What one case says. A case the build ran again after it failed (Surefire's
      * rerunFailingTestsCount) is RETRIED where a rerun passed: it is not one result, and it need
-     * not be a test either, as a set-up that failed and passed when run again is reported so too.
+     * not be a test either, as a set-up that failed and passed when run again may be reported so.
      * One that failed in every run is FAILED or ERRORED, as the build counts it: it failed.
      */
     enum Out {
@@ -1186,8 +1186,7 @@ final class Witness {
      * never says which change, of the tests or of the code, took them.
      *
      * A case that passed only when the build ran it again is not counted in r0: a set-up that
-     * failed and passed when run again (Surefire runs a class whose set-up failed again) is
-     * reported so too, and it is not a test. Where only such cases make the count, so that more
+     * failed and passed when run again may be reported so, and it is not a test. Where only such cases make the count, so that more
      * cases passed as it was than run now only with them, it could not be judged, with why: a
      * flaky test switched off reads so, and so does a flaky set-up that stopped failing.
      *
@@ -1299,8 +1298,8 @@ final class Witness {
         if (whole && withAgain - t > 0) {
             // fewer run than passed as it was in every run only where the cases that passed when the build ran them again count
             return List.of(new Verdict(f, "", Kind.UNKNOWN, counts + ", and passed " + (minP0 - minR0) + " more only when the build ran " + (minP0 - minR0 == 1 ? "it" : "them") + " again"
-                    + shows + ": a case that passed only when run again may be a set-up that failed and then passed (Surefire runs a class whose set-up failed again), not a test, "
-                    + "so whether a test that ran does not run now is not known", by, (int) (withAgain - t), Cover.FILE));
+                    + shows + ": a case that passed only when run again may be a set-up that failed and then passed, not a test, so whether a test that ran does not run now "
+                    + "is not known", by, (int) (withAgain - t), Cover.FILE));
         }
         // fewer run than passed as it was in some runs only, beyond the old tests said: unstable
         if (!whole || most - t - u > 0) {
@@ -1510,7 +1509,7 @@ final class Witness {
     /** Why a skipped case need not be one test. */
     private static final String HIDES = " (a skipped class, factory or template is reported as one case, whatever number of tests it holds)";
     /** Why a case the build ran again need not be one test. */
-    private static final String AGAIN = " (the build runs again a set-up that failed, as Surefire does a class, and reports it as a case of its own beside or in place of the tests)";
+    private static final String AGAIN = " (a set-up that failed and was run again may be reported as a case of its own, beside or in place of the tests)";
 
     /**
      * Why an edited file's reports may not list every test it has: before, of the report of the

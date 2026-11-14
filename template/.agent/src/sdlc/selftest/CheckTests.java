@@ -1474,7 +1474,7 @@ final class CheckTests {
         check("every difference: a test that passed only when the build ran it again, switched off, could not be judged, with why",
                 retried.contains("1 could not be judged\n      checks/retry.t  [self test]\n        the file as it was passed 1 of its tests, and after the change it runs 1, and passed "
                         + "1 more only when the build ran it again (skipped now under a name that ran before: flaky): a case that passed only when run again may be a set-up that failed "
-                        + "and then passed (Surefire runs a class whose set-up failed again), not a test, so whether a test that ran does not run now is not known\n")
+                        + "and then passed, not a test, so whether a test that ran does not run now is not known\n")
                 && !lostSaid(retried) && !retried.contains(NO_RULE) && code == 0);
         Check.mute(java.util.Set.of("lost"));
         String retriedMuted = report(Map.of("selftest-runner", "true", "runs", "1"));
