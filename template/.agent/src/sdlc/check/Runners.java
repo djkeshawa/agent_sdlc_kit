@@ -240,6 +240,7 @@ public final class Runners {
 
     static final class Vitest implements Runner {
         private static final Pattern TEST_FILE = Pattern.compile(".*\\.(test|spec)\\.[cm]?[jt]sx?");
+        private static final Pattern DID_NOT_LOAD = Pattern.compile("SyntaxError|Failed to load|Failed to resolve import|Cannot find module|Transform failed|Failed to parse source");
         private static final Pattern SUPPORT_DIR = Pattern.compile("(^|.*/)(__tests__|__mocks__|__fixtures__|__snapshots__|fixtures|tests?)/.*");
 
         @Override
@@ -321,8 +322,10 @@ public final class Runners {
                         else if (unreadable != null) out.put(f, FileRun.failed("its report cannot be read (" + unreadable + ")"));
                         else if (p.code() == 124) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
                         else if (p.code() == 127) out.put(f, FileRun.failed("node could not be started (is Node.js on the PATH?)"));
-                        // vitest ran and gave this file no result: the file did not load (a syntax error, an import that fails)
-                        else out.put(f, FileRun.broken("did not load (vitest exit " + p.code() + ": " + tail(p.out() + "\n" + p.err(), 3).replaceAll("\\s+", " ") + ")"));
+                        // vitest gave this file no result. That is broken code only when vitest says it could not load the file;
+                        // a worker that did not start, or a file its configuration leaves out, says nothing about the code.
+                        else if (DID_NOT_LOAD.matcher(p.out() + "\n" + p.err()).find()) out.put(f, FileRun.broken("did not load (vitest exit " + p.code() + ": " + tail(p.out() + "\n" + p.err(), 3).replaceAll("\\s+", " ") + ")"));
+                        else out.put(f, FileRun.failed("gave no result (vitest exit " + p.code() + ": " + tail(p.out() + "\n" + p.err(), 3).replaceAll("\\s+", " ") + ")"));
                     }
                 } finally {
                     try {

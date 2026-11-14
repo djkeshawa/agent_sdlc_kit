@@ -190,9 +190,12 @@ public final class ShellRules {
             // their sensitive commands are refused and the rest is allowed. Anything else that carries the tool's name (a script
             // called sdlc somewhere, `env sdlc ...`) is not vouched for: its sensitive commands are refused all the same, and the
             // ordinary rules judge the rest.
-            boolean kit = w.endsWith(".agent/Sdlc.java") || w.endsWith(".agent/bin/sdlc") || w.endsWith(".agent/bin/sdlc.cmd") || w.equals("sdlc.Main");
+            // (and only where it is run: as the command itself, or as what java or a shell is given to run. In `cp x .agent/bin/sdlc`
+            // it is a file being written, which the write rules must judge.)
+            boolean run = i == 0 || INTERPRETERS.contains(baseName(words.get(0)));
+            boolean kit = run && (w.endsWith(".agent/Sdlc.java") || w.endsWith(".agent/bin/sdlc") || w.endsWith(".agent/bin/sdlc.cmd") || w.equals("sdlc.Main"));
             boolean plain = w.equals("sdlc") && i == 0;
-            boolean named = w.equals("sdlc") || w.endsWith("/sdlc") || w.endsWith("sdlc.cmd") || w.endsWith("Sdlc.java");
+            boolean named = run && (w.equals("sdlc") || w.endsWith("/sdlc") || w.endsWith("sdlc.cmd") || w.endsWith("Sdlc.java")) || w.equals("sdlc");
             if (!(kit || plain || named)) continue;
             boolean vouched = kit || plain;
             // the word sdlc as an argument (a folder, a search term) is not the tool. Judged on the words as written:
@@ -214,6 +217,7 @@ public final class ShellRules {
         return null;
     }
 
+    private static final Set<String> INTERPRETERS = Set.of("java", "sh", "bash", "dash", "zsh", "cmd");
     private static final Set<String> BEFORE_A_COMMAND = Set.of("env", "command", "exec", "nohup", "time", "nice", "sudo", "doas", "stdbuf", "timeout", "builtin", "xargs");
 
     /** True when every word is a command wrapper (env, exec, ...), one of its options or values, or a NAME=value: what follows is still the command. */

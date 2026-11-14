@@ -139,6 +139,9 @@ final class JavaGuardTests {
         expect("the packaged tool behind env with options: setup", shell("env -u PATH sdlc setup"), Decision.Kind.DENY);
         expect("the packaged tool behind exec: locking tests", shell("exec sdlc tests lock PROJ-1"), Decision.Kind.DENY);
         expect("the kit's launcher is still the tool", shell("sh .agent/bin/sdlc status"), Decision.Kind.ALLOW);
+        expect("writing over the kit's launcher is a write, not a run of the tool", shell("cp payload .agent/bin/sdlc"), Decision.Kind.DENY);
+        expect("nor over its bootstrap", shell("cp payload .agent/Sdlc.java"), Decision.Kind.DENY);
+        check("moving a file onto the launcher is not allowed either", shell("mv /tmp/x .agent/bin/sdlc").kind() != Decision.Kind.ALLOW);
         expect("packaged tool: check ok", shell("sdlc check"), Decision.Kind.ALLOW);
         expect("a folder named sdlc is not the tool", shell("ls sdlc setup"), Decision.Kind.ALLOW);
         expect("compile into build", shell("javac -d .agent/.build /tmp/Evil.java"), Decision.Kind.DENY);

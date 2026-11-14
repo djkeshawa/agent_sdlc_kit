@@ -115,6 +115,8 @@ public final class Integrity {
     private static final Pattern SCRIPT_THRESHOLD = Pattern.compile("[\"']?\\b(lines|branches|functions|statements)[\"']?\\s*:\\s*(\\d+(?:\\.\\d+)?)");
 
     private final Change change;
+    /** The added lines as the change wrote them; added holds the same lines in pieces of bounded length. */
+    private final Map<String, List<String>> whole;
     private final Map<String, List<String>> added;
     private final Map<String, List<String>> removed;
     private final Map<String, String> beforeText = new HashMap<>();
@@ -135,7 +137,8 @@ public final class Integrity {
 
     private Integrity(Change change) {
         this.change = change;
-        this.added = capped(change.addedLines());
+        this.whole = change.addedLines();
+        this.added = capped(whole);
         this.removed = capped(change.removedLines());
     }
 
@@ -201,9 +204,18 @@ public final class Integrity {
      * the rest is kept as it is: a doubtful line is scanned, not skipped.
      */
     static String code(String line) {
+        return code(line, 0);
+    }
+
+    private static String code(String line, int depth) {
         String t = line.stripLeading();
-        if (t.startsWith("*/")) t = t.substring(2);
-        else if (t.startsWith("*") || t.startsWith("#")) return ""; // inside a block comment; a comment of a script or a Python file
+        if (t.startsWith("#")) return ""; // a comment of a script or a Python file
+        if (t.startsWith("*")) {
+            // the inside of a block comment; what follows its end on the same line is code again
+            int end = t.indexOf("*/");
+            if (end < 0) return "";
+            t = t.substring(end + 2);
+        }
         StringBuilder out = new StringBuilder();
         int i = 0;
         while (i < t.length()) {
@@ -221,11 +233,17 @@ public final class Integrity {
                 if (end < 0) return out.append(t, i, t.length()).toString();
                 out.append(c);
                 if (c == '`') {
-                    // what a template string computes is code
-                    for (int at = t.indexOf("${", i); at >= 0 && at < end; at = t.indexOf("${", at + 2)) {
-                        int close = t.indexOf('}', at);
-                        if (close < 0 || close > end) break;
-                        out.append(' ').append(t, at + 2, close).append(' ');
+                    // what a template string computes is code; it is read the same way, strings inside it included
+                    int at = t.indexOf("${", i);
+                    while (at >= 0 && at < end) {
+                        int close = matching(t, at + 1, end);
+                        if (close < 0) {
+                            out.append(' ').append(t, at + 2, end).append(' '); // braces that do not pair up: kept as written
+                            break;
+                        }
+                        String inner = t.substring(at + 2, close);
+                        out.append(' ').append(depth < 4 ? code(inner, depth + 1) : inner).append(' ');
+                        at = t.indexOf("${", close);
                     }
                 }
                 out.append(c);
@@ -236,6 +254,17 @@ public final class Integrity {
             i++;
         }
         return out.toString();
+    }
+
+    /** The index of the brace that closes the one at open, before limit, counting braces in between; -1 when there is none. */
+    private static int matching(String t, int open, int limit) {
+        int depth = 0;
+        for (int i = open; i < limit; i++) {
+            char c = t.charAt(i);
+            if (c == '{') depth++;
+            else if (c == '}' && --depth == 0) return i;
+        }
+        return -1;
     }
 
     /** The index of the quote that closes the string starting at from, or -1. */
@@ -370,6 +399,7 @@ public final class Integrity {
         for (Map.Entry<String, List<String>> e : added.entrySet()) {
             if (!buildOrScript(e.getKey())) continue;
             for (String line : e.getValue()) skipFlag(e.getKey(), line, readAsXml.contains(e.getKey()));
+            for (String line : whole.getOrDefault(e.getKey(), List.of())) madeToPass(e.getKey(), line);
         }
         for (String path : change.paths("AM")) if ((path.equals("pom.xml") || path.endsWith("/pom.xml")) && !readAsXml.contains(path)) pluginSkips(path);
     }
@@ -458,8 +488,20 @@ public final class Integrity {
             problem(ignore ? "test failures ignored by the build" : "tests skipped by the build", path, text);
         }
         if (PASS_EMPTY.matcher(line).find()) problem("tests skipped by the build", path, "the test run passes even when it finds no tests: " + text);
+    }
+
+    /**
+     * "test command || true". Read on the whole line as the change wrote it, however long: a test
+     * command and the "|| true" that hides its failure may be far apart. The walk is one pass, and
+     * each command is squeezed and shortened before the pattern sees it.
+     */
+    private void madeToPass(String path, String line) {
         for (String command : commandsMadeToPass(line)) {
-            if (TEST_COMMAND.matcher(command).find()) problem("test failures ignored by the build", path, "a failing test command still counts as success: " + text);
+            String c = command.replaceAll("\\s+", " ");
+            if (c.length() > 2 * MAX_LINE) c = c.substring(0, MAX_LINE) + " " + c.substring(c.length() - MAX_LINE);
+            if (!TEST_COMMAND.matcher(c).find()) continue;
+            String shown = line.trim().replaceAll("\\s+", " ");
+            problem("test failures ignored by the build", path, "a failing test command still counts as success: " + shown);
         }
     }
 
@@ -659,7 +701,7 @@ public final class Integrity {
         if (!m.find()) return null;
         int open = text.indexOf('(', m.start());
         int close = closing(text, open, '(', ')');
-        return close < 0 ? null : text.substring(open, close + 1);
+        return close < 0 ? null : text.substring(m.end(), close + 1); // without the name: a renamed test has the same body
     }
 
     /** The index of the bracket that closes the one at open, skipping strings and comments; -1 when there is none. */
