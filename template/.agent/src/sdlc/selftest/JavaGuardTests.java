@@ -131,7 +131,8 @@ final class JavaGuardTests {
         expect("status ok", shell("java .agent/Sdlc.java status"), Decision.Kind.ALLOW);
         expect("packaged tool: setup by agent", shell("sdlc setup"), Decision.Kind.DENY);
         expect("packaged tool: locking tests by agent", shell("sdlc tests lock PROJ-1"), Decision.Kind.DENY);
-        expect("packaged tool by its path: hook by hand", shell("/usr/local/bin/sdlc hook pre-tool-use"), Decision.Kind.DENY);
+        expect("packaged tool: hook by hand", shell("sdlc hook pre-tool-use"), Decision.Kind.DENY);
+        check("a script that is merely named sdlc is not waved through as the tool", shell("./sdlc status").kind() != Decision.Kind.ALLOW && shell("/tmp/sdlc status").kind() != Decision.Kind.ALLOW);
         expect("packaged tool: check ok", shell("sdlc check"), Decision.Kind.ALLOW);
         expect("a folder named sdlc is not the tool", shell("ls sdlc setup"), Decision.Kind.ALLOW);
         expect("compile into build", shell("javac -d .agent/.build /tmp/Evil.java"), Decision.Kind.DENY);

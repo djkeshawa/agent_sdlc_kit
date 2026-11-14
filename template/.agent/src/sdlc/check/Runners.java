@@ -71,10 +71,18 @@ public final class Runners {
         return new JUnitXml.Case(c.suite(), c.name(), JUnitXml.Status.ERRORED, c.type(), c.message());
     }
 
-    /** True when the folder is a real folder inside the checkout: not a link, and not reached through one. */
+    /**
+     * True when the folder, or the nearest folder above it that exists, is a real folder inside the
+     * checkout: not a link, and not reached through one. A build that writes its reports through a
+     * linked "target" would write outside the checkout.
+     */
     private static boolean inside(Path checkout, Path dir) {
         try {
-            return Files.isDirectory(dir, java.nio.file.LinkOption.NOFOLLOW_LINKS) && dir.toRealPath().startsWith(checkout.toRealPath());
+            Path real = checkout.toRealPath();
+            Path at = dir;
+            while (at != null && !Files.exists(at, java.nio.file.LinkOption.NOFOLLOW_LINKS)) at = at.getParent();
+            if (at == null || !Files.isDirectory(at, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return false;
+            return at.toRealPath().startsWith(real);
         } catch (IOException e) {
             return false;
         }
@@ -150,7 +158,9 @@ public final class Runners {
                 if (Files.exists(reports) && !inside(checkout, reports)) unreadable = "the report folder is a link out of the checkout";
                 else if (Files.isDirectory(reports)) {
                     try (Stream<Path> s = Files.list(reports)) {
-                        for (Path r : s.filter(x -> x.getFileName().toString().matches("TEST-.*\\.xml")).sorted().toList()) cases.addAll(JUnitXml.read(r));
+                        for (Path r : s.filter(x -> x.getFileName().toString().matches("TEST-.*\\.xml") && Files.isRegularFile(x, java.nio.file.LinkOption.NOFOLLOW_LINKS)).sorted().toList()) {
+                            cases.addAll(JUnitXml.read(r));
+                        }
                     } catch (IOException e) {
                         unreadable = e.getMessage();
                     }
@@ -199,8 +209,8 @@ public final class Runners {
 
         /** Removes the reports of an earlier run. False when that cannot be done safely: the folder is a link, or a file stays. */
         private static boolean clear(Path checkout, Path reports) {
-            if (!Files.exists(reports, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return true;
             if (!inside(checkout, reports)) return false;
+            if (!Files.exists(reports, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return true;
             try (Stream<Path> s = Files.list(reports)) {
                 for (Path r : s.toList()) {
                     if (Files.isDirectory(r, java.nio.file.LinkOption.NOFOLLOW_LINKS)) continue;

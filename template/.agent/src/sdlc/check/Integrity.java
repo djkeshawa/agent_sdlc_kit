@@ -104,7 +104,7 @@ public final class Integrity {
     private static final Pattern GRADLE_IGNORE = Pattern.compile("\\bignoreFailures\\s*=\\s*true\\b");
     private static final Pattern PASS_EMPTY = Pattern.compile("--passWithNoTests\\b(?!\\s*=\\s*false)|[\"']?passWithNoTests[\"']?\\s*:\\s*true\\b");
     private static final Pattern PLUGIN_SKIP = Pattern.compile("<skip>\\s*true\\s*</skip>");
-    private static final Pattern OR_TRUE = Pattern.compile("(?:^|&&|;|[\"'`(]|\\|\\|)\\s*([^|;&\"'`(]+?)\\s*\\|\\|\\s*(?:true|:|exit\\s+0)(?=\\s|$|[\"'`;&)])");
+    private static final Pattern OR_TAIL = Pattern.compile("(?:true|:|exit\\s+0)(?=\\s|$|[\"'`;&)])");
     private static final Pattern TEST_COMMAND = Pattern.compile(
             "\\b(?:npm|yarn|pnpm)\\s+(?:run\\s+)?test\\b|\\b(?:npx\\s+)?(?:jest|vitest|mocha|pytest|karma|ava)\\b|\\bgo\\s+test\\b|\\bcypress\\s+run\\b|\\bplaywright\\s+test\\b"
                     + "|(?:^|[\\s/])(?:mvnw?|mvnw\\.cmd|gradlew?|gradlew\\.bat)\\b.*\\b(?:test|verify|check|build|install)\\b");
@@ -124,10 +124,20 @@ public final class Integrity {
     private final Set<String> lostCases = new LinkedHashSet<>();
     private Map<String, Set<String>> gained;
 
+    /** The scan reads what the change wrote. A line or a file beyond these sizes is cut or left out, so no input can keep it busy. */
+    private static final int MAX_LINE = 2000;
+    private static final int MAX_FILE = 2_000_000;
+
     private Integrity(Change change) {
         this.change = change;
-        this.added = change.addedLines();
-        this.removed = change.removedLines();
+        this.added = capped(change.addedLines());
+        this.removed = capped(change.removedLines());
+    }
+
+    private static Map<String, List<String>> capped(Map<String, List<String>> lines) {
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        lines.forEach((path, list) -> out.put(path, list.stream().map(l -> l.length() > MAX_LINE ? l.substring(0, MAX_LINE) : l).toList()));
+        return out;
     }
 
     /** The findings for a change: problems first, then notes, each in the order of the detectors and the files. */
@@ -156,13 +166,29 @@ public final class Integrity {
 
     private void switchedOff() {
         // the repository's own settings first (they may name more test folders), then the patterns of every stack
-        for (String hit : Checks.disabledTests(added)) switchedOff(hitPath(hit), hitLine(hit));
+        for (String hit : Checks.disabledTests(added)) {
+            if (Checks.containsDisabled(code(hitLine(hit)))) switchedOff(hitPath(hit), hitLine(hit));
+        }
         for (Map.Entry<String, List<String>> e : added.entrySet()) {
             if (!isTestFile(e.getKey())) continue;
             for (String line : e.getValue()) {
-                if (FOCUSED.matcher(line).find() || SWITCHED_OFF.stream().anyMatch(p -> p.matcher(line).find())) switchedOff(e.getKey(), line.trim());
+                String code = code(line);
+                if (FOCUSED.matcher(code).find() || SWITCHED_OFF.stream().anyMatch(p -> p.matcher(code).find())) switchedOff(e.getKey(), line.trim());
             }
         }
+    }
+
+    private static final Pattern STRING = Pattern.compile("\"(?:[^\"\\\\]|\\\\.)*+\"|'(?:[^'\\\\]|\\\\.)*+'|`(?:[^`\\\\]|\\\\.)*+`");
+
+    /**
+     * A line with what is not code taken out: a comment line is empty, and the inside of each
+     * string is dropped. "@Disabled" in a test's expected text, or it.skip( in a comment, switches
+     * nothing off.
+     */
+    static String code(String line) {
+        String t = line.stripLeading();
+        if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*") || t.startsWith("#")) return "";
+        return STRING.matcher(line).replaceAll("\"\"");
     }
 
     private void switchedOff(String path, String line) {
@@ -173,8 +199,21 @@ public final class Integrity {
     private static final java.util.regex.Pattern GENERATED = java.util.regex.Pattern.compile(
             "(.*/)?(mvnw|mvnw\\.cmd|gradlew|gradlew\\.bat|package-lock\\.json|npm-shrinkwrap\\.json|yarn\\.lock|pnpm-lock\\.yaml)|(.*/)?(\\.mvn|gradle)/wrapper/.*");
 
+    private static final sdlc.core.Config EVERY_LANGUAGE = sdlc.core.Config.parse(
+            "stack: java-maven\ntests:\n  codeExtensions: [java, kt, groovy, scala, js, jsx, ts, tsx, mjs, cjs, vue, svelte, py, go, rb, cs, php, rs]\n"
+                    + "paths:\n  test: [\"**/src/test/**\", \"**/*.test.*\", \"**/*.spec.*\", \"**/__tests__/**\", \"**/test/**\", \"**/tests/**\"]\n");
+
     private void secrets() {
-        for (String hit : Checks.secrets(added)) {
+        List<String> hits;
+        sdlc.core.Config own = sdlc.core.Ctx.cfg;
+        try {
+            // without the kit's configuration the scanner would know one stack's file types only
+            if (!java.nio.file.Files.isRegularFile(sdlc.core.Ctx.root.resolve(".agent/sdlc.yml"))) sdlc.core.Ctx.cfg = EVERY_LANGUAGE;
+            hits = Checks.secrets(added);
+        } finally {
+            sdlc.core.Ctx.cfg = own;
+        }
+        for (String hit : hits) {
             // build wrappers and lock files are generated; their look-alikes (a credentials variable in mvnw.cmd) are a note, not a failure
             if (GENERATED.matcher(hitPath(hit)).matches()) note("possible secret in a generated file", hitPath(hit), hitLine(hit));
             else problem("possible secret", hitPath(hit), hitLine(hit));
@@ -220,7 +259,11 @@ public final class Integrity {
                 if (dest == null) lost.add(name);
                 else note("test moved", path, name + " is now in " + dest);
             }
-            if (!lost.isEmpty()) problem("test removed", path, lost.size() + (lost.size() == 1 ? " test case" : " test cases") + " removed or renamed: " + String.join(", ", lost));
+            if (lost.isEmpty()) continue;
+            String what = lost.size() + (lost.size() == 1 ? " test case" : " test cases") + " removed or renamed: " + String.join(", ", lost);
+            // as many tests as before: names changed, nothing was dropped. Fewer: something is gone.
+            if (TestNames.of(path, after(path)).size() >= TestNames.of(path, before(path)).size()) note("test renamed or replaced", path, what);
+            else problem("test removed", path, what);
         }
     }
 
@@ -240,17 +283,68 @@ public final class Integrity {
     }
 
     private void skipFlags() {
+        // a pom is read as XML, whatever its line breaks; when it cannot be parsed, its added lines are read as text like any other build file
+        Set<String> readAsXml = new LinkedHashSet<>();
+        for (String path : change.paths("AM")) if ((path.equals("pom.xml") || path.endsWith("/pom.xml")) && pomFlags(path)) readAsXml.add(path);
         for (Map.Entry<String, List<String>> e : added.entrySet()) {
             if (!buildOrScript(e.getKey())) continue;
-            for (String line : e.getValue()) skipFlag(e.getKey(), line);
+            for (String line : e.getValue()) skipFlag(e.getKey(), line, readAsXml.contains(e.getKey()));
         }
-        for (String path : change.paths("AM")) if (path.equals("pom.xml") || path.endsWith("/pom.xml")) pluginSkips(path);
+        for (String path : change.paths("AM")) if ((path.equals("pom.xml") || path.endsWith("/pom.xml")) && !readAsXml.contains(path)) pluginSkips(path);
     }
 
-    private void skipFlag(String path, String line) {
+    /** The skip and ignore settings a pom gained, read from its XML. False when the pom cannot be parsed. */
+    private boolean pomFlags(String path) {
+        Map<String, String> now = pomSettings(after(path));
+        if (now == null) return false;
+        Map<String, String> was = pomSettings(before(path));
+        for (Map.Entry<String, String> e : now.entrySet()) if (was == null || !was.containsKey(e.getKey())) problem(e.getValue(), path, e.getKey());
+        return true;
+    }
+
+    /** Each setting of a pom that skips tests or ignores their failures, with the kind of finding it is; null when the text is not XML. */
+    private static Map<String, String> pomSettings(String pom) {
+        Map<String, String> out = new TreeMap<>();
+        if (pom == null) return out;
+        try {
+            org.w3c.dom.NodeList all = SafeXml.parse(pom).getElementsByTagName("*");
+            for (int i = 0; i < all.getLength(); i++) {
+                org.w3c.dom.Element e = (org.w3c.dom.Element) all.item(i);
+                if (e.getElementsByTagName("*").getLength() > 0 || !e.getTextContent().trim().equalsIgnoreCase("true")) continue;
+                String name = e.getTagName();
+                String shown = "<" + name + ">true</" + name + ">";
+                if (name.matches("skipTests|skipITs|maven\\.test\\.skip")) out.put(shown, "tests skipped by the build");
+                else if (name.matches("testFailureIgnore|maven\\.test\\.failure\\.ignore")) out.put(shown, "test failures ignored by the build");
+                else if (name.equals("skip")) {
+                    String plugin = plugin(e);
+                    if (plugin != null) out.put(plugin + " is told to skip: " + shown, "tests skipped by the build");
+                }
+            }
+            return out;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** "Surefire" or "Failsafe" when the element sits in that plugin's block, else null. */
+    private static String plugin(org.w3c.dom.Element e) {
+        for (org.w3c.dom.Node p = e.getParentNode(); p instanceof org.w3c.dom.Element parent; p = p.getParentNode()) {
+            if (!parent.getTagName().equals("plugin")) continue;
+            for (org.w3c.dom.Node c = parent.getFirstChild(); c != null; c = c.getNextSibling()) {
+                if (c instanceof org.w3c.dom.Element child && child.getTagName().equals("artifactId")) {
+                    String id = child.getTextContent();
+                    return id.contains("failsafe") ? "Failsafe" : id.contains("surefire") ? "Surefire" : null;
+                }
+            }
+            return null;
+        }
+        return null;
+    }
+
+    private void skipFlag(String path, String line, boolean readAsXml) {
         String text = line.trim();
-        if (XML_SKIP.matcher(line).find() || GRADLE_EXCLUDE.matcher(line).find()) problem("tests skipped by the build", path, text);
-        if (XML_IGNORE.matcher(line).find() || GRADLE_IGNORE.matcher(line).find()) problem("test failures ignored by the build", path, text);
+        if (!readAsXml && XML_SKIP.matcher(line).find() || GRADLE_EXCLUDE.matcher(line).find()) problem("tests skipped by the build", path, text);
+        if (!readAsXml && XML_IGNORE.matcher(line).find() || GRADLE_IGNORE.matcher(line).find()) problem("test failures ignored by the build", path, text);
         Matcher d = D_FLAG.matcher(line);
         while (d.find()) {
             if (d.group(2) != null && !d.group(2).isEmpty() && !d.group(2).equalsIgnoreCase("true")) continue;
@@ -258,9 +352,23 @@ public final class Integrity {
             problem(ignore ? "test failures ignored by the build" : "tests skipped by the build", path, text);
         }
         if (PASS_EMPTY.matcher(line).find()) problem("tests skipped by the build", path, "the test run passes even when it finds no tests: " + text);
-        Matcher or = OR_TRUE.matcher(line);
-        while (or.find()) {
-            if (TEST_COMMAND.matcher(or.group(1)).find()) problem("test failures ignored by the build", path, "a failing test command still counts as success: " + text);
+        for (String command : commandsMadeToPass(line)) {
+            if (TEST_COMMAND.matcher(command).find()) problem("test failures ignored by the build", path, "a failing test command still counts as success: " + text);
+        }
+    }
+
+    /** The command just before each "|| true", "|| :" or "|| exit 0" of a line, found by walking the line once. */
+    private static List<String> commandsMadeToPass(String line) {
+        List<String> out = new ArrayList<>();
+        int from = 0;
+        while (true) {
+            int at = line.indexOf("||", from);
+            if (at < 0) return out;
+            from = at + 2;
+            if (!OR_TAIL.matcher(line.substring(from).stripLeading()).lookingAt()) continue;
+            int start = at;
+            while (start > 0 && "|;&\"'`(".indexOf(line.charAt(start - 1)) < 0) start--;
+            out.add(line.substring(start, at).trim());
         }
     }
 
@@ -396,11 +504,16 @@ public final class Integrity {
     // ---------------- reading ----------------
 
     private String before(String path) {
-        return beforeText.computeIfAbsent(path, change::before);
+        return beforeText.computeIfAbsent(path, p -> text(change.before(p)));
     }
 
     private String after(String path) {
-        return afterText.computeIfAbsent(path, change::after);
+        return afterText.computeIfAbsent(path, p -> text(change.after(p)));
+    }
+
+    /** A file too large to read counts as not there. */
+    private static String text(String content) {
+        return content == null || content.length() > MAX_FILE ? null : content;
     }
 
     private static Pattern assertion(String path) {
@@ -494,20 +607,37 @@ public final class Integrity {
         return keys;
     }
 
-    private static final Pattern DEPENDENCY = Pattern.compile("<dependency>([\\s\\S]*?)</dependency>");
+    /** The text with its XML comments taken out, in one pass. An unclosed comment runs to the end. */
+    private static String withoutComments(String xml) {
+        StringBuilder out = new StringBuilder(xml.length());
+        int at = 0;
+        while (true) {
+            int open = xml.indexOf("<!--", at);
+            if (open < 0) return out.append(xml, at, xml.length()).toString();
+            out.append(xml, at, open);
+            int close = xml.indexOf("-->", open + 4);
+            if (close < 0) return out.toString();
+            at = close + 3;
+        }
+    }
 
     /** artifactId (with groupId when two share it) to version; "" when the version is managed elsewhere. */
     private static Map<String, String> pomDependencies(String pom) {
         Map<String, String> out = new TreeMap<>();
         if (pom == null) return out;
-        Matcher m = DEPENDENCY.matcher(pom.replaceAll("<!--[\\s\\S]*?-->", ""));
-        while (m.find()) {
-            String artifact = tag(m.group(1), "artifactId");
+        String text = withoutComments(pom);
+        int at = 0;
+        while (true) {
+            int open = text.indexOf("<dependency>", at);
+            int close = open < 0 ? -1 : text.indexOf("</dependency>", open);
+            if (close < 0) return out;
+            String block = text.substring(open + "<dependency>".length(), close);
+            at = close + "</dependency>".length();
+            String artifact = tag(block, "artifactId");
             if (artifact.isEmpty()) continue;
-            String key = out.containsKey(artifact) && !out.get(artifact).equals(tag(m.group(1), "version")) ? tag(m.group(1), "groupId") + ":" + artifact : artifact;
-            out.put(key, tag(m.group(1), "version"));
+            String key = out.containsKey(artifact) && !out.get(artifact).equals(tag(block, "version")) ? tag(block, "groupId") + ":" + artifact : artifact;
+            out.put(key, tag(block, "version"));
         }
-        return out;
     }
 
     private static String tag(String xml, String name) {

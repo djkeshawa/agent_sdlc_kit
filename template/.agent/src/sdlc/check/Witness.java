@@ -95,7 +95,9 @@ final class Witness {
             FileRun a = after.get(f), b = before.get(f);
             Set<String> existing = TestNames.of(f, change.before(f));
             if (a == null || a.problem() != null) {
-                out.add(new Verdict(f, "", Kind.FAILS_AFTER, "does not run after the change: " + (a == null ? "no result" : a.problem()), runner.name()));
+                // not compiling is the change's own failure; a missing build tool, a timeout or a name that cannot be passed on is not
+                boolean broken = a != null && a.problem().contains(DOES_NOT_COMPILE);
+                out.add(new Verdict(f, "", broken ? Kind.FAILS_AFTER : Kind.UNKNOWN, (broken ? "after the change it " : "could not be run after the change: ") + (a == null ? "no result" : a.problem()), runner.name()));
                 continue;
             }
             Map<String, JUnitXml.Case> was = new LinkedHashMap<>();
@@ -182,7 +184,8 @@ final class Witness {
 
     private static Status status(FileRun run, String key) {
         if (run == null || run.problem() != null) return null;
-        return run.cases().stream().filter(c -> key(c).equals(key)).map(JUnitXml.Case::status).findFirst().orElse(null);
+        List<Status> found = run.cases().stream().filter(c -> key(c).equals(key)).map(JUnitXml.Case::status).toList();
+        return found.size() == 1 ? found.get(0) : null; // none, or two under one name: not a result
     }
 
     private static String shortType(JUnitXml.Case c) {

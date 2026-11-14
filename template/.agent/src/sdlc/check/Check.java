@@ -93,7 +93,7 @@ public final class Check {
         String window = window(opt.get("since"));
         int max = number(opt, "max", 20);
         PrintStream out = System.out;
-        sdlc.util.Proc log = sdlc.util.Proc.run(sdlc.core.Ctx.root, "git", "log", "--first-parent", "--no-merges", "--since=" + window, "--format=%H%x09%cs%x09%s", "HEAD");
+        sdlc.util.Proc log = sdlc.util.Proc.run(sdlc.core.Ctx.root, "git", "log", "--first-parent", "--since=" + window, "--format=%H%x09%cs%x09%s", "HEAD");
         if (!log.ok()) throw new UsageException("git log failed: " + log.err().strip());
         List<String> commits = log.out().isBlank() ? List.of() : List.of(log.out().strip().split("\\R"));
         out.println("sdlc check --since " + opt.get("since") + ": " + commits.size() + " commit" + (commits.size() == 1 ? "" : "s") + " on this branch since " + window

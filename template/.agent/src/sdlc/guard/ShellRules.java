@@ -187,7 +187,8 @@ public final class ShellRules {
         for (int i = 0; i < words.size(); i++) {
             String w = words.get(i).replace('\\', '/');
             // the packaged tool is on the PATH as plain `sdlc`: recognised only as the command itself, not as an argument
-            boolean packaged = i == 0 && (w.equals("sdlc") || w.endsWith("/sdlc"));
+            // (a path that merely ends in /sdlc is some script: the ordinary script rules judge it)
+            boolean packaged = i == 0 && w.equals("sdlc");
             if (!(packaged || w.endsWith("Sdlc.java") || w.endsWith("bin/sdlc") || w.endsWith("sdlc.cmd") || w.equals("sdlc.Main"))) continue;
             String sub = i + 1 < words.size() ? words.get(i + 1) : "";
             String sub2 = i + 2 < words.size() ? words.get(i + 2) : "";

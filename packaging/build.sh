@@ -61,7 +61,8 @@ rm -rf "$out" "$work" "$dist/$name.tar.gz"
 mkdir -p "$work/classes" "$out/bin" "$out/lib"
 
 # 1. Compile. --release 17 keeps the jar loadable by the oldest Java the kit supports.
-find "$src" -name '*.java' > "$work/sources.txt"
+# Each path in double quotes, so a checkout in a folder with a space in its name still builds.
+find "$src" -name '*.java' | sed 's/\\/\\\\/g; s/"/\\"/g; s/.*/"&"/' > "$work/sources.txt"
 "$jdk_bin/javac" -nowarn -encoding UTF-8 --release 17 -d "$work/classes" @"$work/sources.txt"
 
 # 2. Jar with a main class. The tool finds the repository from the working directory.

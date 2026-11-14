@@ -196,19 +196,6 @@ public final class Change {
 
     /** Lines the change removes, per file (no context lines). */
     public Map<String, List<String>> removedLines() {
-        Map<String, List<String>> out = new java.util.LinkedHashMap<>();
-        String file = null;
-        for (String line : Git.patch(base, head).split("\n", -1)) {
-            if (line.startsWith("--- ")) {
-                String f = line.substring(4).trim();
-                file = f.equals("/dev/null") ? null : f.replaceFirst("^a/", "");
-                if (file != null) out.putIfAbsent(file, new ArrayList<>());
-            } else if (line.startsWith("+++ ")) {
-                continue;
-            } else if (file != null && line.startsWith("-") && !line.startsWith("---")) {
-                out.get(file).add(line.substring(1));
-            }
-        }
-        return out;
+        return Git.removedLines(Git.patch(base, head));
     }
 }

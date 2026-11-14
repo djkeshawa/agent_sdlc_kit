@@ -203,7 +203,25 @@ final class IntegrityTests {
         reset(repo);
 
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("void subtracts()", "void minus()"));
-        check("integrity: a test case removed or renamed is a problem", only(scan(repo), Level.PROBLEM, "test removed", "src/test/java/demo/CalcTest.java", "1 test case removed or renamed: subtracts"));
+        check("integrity: a renamed test case is a note: the file has as many tests as before", problems(scan(repo)) == 0
+                && only(scan(repo), Level.NOTE, "test renamed or replaced", "src/test/java/demo/CalcTest.java", "1 test case removed or renamed: subtracts"));
+        reset(repo);
+        write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replaceFirst("(?s)    @Test\\s+void subtracts\\(\\) \\{.*?\\n    \\}\\n", ""));
+        check("integrity: a test case that is gone is a problem", only(scan(repo), Level.PROBLEM, "test removed", "src/test/java/demo/CalcTest.java", "1 test case removed or renamed: subtracts"));
+        reset(repo);
+        write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("    private int helper", "    // a note about @Disabled and it.skip( in a comment\n    String s = \"@Disabled\";\n    private int helper"));
+        check("integrity: @Disabled in a comment or a string switches nothing off", problems(scan(repo)) == 0);
+        reset(repo);
+        write(repo, "pom.xml", POM.replace("</project>", "<build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId><configuration><skip>true</skip></configuration></plugin></plugins></build>\n<properties><skipTests>\n  true\n</skipTests></properties></project>"));
+        List<Finding> compact = scan(repo);
+        check("integrity: skip settings are found in a pom whatever its line breaks", count(compact, "tests skipped by the build") == 2
+                && compact.stream().anyMatch(f -> f.detail().equals("Surefire is told to skip: <skip>true</skip>"))
+                && compact.stream().anyMatch(f -> f.detail().equals("<skipTests>true</skipTests>")));
+        reset(repo);
+        write(repo, "package.json", "{\"scripts\": {\"test\": \"vitest run" + " ".repeat(20000) + "|| true\"}}\n");
+        long started = System.nanoTime();
+        scan(repo);
+        check("integrity: a very long line does not keep the scan busy", (System.nanoTime() - started) / 1_000_000 < 3000);
         reset(repo);
 
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("        assertEquals(3, 1 + 2);\n", ""));
