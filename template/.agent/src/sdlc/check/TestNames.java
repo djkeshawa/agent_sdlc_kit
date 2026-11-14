@@ -4,15 +4,11 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /** The names of the test cases a test file declares, read from its text. Used to tell a new test from one that was there before. */
 public final class TestNames {
     private TestNames() {}
 
-    private static final Pattern JAVA = Pattern.compile("@(?:Test|ParameterizedTest|RepeatedTest|TestFactory|TestTemplate)\\b[\\s\\S]{0,600}?\\bvoid\\s+(\\w+)\\s*\\(");
-    private static final Pattern SCRIPT = Pattern.compile("\\b(?:it|test)(?:\\.\\w+)*\\s*\\(\\s*(['\"`])((?:\\\\.|(?!\\1).)*)\\1");
 
     /** The names as a report would give them (see counts). */
     public static Set<String> of(String path, String text) {
@@ -21,23 +17,23 @@ public final class TestNames {
 
     /**
      * The names exactly as the file writes them, escapes and all: what a search of the source
-     * for a test's declaration needs. For a script, it('outer > it\'s kept') gives
-     * "outer > it\'s kept" here and "it's kept" in counts.
+     * for a test's declaration needs. A script test declared with an escaped quote is written
+     * with the backslash here and without it in counts.
      */
     public static Set<String> declared(String path, String text) {
         Set<String> out = new LinkedHashSet<>();
         if (text == null) return out;
-        if (path.endsWith(".t") || path.endsWith(".java")) return of(path, text);
-        Matcher m = SCRIPT.matcher(text);
-        while (m.find()) out.add(m.group(2));
+        if (!Code.isScript(path)) return of(path, text);
+        for (Declared.Item item : Declared.script(path, text)) if (item.test() && item.written() != null) out.add(item.written());
         return out;
     }
 
     /**
      * Each declared name, as a report would give it, with how often the file declares it: a nested
-     * class or another describe block may use a name again. A report gives "outer > kept" for
-     * it('kept') inside describe('outer') and also for it('outer > kept'), and gives a string's
-     * value, not its spelling ("doesn't" for 'doesn\'t'): both are read the same way here.
+     * class or another describe block may use a name again. Only code declares a test: a
+     * declaration inside a comment or a string is text. A report gives "outer > kept" for a test
+     * "kept" inside a group "outer" and also for a test whose own title is "outer > kept", and
+     * gives a string's value, not its spelling: both are read the same way here.
      */
     public static Map<String, Integer> counts(String path, String text) {
         Map<String, Integer> out = new LinkedHashMap<>();
@@ -45,28 +41,21 @@ public final class TestNames {
         if (path.endsWith(".t")) { // the self test's stand-in format: "name: outcome"
             for (String line : text.split("\\R")) if (line.contains(": ")) out.merge(plain(path, line.substring(0, line.indexOf(": "))), 1, Integer::sum);
         } else if (path.endsWith(".java")) {
-            Matcher m = JAVA.matcher(text);
-            while (m.find()) out.merge(m.group(1), 1, Integer::sum);
+            for (Declared.Item item : Declared.java(path, text)) if (item.test()) out.merge(item.title(), 1, Integer::sum);
         } else {
-            Matcher m = SCRIPT.matcher(text);
-            while (m.find()) out.merge(plain(path, unescaped(m.group(2))), 1, Integer::sum);
+            for (Declared.Item item : Declared.script(path, text)) if (item.test() && item.title() != null) out.merge(plain(path, item.title()), 1, Integer::sum);
         }
         return out;
     }
 
-    // read in the file's code, where the inside of every string is blank and a ${ of a template string stays
-    private static final Pattern BUILT_AT_RUN_TIME = Pattern.compile("\\b(?:it|test|describe)(?:\\s*\\.\\s*\\w+)*\\s*\\.\\s*(?:each|for)\\b"
-            + "|\\b(?:it|test)(?:\\s*\\.\\s*\\w+)*\\s*\\(\\s*(?:[^'\"`\\s)]|`[^`]*\\$\\{|(['\"])[^'\"\\n]*\\1\\s*\\+)");
-
     /**
      * True when a script file builds test names while it runs (it.each, a template with ${...}, a
      * variable or a sum of strings as the name): its reported names cannot all be read from its
-     * text, so "this name is not declared" does not mean "this test is new". Comments and the
-     * insides of strings do not count.
+     * text, so "this name is not declared" does not mean "this test is new".
      */
     public static boolean namesBuiltAtRunTime(String path, String text) {
-        if (text == null || path.endsWith(".java") || path.endsWith(".t")) return false;
-        return BUILT_AT_RUN_TIME.matcher(Code.mask(path, text)).find();
+        if (text == null || !Code.isScript(path)) return false;
+        return Declared.script(path, text).stream().anyMatch(item -> item.test() && item.generated());
     }
 
     /** The value of a script string literal's inside, with its escapes (quotes, line break, tab, hexadecimal and Unicode forms) resolved; an escape it does not know stands for its character. */

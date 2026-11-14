@@ -164,9 +164,18 @@ Claude Code, in `.claude/settings.json`:
   judged" when its name is declared nowhere in the file as plain text, because it cannot be
   read from the file whether it is new. A test declared by a plain name is judged as usual.
 - A test is "switched off" when the file has a skip, a to-do mark or a focus that it did not
-  have before on that test. The whole file is read for this, so a call written over several
-  lines is found, and text in a comment or a string is not. Conditional switches (`it.skipIf`,
-  `@DisabledOnOs`) are not reported.
+  have before on that test. A test is known by where it stands and what it is called (the
+  groups or classes around it, then its title), so a skip moved to another test of the same
+  title is found. The whole file is read for this: a call written over several lines is found,
+  and text in a comment, a string or a regular expression is not a switch.
+- That reading knows the tokens of the language, not its grammar. A file can be written so
+  that code is taken for text (a lone backtick in the text of a JSX element). So when a change
+  adds something that looks like a skipped test inside a comment or a string, the report says
+  so as a note (a warning in `check-pr`), and a person looks at it.
+- Reported as switched off: `skip`, `todo`, `only`, `xit`/`xdescribe`, `fit`/`fdescribe`,
+  `@Disabled`, `@DisabledIf...`, `@Ignore`, an assumption that always fails, `@pytest.mark.skip`
+  and its forms, `@unittest.skip` and its forms, `t.Skip`. Not reported: `it.skipIf`,
+  `it.runIf`, `@DisabledOnOs`, `@EnabledIf...` and other JUnit conditions.
 - In a pull request build the base branch must be fetched, with enough history to reach the
   commit the branch started from. Otherwise the check stops with an error.
 - Names of test cases are matched by simple reading of the file. A test shown under another

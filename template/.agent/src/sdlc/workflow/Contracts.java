@@ -198,17 +198,9 @@ public final class Contracts {
         return out;
     }
 
-    /**
-     * What makes two operation keys the same operation: for HTTP, the method and the path with its
-     * parameters unnamed. Nothing else is taken as equal: "/orders" and "/orders/" may be two
-     * routes, and "Orders" and "orders" two channels.
-     */
+    /** As normalize: what makes two operation keys the same operation. */
     static String identity(String key) {
-        int sp = key.indexOf(' ');
-        if (sp > 0 && METHODS.contains(key.substring(0, sp).toLowerCase(Locale.ROOT))) {
-            return key.substring(0, sp).toUpperCase(Locale.ROOT) + " " + key.substring(sp + 1).replaceAll("\\{[^}/]*\\}", "{}");
-        }
-        return key;
+        return normalize(key);
     }
 
     private static final java.util.regex.Pattern PLACEHOLDER = java.util.regex.Pattern.compile("\\{([^}/]*)\\}");
@@ -288,14 +280,19 @@ public final class Contracts {
         }
     }
 
-    /** "post /orders/{orderId}/refunds" and "POST /orders/{id}/refunds" name the same operation; messages compare by name and channel. */
+    /**
+     * "post /orders/{orderId}/refunds" and "POST /orders/{id}/refunds" name the same operation: the
+     * method in any case, the path with its parameters unnamed. Nothing else is taken as equal,
+     * in an allowance as in a comparison: "/orders" and "/orders/" may be two routes, and
+     * "Orders" and "orders" two channels.
+     */
     public static String normalize(String op) {
         String s = op.strip().replaceAll("\\s+", " ");
         int sp = s.indexOf(' ');
         if (sp > 0 && METHODS.contains(s.substring(0, sp).toLowerCase(Locale.ROOT))) {
-            return s.substring(0, sp).toUpperCase(Locale.ROOT) + " " + s.substring(sp + 1).replaceAll("\\{[^}/]*\\}", "{}").replaceAll("/+$", "");
+            return s.substring(0, sp).toUpperCase(Locale.ROOT) + " " + s.substring(sp + 1).replaceAll("\\{[^}/]*\\}", "{}");
         }
-        return s.toLowerCase(Locale.ROOT);
+        return s;
     }
 
     /** A path a client calls (with or without {params}) matches a spec path template. */

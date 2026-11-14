@@ -56,12 +56,17 @@ final class CheckTests {
                 && ends.ok() && ends.out().startsWith(whole.out().substring(0, 40)) && ends.out().endsWith(whole.out().substring(whole.out().length() - 40))
                 && ends.out().contains((whole.out().getBytes(StandardCharsets.UTF_8).length - 80) + " bytes of output left out here"));
         java.util.List<String> heard = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
-        Proc listened = Proc.exec(repo, Map.of(), null, 60, 40, 40, heard::add, null, "git", "help", "-a");
+        Proc listened = Proc.exec(repo, Map.of(), null, 60, 40, 40, (line, endsLine) -> heard.add(line), null, "git", "help", "-a");
         check("output: a listener gets every line, also those of the middle that is left out",
                 listened.out().equals(ends.out()) && String.join("\n", heard).strip().equals(whole.out().strip()) && heard.size() > 10);
         java.util.List<String> pieces = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
-        Proc.exec(repo, Map.of(), null, 60, 40, 40, pieces::add, null, "git", "rev-parse", "--sq-quote", "a".repeat(17000), "COMPILATION ERROR");
-        check("output: a listener is given the end of a very long line too", pieces.stream().anyMatch(l -> l.contains("COMPILATION ERROR")));
+        java.util.List<Boolean> lineEnds = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        Proc.exec(repo, Map.of(), null, 60, 40, 40, (line, end) -> {
+            pieces.add(line);
+            lineEnds.add(end);
+        }, null, "git", "rev-parse", "--sq-quote", "a".repeat(17000), "COMPILATION ERROR");
+        check("output: a listener is given the end of a very long line too, and is told which piece ends the line",
+                pieces.stream().anyMatch(l -> l.contains("COMPILATION ERROR")) && lineEnds.size() >= 2 && !lineEnds.get(0) && lineEnds.get(lineEnds.size() - 1));
         Proc strict = Proc.exec(repo, Map.of(), null, 60, 40, 0, null, null, "git", "help", "-a");
         check("output: an answer that is read as a whole is an error when it is too large, not a shortened answer",
                 strict.code() == Proc.TOO_MUCH_OUTPUT && strict.out().isEmpty() && strict.err().contains("larger than"));

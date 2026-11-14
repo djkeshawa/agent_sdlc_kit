@@ -176,7 +176,7 @@ public final class Runners {
                 cmd.add("test");
                 // read from every line as it arrives: the kept text of a long output has no middle
                 java.util.concurrent.atomic.AtomicBoolean doesNotCompile = new java.util.concurrent.atomic.AtomicBoolean();
-                java.util.function.Consumer<String> seen = line -> {
+                Proc.Lines seen = (line, endsLine) -> {
                     if (DOES_NOT_COMPILE.matcher(line).find()) doesNotCompile.set(true);
                 };
                 Proc p = Proc.runBuild(checkout.resolve(root), Map.of(), timeoutSeconds, seen, seen, cmd.toArray(new String[0]));
@@ -279,10 +279,12 @@ public final class Runners {
          * not load: a line that says so (DID_NOT_LOAD) on, or up to five lines after, a line that
          * names the file. Another file's syntax error says nothing about this one.
          */
-        private static final class LoadFailures implements java.util.function.Consumer<String> {
+        private static final class LoadFailures implements Proc.Lines {
             private final List<String> files;
             private final Set<String> failed;
-            private final java.util.ArrayDeque<String> last = new java.util.ArrayDeque<>();
+            /** For each of the last six lines: the test files it names. A long line that arrives in pieces is one line. */
+            private final java.util.ArrayDeque<Set<String>> last = new java.util.ArrayDeque<>();
+            private boolean lineOpen;
 
             LoadFailures(List<String> files, Set<String> failed) {
                 this.files = files;
@@ -290,11 +292,14 @@ public final class Runners {
             }
 
             @Override
-            public synchronized void accept(String line) {
-                last.addLast(line);
-                if (last.size() > 6) last.removeFirst();
-                if (!DID_NOT_LOAD.matcher(line).find()) return;
-                for (String near : last) for (String f : files) if (near.contains(f)) failed.add(f);
+            public synchronized void accept(String text, boolean endsLine) {
+                if (!lineOpen) {
+                    last.addLast(new java.util.LinkedHashSet<>());
+                    if (last.size() > 6) last.removeFirst();
+                }
+                lineOpen = !endsLine;
+                for (String f : files) if (text.contains(f)) last.getLast().add(f);
+                if (DID_NOT_LOAD.matcher(text).find()) for (Set<String> named : last) failed.addAll(named);
             }
         }
 

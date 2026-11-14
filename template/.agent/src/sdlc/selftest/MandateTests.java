@@ -166,6 +166,9 @@ final class MandateTests {
                 && sdlc.check.TestNames.namesBuiltAtRunTime("a.test.ts", "it(name, () => {});\n")
                 && sdlc.check.TestNames.namesBuiltAtRunTime("a.test.ts", "it('adds ' + n, () => {});\n")
                 && !sdlc.check.TestNames.namesBuiltAtRunTime("a.test.ts", "it('adds', () => {});\nit(`plain`, async () => {});\ntest.skip('later', () => {});\n"));
+        check("names: a declaration inside a comment or a regular expression declares nothing",
+                sdlc.check.TestNames.counts("a.test.ts", "// it('plain', () => {})\nconst r = /it('other'/;\nit('real', () => {});\n").keySet().equals(java.util.Set.of("real"))
+                && sdlc.check.TestNames.counts("ATest.java", "class ATest {\n  // @Test void off() {}\n  @Test void on() {}\n  void helper() {}\n}\n").keySet().equals(java.util.Set.of("on")));
         check("names: it.each in a comment or a string does not make a file one that builds names",
                 !sdlc.check.TestNames.namesBuiltAtRunTime("a.test.ts", "// it.each([1])('n', () => {})\nconst s = 'it.each(';\nit('adds', () => {});\n"));
         check("mandate: such characters in other text (a file name, a name from git) are shown as a question mark",

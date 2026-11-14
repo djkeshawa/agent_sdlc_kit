@@ -33,6 +33,14 @@ public record Proc(int code, String out, String err) {
     public static volatile int maxOutput = MAX_OUTPUT;
     /** What is kept of each end of a build's output, which is read only for its messages. */
     public static final int BUILD_OUTPUT_END = 2 << 20;
+    /**
+     * Gets the output of a child line by line as it arrives. A line longer than 16 KB comes in
+     * pieces that overlap; endsLine is false for every piece but the last.
+     */
+    public interface Lines {
+        void accept(String text, boolean endsLine);
+    }
+
     /** The exit code of a run whose output was larger than MAX_OUTPUT. */
     public static final int TOO_MUCH_OUTPUT = 125;
 
@@ -47,8 +55,7 @@ public record Proc(int code, String out, String err) {
      * Every line of each stream, kept or not, is handed to its listener as it arrives: a result
      * must be decided from what the listeners saw, never from the shortened text.
      */
-    public static Proc runBuild(Path dir, java.util.Map<String, String> env, int timeoutSeconds, java.util.function.Consumer<String> outLines,
-            java.util.function.Consumer<String> errLines, String... cmd) {
+    public static Proc runBuild(Path dir, java.util.Map<String, String> env, int timeoutSeconds, Lines outLines, Lines errLines, String... cmd) {
         return exec(dir, env, null, timeoutSeconds, BUILD_OUTPUT_END, BUILD_OUTPUT_END, outLines, errLines, cmd);
     }
 
@@ -58,7 +65,7 @@ public record Proc(int code, String out, String err) {
      * A listener, when given, gets every line of its stream (a line longer than 16 KB in pieces that overlap).
      */
     public static Proc exec(Path dir, java.util.Map<String, String> env, String stdin, int timeoutSeconds, int head, int tail,
-            java.util.function.Consumer<String> outLines, java.util.function.Consumer<String> errLines, String... cmd) {
+            Lines outLines, Lines errLines, String... cmd) {
         try {
             ProcessBuilder pb = new ProcessBuilder(cmd).directory(dir.toFile());
             pb.environment().putAll(ENV);
@@ -121,10 +128,10 @@ public record Proc(int code, String out, String err) {
         private final byte[] ring;
         private final ByteArrayOutputStream first = new ByteArrayOutputStream();
         private long total;
-        private final java.util.function.Consumer<String> listener;
+        private final Lines listener;
         private final ByteArrayOutputStream line = new ByteArrayOutputStream();
 
-        Kept(int head, int tail, java.util.function.Consumer<String> listener) {
+        Kept(int head, int tail, Lines listener) {
             this.head = head;
             this.ring = new byte[tail];
             this.listener = listener;
@@ -139,13 +146,13 @@ public record Proc(int code, String out, String err) {
                         // a very long line is handed over in pieces; each new piece starts with the end of the last one,
                         // so a word the listener looks for is whole in one of them
                         byte[] piece = line.toByteArray();
-                        listener.accept(new String(piece, StandardCharsets.UTF_8));
+                        listener.accept(new String(piece, StandardCharsets.UTF_8), false);
                         line.reset();
                         line.write(piece, piece.length - 512, 512);
                     }
                     continue;
                 }
-                listener.accept(line.toString(StandardCharsets.UTF_8));
+                listener.accept(line.toString(StandardCharsets.UTF_8), true);
                 line.reset();
             }
         }
@@ -153,7 +160,7 @@ public record Proc(int code, String out, String err) {
         /** The stream has ended: a last line without a line break is a line too. */
         synchronized void end() {
             if (listener != null && line.size() > 0) {
-                listener.accept(line.toString(StandardCharsets.UTF_8));
+                listener.accept(line.toString(StandardCharsets.UTF_8), true);
                 line.reset();
             }
         }

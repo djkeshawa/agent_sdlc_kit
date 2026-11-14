@@ -215,7 +215,8 @@ final class MultiRepoTests {
                 Contracts.diff(Contracts.parse(ASYNCAPI), Contracts.parse(ASYNCAPI.replace("refund-events", "Refund-Events"))).stream().anyMatch(c -> c.kind().equals("removed")));
         check("contracts: another name for a path parameter is not another operation",
                 Contracts.diff(v1, Contracts.parse(OPENAPI.replace("/orders/{orderId}/refunds", "/orders/{id}/refunds"))).isEmpty());
-        check("contracts: operation names normalise", Contracts.normalize("post  /orders/{orderId}/refunds/").equals(Contracts.normalize("POST /orders/{id}/refunds")));
+        check("contracts: operation names normalise", Contracts.normalize("post  /orders/{orderId}/refunds").equals(Contracts.normalize("POST /orders/{id}/refunds"))
+                && !Contracts.normalize("GET /orders/").equals(Contracts.normalize("GET /orders")) && !Contracts.normalize("message A on Orders").equals(Contracts.normalize("message A on orders")));
         check("contracts: called paths match templates", Contracts.pathMatches("/orders/{id}", "/orders/{orderId}") && Contracts.pathMatches("/orders/{id}", "/orders/42?x=1")
                 && !Contracts.pathMatches("/orders/{id}", "/orders/42/lines"));
     }
@@ -508,6 +509,10 @@ final class MultiRepoTests {
         check("contracts: an operation the slice does not list fails", Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("GET /refunds added, but the solution slice does not list it")));
         Store.write(allow, Store.map("story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds"), "remove", List.of(), "breaking", false))));
         check("contracts: an operation the slice lists passes", Contracts.prPolicy("PROJ-80", base, changed).fails().isEmpty());
+        Store.write(allow, Store.map("story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds/"), "remove", List.of(), "breaking", false))));
+        check("contracts: an allowance for a path with a slash at its end does not cover the path without it",
+                Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("GET /refunds added, but the solution slice does not list it")));
+        Store.write(allow, Store.map("story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds"), "remove", List.of(), "breaking", false))));
         // a contract that cannot be read is a failure, never an empty contract that "did not change"
         int limit = Proc.maxOutput;
         Proc.maxOutput = 200;

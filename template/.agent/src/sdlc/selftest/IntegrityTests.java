@@ -176,7 +176,7 @@ final class IntegrityTests {
         write(repo, "web/sum.test.ts", SUM_TEST.replace("it('adds'", "it.only('adds'"));
         List<Finding> off = scan(repo);
         check("integrity: a test switched off is a problem, reported once", count(off, "test switched off") == 1 && only(off, Level.PROBLEM, "test switched off", "src/test/java/demo/CalcTest.java", "@Disabled"));
-        check("integrity: a focused test is a problem", only(off, Level.PROBLEM, "test focused", "web/sum.test.ts", "it.only('adds'"));
+        check("integrity: a focused test is a problem", only(off, Level.PROBLEM, "test focused", "web/sum.test.ts", "only on adds"));
         reset(repo);
 
         write(repo, "src/main/resources/application.properties", "db.password=hunter2hunter2\n");
@@ -278,15 +278,54 @@ final class IntegrityTests {
         check("integrity: the same words in a comment or a string switch nothing off", problems(scan(repo)) == 0);
         write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\nconst example = `\nit\n  .skip('documentation example')\n`;\n");
         check("integrity: nor inside a template string that runs over several lines", problems(scan(repo)) == 0);
+        check("integrity: but the place is said, as a note", count(scan(repo), "switch in a comment or a string") == 1);
+        // a folder the repository itself names as tests (paths.test), where the built-in idea of a test file does not reach
+        write(repo, "specs/foo.ts", "it('a', () => { expect(1).toBe(1) })\n");
+        git(repo, "add", "-A");
+        git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a test in a folder of the repository's own");
+        write(repo, "specs/foo.ts", "it.skip('a', () => { expect(1).toBe(1) })\n");
+        Config before = Ctx.cfg;
+        Ctx.cfg = Config.parse("stack: node\npaths:\n  test: [\"specs/**\"]\n");
+        try {
+            check("integrity: a test switched off in a folder the repository names as tests is found", only(scan(repo), Level.PROBLEM, "test switched off", "specs/foo.ts", "skip on a"));
+        } finally {
+            Ctx.cfg = before;
+        }
+        git(repo, "reset", "-q", "--hard", "HEAD~1");
         String skipOnOld = "it\n  .skip('old', () => { expect(1).toBe(1) })\nit\n  .concurrent('critical', () => { expect(1).toBe(1) })\n";
         String skipOnCritical = "it\n  ('old', () => { expect(1).toBe(1) })\nit\n  .concurrent\n  .skip('critical', () => { expect(1).toBe(1) })\n";
         List<sdlc.check.Integrity.Switch> movedSkip = sdlc.check.Integrity.addedSwitches("src/app.test.ts", skipOnOld, skipOnCritical);
         check("integrity: a skip taken off one test does not make up for one put on another",
-                movedSkip.size() == 1 && movedSkip.get(0).how().equals("it.concurrent.skip") && movedSkip.get(0).what().equals("'critical'"));
+                movedSkip.equals(List.of(new sdlc.check.Integrity.Switch("skip", "critical"))));
         check("integrity: a file whose switches stay on their tests has none added", sdlc.check.Integrity.addedSwitches("src/app.test.ts", skipOnOld, skipOnOld + "\nit('more', () => {})\n").isEmpty());
         check("integrity: an annotation is read with the method it stands on",
                 sdlc.check.Integrity.addedSwitches("ATest.java", "class ATest {\n  @Disabled @Test void a() {}\n  @Test void b() {}\n}\n", "class ATest {\n  @Test void a() {}\n  @ Disabled\n  @Test void b() {}\n}\n")
-                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "b", false))));
+                        .equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > b"))));
+        // a test is known by where it stands, not by its title alone
+        String inA = "describe('A', () => {\n  it.skip('works', () => {})\n})\ndescribe('B', () => {\n  it('works', () => {})\n})\n";
+        String inB = "describe('A', () => {\n  it('works', () => {})\n})\ndescribe('B', () => {\n  it.skip('works', () => {})\n})\n";
+        check("integrity: a skip moved to a test of the same title in another group is found",
+                sdlc.check.Integrity.addedSwitches("a.test.ts", inA, inB).equals(List.of(new sdlc.check.Integrity.Switch("skip", "B > works"))));
+        check("integrity: also when the groups change places", sdlc.check.Integrity.addedSwitches("a.test.ts", inA,
+                "describe('B', () => {\n  it.skip('works', () => {})\n})\ndescribe('A', () => {\n  it('works', () => {})\n})\n").size() == 1);
+        check("integrity: a disabled method moved between two nested classes is found", sdlc.check.Integrity.addedSwitches("ATest.java",
+                "class ATest {\n  class X { @Disabled @Test void works() {} }\n  class Y { @Test void works() {} }\n}\n",
+                "class ATest {\n  class X { @Test void works() {} }\n  class Y { @Disabled @Test void works() {} }\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest > Y > works"))));
+        check("integrity: a switch on something that is no void method is not lost", sdlc.check.Integrity.addedSwitches("ATest.java",
+                "class ATest {\n  @TestFactory Stream<DynamicTest> all() { return null; }\n}\n",
+                "class ATest {\n  @Disabled @TestFactory Stream<DynamicTest> all() { return null; }\n}\n").equals(List.of(new sdlc.check.Integrity.Switch("@Disabled", "ATest"))));
+        check("integrity: the title of a test with a table of cases is the title, not the table", sdlc.check.Integrity.addedSwitches("a.test.ts",
+                "it.skip.each([['row']])('a', () => {})\nit.each([['row']])('b', () => {})\n", "it.each([['row']])('a', () => {})\nit.skip.each([['row']])('b', () => {})\n")
+                .equals(List.of(new sdlc.check.Integrity.Switch("skip", "b"))));
+        check("integrity: another kind of quote around a title is the same test",
+                sdlc.check.Integrity.addedSwitches("a.test.ts", "it.skip('later', () => {})\n", "it.skip(\"later\", () => {})\n").isEmpty());
+        check("integrity: a backtick inside a regular expression does not hide the skip after it",
+                sdlc.check.Integrity.addedSwitches("a.test.ts", "it('critical', () => {})\n", "const tick = /`/;\nit.skip('critical', () => {})\n").size() == 1);
+        check("integrity: nor one after a closing bracket", sdlc.check.Integrity.addedSwitches("a.test.ts", "it('critical', () => {})\n",
+                "if (x) /`/.test(y);\nit.skip('critical', () => {})\n").size() == 1);
+        check("integrity: the words of a skip inside a regular expression are not a skip", sdlc.check.Integrity.addedSwitches("a.test.ts", "it('a', () => {})\n", "const r = /it.skip/;\nit('a', () => {})\n").isEmpty());
+        check("integrity: but such words inside text are counted, so a change that adds them is said",
+                sdlc.check.Integrity.addedSwitchesInText("a.test.ts", "it('a', () => {})\n", "// it.skip('a')\nit('a', () => {})\n").equals(List.of("it.skip")));
         git(repo, "reset", "-q", "--hard", "HEAD~2");
         reset(repo);
         write(repo, "package.json", "{\"scripts\": {\"test\": \"vitest run" + " ".repeat(20000) + "|| true\"}}\n");

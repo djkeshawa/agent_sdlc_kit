@@ -181,16 +181,20 @@ public final class Checks {
         List<String> everyChange = Git.changed(base + "...HEAD");
         check(!testsMissing(files), "Main code changes come with test changes", passes, fails);
         Map<String, List<String>> added = Git.addedLines(Git.patch(base + "...HEAD"));
-        List<String> disabled = new ArrayList<>(disabledTests(added));
+        // configured patterns that are also built-in switches are judged below from the whole file, where a comment or a
+        // string is known as one; the others (a repository's own marks, comment directives) are judged by the added line
+        List<String> disabled = new ArrayList<>();
+        for (String hit : disabledTests(added)) if (!sdlc.check.Integrity.builtInSwitch(hit.substring(hit.indexOf(": ") + 2))) disabled.add(hit);
         // a switch that no added line shows (it, a line break, .skip; it.concurrent.skip): read from the whole file, before and
         // after, each with the test it stands on, so that one taken off a test does not make up for one put on another
         String branchPoint = Contracts.mergeBase(base);
         for (String f : files) {
             if (!Glob.any(Ctx.cfg.list("paths.test"), f)) continue;
-            for (sdlc.check.Integrity.Switch s : sdlc.check.Integrity.addedSwitches(f, Trusted.read(branchPoint, f), Trusted.read("HEAD", f))) {
-                String found = f + ": " + s.shown();
-                if (disabled.stream().noneMatch(d -> d.startsWith(f + ": ") && d.replaceAll("\\s+", "").contains(s.how()))) disabled.add(found);
-            }
+            String was = Trusted.read(branchPoint, f), now = Trusted.read("HEAD", f);
+            for (sdlc.check.Integrity.Switch s : sdlc.check.Integrity.addedSwitches(f, was, now)) disabled.add(f + ": " + s.shown());
+            List<String> inText = sdlc.check.Integrity.addedSwitchesInText(f, was, now);
+            if (!inText.isEmpty()) warns.add(f + ": " + inText.size() + " place(s) that look like a skipped or focused test stand inside a comment or a string (" + inText.get(0)
+                    + "); that switches nothing off unless the file is written so that it was misread: a reviewer looks at it");
         }
         check(disabled.isEmpty(), "No test was disabled or focused" + (disabled.isEmpty() ? "" : ": " + disabled), passes, fails);
         List<String> secrets = secrets(added);

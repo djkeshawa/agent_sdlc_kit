@@ -226,6 +226,16 @@ final class TrustTests {
         check("trust: a test switched off by a call written over two lines is still found",
                 Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No test was disabled or focused") && f.contains("web.test.ts")));
 
+        // text that looks like a skipped test, inside a string: no failure, but a warning
+        git(repo, "switch", "-q", "-c", "feature/PROJ-16-example", "origin/main");
+        write(repo, "src/test/java/docs.test.ts", "const example = `\nit.skip('example', () => {})\n`;\nit('real', () => { expect(example).toBeTruthy() })\n");
+        write(repo, "src/main/java/A.java", "class A { int d; }\n");
+        commit(repo, "feat(PROJ-16): a test about source text");
+        Ctx.init(repo);
+        Checks.Result example = Checks.prPolicy(null, false);
+        check("trust: a skip inside a string of a test file does not fail the pull request, and is named for the reviewer",
+                example.fails().stream().noneMatch(f -> f.contains("No test was disabled or focused")) && example.warns().stream().anyMatch(w -> w.contains("docs.test.ts") && w.contains("inside a comment or a string")));
+
         // a branch with no commit in common with the base: every diff would be empty or fail
         git(repo, "switch", "-q", "--orphan", "feature/PROJ-13-orphan");
         write(repo, "src/main/java/A.java", "class A { int o; }\n");
