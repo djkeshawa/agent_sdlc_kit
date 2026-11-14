@@ -517,8 +517,10 @@ final class Witness {
      * skipped now. on: how many were skipped before and run now. asBefore: per name, how many are
      * skipped on both sides. r0, s0, r1, s1: how many ran and were skipped in the old run (0)
      * and after the change (1), over the whole file. shown: how each case is shown (see shown).
+     * unlisted: why the two reports may not list every test of the file (see unlisted), or null.
      */
-    private record Names(List<JUnitXml.Case> gone, List<JUnitXml.Case> fresh, List<Flip> off, long on, List<Flip> asBefore, long r0, long s0, long r1, long s1, Map<String, String> shown) {
+    private record Names(List<JUnitXml.Case> gone, List<JUnitXml.Case> fresh, List<Flip> off, long on, List<Flip> asBefore, long r0, long s0, long r1, long s1, Map<String, String> shown,
+            String unlisted) {
         List<JUnitXml.Case> freshSkipped() {
             return fresh.stream().filter(c -> c.status() == Status.SKIPPED).toList();
         }
@@ -553,7 +555,7 @@ final class Witness {
             else on += ranN - ranO;
             if (both > 0) asBefore.add(new Flip(k, name, both));
         }
-        return new Names(gone, fresh, off, on, asBefore, ran(old), old.size() - ran(old), ran(now), now.size() - ran(now), shown);
+        return new Names(gone, fresh, off, on, asBefore, ran(old), old.size() - ran(old), ran(now), now.size() - ran(now), shown, unlisted(old, now));
     }
 
     private static Map<String, List<JUnitXml.Case>> byKey(List<JUnitXml.Case> cases) {
@@ -581,7 +583,9 @@ final class Witness {
      *      switched off. A case skipped on both sides under one name is skipped as before; a case
      *      skipped under a new name, in a file none of whose tests ran, is a skipped test (listed).
      *   2. Fewer cases run and more are skipped (r1 < r0, s1 > s0), whatever the names: at least
-     *      min(r0 - r1, s1 - s0) tests that ran do not run now. Sound under any naming: the counts
+     *      min(r0 - r1, s1 - s0) tests that ran do not run now; could not be judged where a report
+     *      may not list every test (see unlisted), unless the file reports the very same names as
+     *      before, as many cases under each, so that the cases compared are the ones listed. Sound under any naming: the counts
      *      are of the whole file, and the cases that ran and do not run now number r0 - r1 at least;
      *      of them, as many as there are more skipped cases may be among those (switched off), and
      *      the rest are not reported at all, which the gone tests (see gone) say: the two never
@@ -609,7 +613,10 @@ final class Witness {
         String counts = counts(n);
         if (n.r1() < n.r0() && n.s1() > n.s0()) {
             long least = Math.min(n.r0() - n.r1(), n.s1() - n.s0());
-            answer.add(new Verdict(f, "", Kind.SKIPPED_NOW, fewerRun(n, least, 0), by, (int) least));
+            // a file that reports the same names as before, as many cases of each, needs no report to list every test: it compares the very cases listed
+            if (n.unlisted() != null && !(n.fresh().isEmpty() && n.gone().isEmpty())) answer.add(new Verdict(f, "", Kind.UNKNOWN, counts + skippedNow(n) + ". But " + n.unlisted()
+                    + ": whether a test that ran does not run now is not known", by, (int) least));
+            else answer.add(new Verdict(f, "", Kind.SKIPPED_NOW, fewerRun(n, least, 0), by, (int) least));
             return new Skips(answer, listed);
         }
         String story;
@@ -729,11 +736,12 @@ final class Witness {
      * place, a row put in before the others, [a, b] to [c, a, b], is reported under the first
      * name, which the file had, and the last name, which it did not have, stands for b. So even
      * when N = P the names are not said to be the new tests. N = 0: each of the P could not be
-     * judged.
+     * judged. Where a report may not list every test (see unlisted), F - G does not count tests
+     * the file did not have: N is taken to be 0, and the reason is said.
      */
     private static List<Verdict> newTests(String f, Names n, List<JUnitXml.Case> passBoth, long other, String by) {
         List<Verdict> out = new ArrayList<>();
-        long p = passBoth.size(), g = n.gone().size(), fr = n.fresh().size(), least = Math.max(0, fr - g - other);
+        long p = passBoth.size(), g = n.gone().size(), fr = n.fresh().size(), least = n.unlisted() != null ? 0 : Math.max(0, fr - g - other);
         if (p == 0) return out;
         String counts = "the file reports " + tests(fr) + " it did not have" + (g > 0 ? " and no longer reports " + g + " it had" : "")
                 + (other > 0 ? ", and " + other + " of its tests " + (other == 1 ? "does" : "do") + " not pass on both sides" : "");
@@ -748,6 +756,7 @@ final class Witness {
         if (g > 0) why.add(g == 1 ? "the test it no longer reports, under a new name" : "one of the " + g + " tests it no longer reports, under a new name");
         if (other > 0) why.add("a test moved to this name by one put in before it, where cases are named by their place (the new "
                 + (fr - g == 1 ? "test" : "tests") + " then being among the " + other + " that do not pass on both sides)");
+        if (n.unlisted() != null) why.add("a test the file had that a report did not list: " + n.unlisted());
         List<String> names = shown(n.shown(), passBoth);
         for (int i = 0; i < passBoth.size(); i++) out.add(new Verdict(f, names.get(i), Kind.UNKNOWN, "passes before and after, but it cannot be told whether it is a new test: " + counts
                 + ". It may be a new test that does not test the change, or a test the file had: " + String.join(", or ", why), by));
@@ -760,7 +769,8 @@ final class Witness {
      * renamed, so a test is not called removed for being gone; only counts prove a removal. With
      * G gone and F fresh (see names):
      *
-     *   G > F       the file lost tests: at least G - F were removed
+     *   G > F       the file lost tests: at least G - F were removed; could not be judged
+     *               where a report may not list every test (see unlisted)
      *   G <= F      it could not be judged: a rename looks exactly like a test deleted and
      *               another written. Unless the counts of the whole file say that fewer tests
      *               run (see skips): that is said there, once.
@@ -788,6 +798,8 @@ final class Witness {
             if (g == 0) continue;
             if (g > nf && recounted.contains(f)) {
                 out.add(new Verdict(f, "", Kind.UNSTABLE, had(e.getValue()) + ", but what the file reports, after the change or as it was, is not the same in every run", by, g - nf));
+            } else if (g > nf && e.getValue().unlisted() != null) {
+                out.add(new Verdict(f, "", Kind.UNKNOWN, had(e.getValue()) + ". But " + e.getValue().unlisted() + ": whether tests were removed is not known" + fourth.note(f), by, g - nf));
             } else if (g > nf) {
                 long t = said.getOrDefault(f, 0L), least = g - nf - t;
                 said.put(f, Math.max(0, -least)); // what is left of it for the skips
@@ -824,6 +836,10 @@ final class Witness {
      *   a row taken out does to the rows after it where cases are named by their place. Could
      *   not be judged. Where the file runs fewer tests than before, the counts already fail it
      *   (see skips and gone), so nothing is lost by not accusing this name of what they prove.
+     *
+     * Where a run after the change has a case that failed or threw, its report may not list every
+     * test (see unlisted), so it shows neither that an old name is gone nor how many cases can be
+     * a rewrite: could not be judged, with the reason. The failure is said as failing anyway.
      *
      * All of this must hold in every run (with --runs N, the file as the change has it is run again
      * with the fourth run's repeats): an old test said gone or skipped is gone or skipped in each
@@ -874,7 +890,13 @@ final class Witness {
             judged.add(f + "\n" + k);
         }
         long b = out1.size(), m = rewrites.size();
-        if (b > 0 && m == 0) {
+        // a report after the change that may not list every test cannot show that no case can be a rewrite (see unlisted)
+        String unlisted = failing(a.cases()) || again.stream().anyMatch(r -> r != null && r.problem() == null && failing(r.cases())) ? unlisted(false, true) : null;
+        if (b > 0 && unlisted != null) {
+            out.add(new Verdict(f, "", Kind.UNKNOWN, shortList(out1.stream().map(k -> shown(n.shown(), k)).toList()) + " passed before the change and " + (b == 1 ? "fails" : "fail")
+                    + " on the code after it as the file was, and the file does not report " + (b == 1 ? "it now or skips it" : "them now or skips them") + ". But " + unlisted
+                    + ": whether the change took " + (b == 1 ? "it" : "them") + " out of the way is not known", by, (int) b));
+        } else if (b > 0 && m == 0) {
             for (String k : out1) {
                 out.add(new Verdict(f, shown(n.shown(), k), Kind.OLD_FAILS_AFTER, fourth.said(f, List.of(k), n.shown()) + (now.containsKey(k) ? ", and the change skips it now" : ". The edited file does not report it now"), by));
                 judged.add(f + "\n" + k);
@@ -898,6 +920,35 @@ final class Witness {
                 + "name given to another case, as a row taken out does to the rows after it where cases are named by their place"
                 + (n.r1() < n.r0() ? ". The file runs fewer tests than before (" + n.r1() + " where it ran " + n.r0() + ")" : ""), by, running.size()));
         return out;
+    }
+
+    /**
+     * Why a file's reports may not list every test it has, or null when nothing says so. Every
+     * count above takes a report for the whole list of a file's tests. A run in which something
+     * failed outside a test's body need not be: JUnit 4 reports a class whose set-up is wrong as
+     * one case, initializationError, in place of its tests; Vitest reports a failed afterAll as a
+     * case of its own, beside the tests. Mending such a fault then takes a case away or brings
+     * tests in, and the counts would call that a test removed or new tests. Which failed case
+     * stands for something outside a test's body a report does not say, and its name is not read
+     * to guess it. So when the file as it was (old) or after the change (now) has a case that
+     * failed or threw, what only the counts prove is not said of the file: could not be judged,
+     * with this reason. A failure after the change is said all the same, as failing.
+     */
+    private static String unlisted(List<JUnitXml.Case> old, List<JUnitXml.Case> now) {
+        return unlisted(failing(old), failing(now));
+    }
+
+    /** As above, from whether the file as it was (o) and after the change (a) has a case that failed or threw. */
+    private static String unlisted(boolean o, boolean a) {
+        if (!o && !a) return null;
+        return (o && a ? "the file as it was and after the change reported failures" : o ? "the file as it was reported failures" : "after the change the file reports failures")
+                + " (a failure outside a test's body, in its set-up, tear-down or loading, may be reported in place of the file's tests or as a case of its own), so "
+                + (o && a ? "its reports" : "that report") + " may not list every test";
+    }
+
+    /** True when one of these cases failed or threw. */
+    private static boolean failing(List<JUnitXml.Case> cases) {
+        return cases.stream().anyMatch(c -> failed(c.status()));
     }
 
     /** True when a run does not report a case of this identity, or skips every one. */

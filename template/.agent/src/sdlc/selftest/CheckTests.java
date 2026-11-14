@@ -208,6 +208,8 @@ final class CheckTests {
         write(repo, "checks/swap.t", SWAP);
         write(repo, "checks/side/both.t", SIDE);
         write(repo, "checks/pair.t", PAIR);
+        write(repo, "checks/hooked.t", HOOKED);
+        write(repo, "checks/init.t", INIT);
         write(repo, ".gitignore", "ignored/\n");
         git(repo, "init", "-q", "-b", "main");
         commit(repo, "base");
@@ -583,6 +585,7 @@ final class CheckTests {
         renamedOrNot(repo);
         switchedOff(repo);
         oldTestsOnTheChange(repo);
+        unlisted(repo);
 
         // a test that went to another changed file: each file is judged by its own counts, and a title is not read to pair them
         write(repo, "checks/judged.t", JUDGED.replace("goes too: pass\n", ""));
@@ -1042,6 +1045,66 @@ final class CheckTests {
                 && !era.contains("out of the way") && code == 0);
         write(repo, "checks/era.t", ERA);
         write(repo, "prod.txt", "v1\nfixed\n");
+    }
+
+    /** A test file of the base whose report holds a case for a failure outside the tests, as Vitest reports a failed afterAll. */
+    private static final String HOOKED = "adds: pass\nrefunds: pass\nafterAll hook: fail\n";
+
+    /** A test file of the base whose report holds one case in place of its tests, as JUnit 4 reports a class it cannot set up. */
+    private static final String INIT = "initializationError: error-unless never\n";
+
+    /**
+     * A report in which something failed need not list every test of its file: a fault outside the
+     * tests may be reported as a case of its own, or in place of the tests. What only the counts
+     * prove is then not said: could not be judged, with the reason.
+     */
+    private static void unlisted(Path repo) throws IOException {
+        // the hook mended: the case that stood for its failure is gone, and no test was removed
+        write(repo, "checks/hooked.t", "adds: pass\nrefunds: pass\n");
+        String hook = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a failing case gone from a file whose report as it was held a failure is not a test removed: could not be judged, with the reason",
+                hook.contains("      checks/hooked.t  [self test]\n        the file no longer reports 1 test under the name it had (afterAll hook), and reports none under a name it "
+                        + "did not have. But the file as it was reported failures (a failure outside a test's body, in its set-up, tear-down or loading, may be reported in place of "
+                        + "the file's tests or as a case of its own), so that report may not list every test: whether tests were removed is not known")
+                && !hook.contains("was removed") && code == 0);
+        write(repo, "checks/hooked.t", HOOKED);
+
+        // the class's set-up mended: its two tests come out from behind the one case that stood for them, and neither is a new test
+        write(repo, "checks/init.t", "works: pass\nalso works: pass\n");
+        String init = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: tests that come out from behind a failure reported in their place are not new tests that pass on both sides: could not be judged, with the reason",
+                init.contains("      checks/init.t  [self test]\n        works: passes before and after, but it cannot be told whether it is a new test: the file reports 2 tests it did "
+                        + "not have and no longer reports 1 it had. It may be a new test that does not test the change, or a test the file had: the test it no longer reports, under a "
+                        + "new name, or a test the file had that a report did not list: the file as it was reported failures")
+                && !init.contains("new test pass") && code == 0);
+        write(repo, "checks/init.t", INIT);
+
+        // a file whose tests failed as it was: one test gone and one skipped now. Neither count is said, as the report as it was may not list every test.
+        // Where the names and their numbers stayed the same, the skip is said all the same (see switchedOff: a test that failed before and is skipped now)
+        write(repo, "checks/off.t", OFF.replace("target: pass\n", "").replace("params(int)[1]: pass", "params(int)[1]: skip"));
+        String failedBefore = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: in a file whose report as it was held failures, fewer tests run and one is gone: could not be judged, with the reason, neither switched off nor removed",
+                failedBefore.contains("        the file runs 3 of its tests where it ran 5 before the change, and skips 3 where it skipped 2 (skipped now under a name that ran before: "
+                        + "params(int)[1]). But the file as it was reported failures") && failedBefore.contains("whether a test that ran does not run now is not known")
+                && failedBefore.contains("whether tests were removed is not known") && !failedBefore.contains("is skipped now\n") && !failedBefore.contains("was removed") && code == 0);
+        write(repo, "checks/off.t", OFF);
+
+        // after the change a failure stands in place of the tests: it fails the check, and the counts of that report are not said on top of it
+        write(repo, "checks/side/both.t", "initializationError: error-unless never\n");
+        String standIn = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a failure reported in place of a file's tests after the change fails the check, and is not also counted as tests removed",
+                standIn.contains("1 fails after the change\n      checks/side/both.t  [self test]\n        initializationError: throws IllegalStateException")
+                && standIn.contains("        the file no longer reports 2 tests under the names it had (stays, goes), and reports 1 under a name it did not have (initializationError). But "
+                        + "after the change the file reports failures") && !standIn.contains("was removed") && code == 1);
+        write(repo, "checks/side/both.t", SIDE);
+
+        // and an old test the change breaks, gone from such a report, is not said to be taken out of the way
+        write(repo, "checks/broken.t", MENDED.replace("holds: pass\n", "") + "initializationError: error-unless never\n");
+        String brokenStandIn = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a broken old test gone from a report that holds a failure after the change could not be judged, not taken out of the way",
+                brokenStandIn.contains("        holds passed before the change and fails on the code after it as the file was, and the file does not report it now or skips it. But after "
+                        + "the change the file reports failures") && !brokenStandIn.contains("out of the way: removed") && brokenStandIn.contains("1 fails after the change") && code == 1);
+        write(repo, "checks/broken.t", BROKEN);
     }
 
     /** A test file of the base with two nested classes that have a method of one name, the first of which the fix breaks. */
