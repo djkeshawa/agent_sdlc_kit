@@ -18,7 +18,15 @@ interface Runner {
     /** Runs the files and returns one result per file. */
     Map<String, FileRun> run(Path checkout, List<String> files, int timeoutSeconds);
 
-    /** What happened to one test file: its cases, or why none could be read. */
+    /**
+     * What the two sides of a comparison share although the change touches it, as the end of a
+     * sentence, or null. A test that passes on both sides then proves nothing either way: the side
+     * "before the change" did not run without all of the change.
+     */
+    default String sharedBySides(Change change) {
+        return null;
+    }
+
     /**
      * What happened to one test file: its cases, or why none could be read. broken says the reason
      * is the code itself (it does not compile, it does not load); otherwise the reason is the

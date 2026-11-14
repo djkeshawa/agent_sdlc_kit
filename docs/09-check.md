@@ -134,11 +134,18 @@ Claude Code, in `.claude/settings.json`:
 - A test that depends on the time, the network or the order of tests may be reported as
   unstable.
 - Two tests in one file that report the same name cannot be told apart and are not judged.
+  The same holds when a file now declares a name more often than before (a nested class, another
+  `describe` block): the new test cannot be told from the old one.
+- When one new test stops the others from compiling before the change, each changed test file
+  is run on its own. A test then counts as sensitive only if it also passes on its own after
+  the change: otherwise its failure before the change may come from another changed test file.
 - A test file whose name or folder has unusual characters (a comma, a space, a leading dash) is
   not run: such names could be read as options by Maven or Vitest.
-- For Vitest both sides run with the packages installed now. When the change is a new package
-  version, the test passes on both sides; the report says so when `package.json` or a lock file
-  changed.
+- For Vitest both sides run with the packages installed now. When the change touches
+  `package.json`, a lock file or a package manager's settings, a test that passes on both sides
+  is reported as "could not be judged", not as a test that proves nothing.
+- The output of a build is kept only at its start and its end (2 MB each); what lies between is
+  dropped. An answer of git larger than 64 MB stops the check with an error.
 - In a pull request build the base branch must be fetched, with enough history to reach the
   commit the branch started from. Otherwise the check stops with an error.
 - Names of test cases are matched by simple reading of the file. A test shown under another

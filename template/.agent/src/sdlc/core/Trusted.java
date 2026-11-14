@@ -38,6 +38,28 @@ public final class Trusted {
         return "";
     }
 
+    /** Set to true by the pipeline for the one pull request that installs the kit: the base branch has no rules yet. */
+    public static final String FIRST_INSTALLATION = "SDLC_FIRST_INSTALLATION";
+    /** Story keys, separated by commas, whose test locks a pull request may remove. Set by the pipeline. */
+    public static final String LOCKS_REMOVABLE = "SDLC_LOCKS_REMOVABLE";
+
+    /**
+     * A switch only the pipeline can set. It is read from the environment, never from a file of the
+     * checkout: what the pull request can write must not grant the pull request an exception.
+     */
+    public static boolean flag(String name) {
+        String v = env.apply(name);
+        return v != null && (v.trim().equalsIgnoreCase("true") || v.trim().equals("1"));
+    }
+
+    /** A list only the pipeline can set: values separated by commas or spaces. */
+    public static java.util.Set<String> list(String name) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        String v = env.apply(name);
+        if (v != null) for (String s : v.split("[,\\s]+")) if (!s.isBlank()) out.add(s.trim());
+        return out;
+    }
+
     /** True in a pull request build: the rules then come from the base branch. */
     public static boolean inCi() {
         return !eventBase().isEmpty();

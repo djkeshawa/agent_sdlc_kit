@@ -283,9 +283,27 @@ public final class Contracts {
         for (String d : deleted) if (fileToApi.containsKey(d) && !all.contains(d)) all.add(d);
         if (all.isEmpty()) return new Policy(passes, fails, warns);
         String allowanceRel = "docs/agent/contracts/" + story + ".json";
-        if (!story.isBlank() && changed.contains(allowanceRel)) warns.add("contract allowance " + allowanceRel + " is added or changed in this pull request (architects review it, CODEOWNERS)");
         boolean lanes = Lanes.enabled();
-        Map<String, Object> allowance = story.isBlank() ? Map.of() : sdlc.core.Store.read(Lanes.allowanceFile(story));
+        // In a pull request build the allowance is the base branch's: a pull request must not write the permission it is
+        // judged by. Architects merge an allowance first, in a pull request of its own.
+        boolean ci = sdlc.core.Trusted.inCi();
+        String onBase = sdlc.core.Trusted.shortName(base);
+        Map<String, Object> allowance;
+        if (story.isBlank()) allowance = Map.of();
+        else if (!ci) allowance = sdlc.core.Store.read(Lanes.allowanceFile(story));
+        else {
+            try {
+                String text = sdlc.core.Trusted.read(base, allowanceRel);
+                allowance = text == null ? Map.of() : Json.map(Json.parse(text));
+            } catch (RuntimeException e) {
+                fails.add("The contract allowance " + allowanceRel + " on " + onBase + " cannot be read: " + e.getMessage());
+                return new Policy(passes, fails, warns);
+            }
+        }
+        if (!story.isBlank() && changed.contains(allowanceRel)) {
+            warns.add("contract allowance " + allowanceRel + " is added or changed in this pull request (architects review it, CODEOWNERS)"
+                    + (ci && lanes ? "; it is not used to judge this pull request, the one on " + onBase + " is" : ""));
+        }
         for (String file : all) {
             String api = fileToApi.get(file);
             List<Change> changes;
@@ -306,8 +324,10 @@ public final class Contracts {
                 continue;
             }
             if (allowance.isEmpty()) {
-                fails.add("Contract " + file + " changed, but " + (story.isBlank() ? "no story is known" : story + " has no " + Lanes.allowanceFile(story).getFileName()
-                        + " (java .agent/Sdlc.java tasks create " + story + " writes it; commit it)"));
+                fails.add("Contract " + file + " changed, but " + (story.isBlank() ? "no story is known" : ci
+                        ? story + " has no " + allowanceRel + " on " + onBase + " (java .agent/Sdlc.java tasks create " + story
+                                + " writes it; it is merged first, in a pull request of its own that architects review)"
+                        : story + " has no " + Lanes.allowanceFile(story).getFileName() + " (java .agent/Sdlc.java tasks create " + story + " writes it; commit it)"));
                 continue;
             }
             String lane = Json.str(allowance, "lane");

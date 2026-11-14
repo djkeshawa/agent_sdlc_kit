@@ -147,7 +147,7 @@ public final class Runners {
                         "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false"));
                 if (!within.isEmpty()) cmd.addAll(List.of("-pl", within, "-am"));
                 cmd.add("test");
-                Proc p = Proc.runWithEnv(checkout.resolve(root), Map.of(), null, timeoutSeconds, cmd.toArray(new String[0]));
+                Proc p = Proc.runBuild(checkout.resolve(root), Map.of(), timeoutSeconds, cmd.toArray(new String[0]));
                 List<JUnitXml.Case> cases = new ArrayList<>();
                 String unreadable = null;
                 if (p.code() == 124) {
@@ -268,6 +268,17 @@ public final class Runners {
             return TEST_FILE.matcher(path).matches() || SUPPORT_DIR.matcher(path).matches();
         }
 
+        /** Files that decide which packages are installed. Both sides run with the one installed set. */
+        private static final Pattern PACKAGES = Pattern.compile("(^|.*/)(package\\.json|package-lock\\.json|npm-shrinkwrap\\.json|yarn\\.lock|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|bun\\.lockb?|\\.npmrc|\\.yarnrc(\\.yml)?|\\.pnpmfile\\.cjs)$");
+
+        @Override
+        public String sharedBySides(Change change) {
+            List<String> packages = change.files.stream().map(Change.File::path).filter(f -> PACKAGES.matcher(f).matches()).toList();
+            if (packages.isEmpty()) return null;
+            return "the change touches what is installed (" + packages.get(0) + (packages.size() > 1 ? " and " + (packages.size() - 1) + " more" : "")
+                    + ") and both sides ran with the packages installed now, so the side before the change was not without all of it";
+        }
+
         /** The nearest folder whose package.json names vitest. */
         private static String project(Path checkout, String path) {
             return nearest(checkout, path, d -> {
@@ -312,7 +323,7 @@ public final class Runners {
                         continue;
                     }
                     cmd.addAll(rel);
-                    Proc p = Proc.runWithEnv(project, Map.of("CI", "1"), null, timeoutSeconds, cmd.toArray(new String[0]));
+                    Proc p = Proc.runBuild(project, Map.of("CI", "1"), timeoutSeconds, cmd.toArray(new String[0]));
                     List<JUnitXml.Case> cases = new ArrayList<>();
                     String unreadable = null;
                     if (p.code() == 124) {

@@ -89,9 +89,10 @@ final class Witness {
         for (String f : alone) before.put(f, runAlone(change, runner, files, f, base, timeout));
         // candidates: failed before by assertion, passed after. They are run again to rule out a test that fails at random.
         Map<String, Set<String>> candidates = new LinkedHashMap<>();
+        String shared = runner.sharedBySides(change);
         for (String f : files) {
             FileRun a = after.get(f), b = before.get(f);
-            Set<String> existing = TestNames.of(f, change.before(f));
+            Map<String, Integer> declaredBefore = TestNames.counts(f, change.before(f)), declaredNow = TestNames.counts(f, change.after(f));
             if (a == null || a.problem() != null) {
                 // code that does not compile or load is the change's own failure; a missing build tool, a timeout or a name that cannot be passed on is not
                 boolean broken = a != null && a.broken();
@@ -105,7 +106,10 @@ final class Witness {
             for (JUnitXml.Case c : a.cases()) if (!seen.add(key(c))) twice.add(key(c));
             seen.clear();
             for (JUnitXml.Case c : a.cases()) {
-                boolean old = existing.contains(TestNames.plain(f, c.name()));
+                String plain = TestNames.plain(f, c.name());
+                boolean old = declaredBefore.containsKey(plain);
+                // the file declares this name more often than it did: one of them is new, and which one cannot be read from a name
+                boolean oneIsNew = old && declaredNow.getOrDefault(plain, 0) > declaredBefore.get(plain);
                 JUnitXml.Case p = was.get(key(c));
                 if (twice.contains(key(c))) {
                     if (seen.add(key(c))) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "more than one test reports this name, so they cannot be told apart", runner.name()));
@@ -114,12 +118,31 @@ final class Witness {
                 else if (c.status() != Status.PASSED) out.add(new Verdict(f, c.name(), Kind.FAILS_AFTER, describe(c), runner.name()));
                 else if (b == null || b.problem() != null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "before the change the file " + (b == null ? "gave no result" : b.problem()), runner.name()));
                 else if (p == null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "was not found before the change", runner.name()));
+                else if (p.status() == Status.PASSED && shared != null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after, but " + shared, runner.name()));
+                else if (p.status() == Status.PASSED && oneIsNew) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after; the file now has more tests of this name than before, so a new one cannot be told from the old one", runner.name()));
                 else if (p.status() == Status.PASSED) out.add(new Verdict(f, c.name(), old ? Kind.EXISTING_PASSES_ON_BOTH : Kind.PASSES_ON_BOTH, "", runner.name()));
                 else if (p.status() == Status.SKIPPED) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "was skipped before the change", runner.name()));
                 else if (p.status() == Status.FLAKY) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "before the change the build ran it again and got another result", runner.name()));
                 else if (p.status() == Status.ERRORED) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "before the change it threw " + shortType(p) + ", not an assertion", runner.name()));
                 else candidates.computeIfAbsent(f, k -> new LinkedHashSet<>()).add(key(c));
             }
+        }
+        // A test that was run alone before the change may have failed there for want of another changed test file,
+        // not for want of the change. It is run alone after the change too, and must pass there as well.
+        for (String f : new ArrayList<>(candidates.keySet())) {
+            if (!alone.contains(f)) continue;
+            FileRun solo = runAlone(change, runner, files, f, head, timeout);
+            for (String k : new ArrayList<>(candidates.get(f))) {
+                if (status(solo, k) == Status.PASSED) continue;
+                candidates.get(f).remove(k);
+                out.add(new Verdict(f, k.substring(k.indexOf('#') + 1), Kind.UNKNOWN,
+                        "after the change it passes only together with the other changed test files, so its failure before the change may come from them", runner.name()));
+            }
+            if (candidates.get(f).isEmpty()) candidates.remove(f);
+        }
+        if (!alone.isEmpty()) {
+            restore(change, head, files);
+            restore(change, base, files);
         }
         if (candidates.isEmpty()) return out;
         List<String> again = new ArrayList<>(candidates.keySet());
@@ -147,6 +170,7 @@ final class Witness {
                 else out.add(new Verdict(f, name, Kind.SENSITIVE, "", runner.name()));
             }
         }
+        if (!alone.isEmpty()) restore(change, base, files); // as the caller's other checks expect it
         return out;
     }
 
@@ -155,7 +179,7 @@ final class Witness {
     /** Above this many files, running each alone costs more than it tells. */
     private static final int MAX_ALONE = 8;
 
-    /** Runs one changed test file before the change with every other changed test file as the base has it (or absent, when it is new). */
+    /** Runs one changed test file in a checkout (of either side) with every other changed test file as the base has it (or absent, when it is new). */
     private static FileRun runAlone(Change change, Runner runner, List<String> files, String file, Scratch base, int timeout) {
         try {
             for (String other : files) {
@@ -171,7 +195,7 @@ final class Witness {
         }
     }
 
-    /** Puts every changed test file back over the base as the change has it. */
+    /** Puts every changed test file back into a checkout as the change has it. */
     private static void restore(Change change, Scratch base, List<String> files) {
         try {
             base.write(change.head, files);

@@ -115,7 +115,14 @@ final class TrustTests {
 
         env(Map.of("CHANGE_TARGET", "bare"));
         Checks.Result first = Checks.prPolicy(null, false);
-        check("trust: a base branch without rules is said out loud", first.warns().stream().anyMatch(w -> w.contains("origin/bare has no .agent/sdlc.yml")));
+        check("trust: a base branch without rules fails: the pull request's own rules prove nothing",
+                first.fails().stream().anyMatch(f -> f.contains("origin/bare has no .agent/sdlc.yml")) && first.passes().isEmpty() && Ctx.cfg == own);
+        env(Map.of("CHANGE_TARGET", "bare", "SDLC_FIRST_INSTALLATION", "true"));
+        Checks.Result install = Checks.prPolicy(null, false);
+        check("trust: only the pipeline can say that a pull request is the first installation",
+                install.fails().stream().noneMatch(f -> f.contains("has no .agent/sdlc.yml")) && install.warns().stream().anyMatch(w -> w.contains("first installation")));
+        env(Map.of("CHANGE_TARGET", "bare", "SDLC_FIRST_INSTALLATION", "no"));
+        check("trust: and only with a plain yes", Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("has no .agent/sdlc.yml")));
 
         env(Map.of("GITHUB_BASE_REF", "main"));
         git(repo, "update-ref", "refs/remotes/origin/broken", "HEAD");
@@ -168,6 +175,21 @@ final class TrustTests {
         commit(repo, "feat(PROJ-9): and some code");
         Checks.Result mixed = Checks.prPolicy(null, false);
         check("trust: the same beside production code fails", mixed.fails().stream().anyMatch(f -> f.contains("has locked since the branch was made")));
+        // a pull request of only the lock file and its test that takes the lock away and deletes the test
+        git(repo, "switch", "-q", "-c", "chore/PROJ-9-unlock", "origin/main");
+        Files.delete(repo.resolve(Locks.DIR + "/PROJ-9.json"));
+        Files.delete(repo.resolve(test));
+        commit(repo, "test(PROJ-9): drop the lock and the test");
+        Ctx.init(repo);
+        Checks.Result unlock = Checks.prPolicy(null, false);
+        check("trust: a lock-only pull request cannot remove a lock and delete its test",
+                unlock.fails().stream().anyMatch(f -> f.contains("is not removed by a pull request") && f.contains(test + " (PROJ-9): lock removed")));
+        env(Map.of("GITHUB_BASE_REF", "main", "SDLC_LOCKS_REMOVABLE", "PROJ-8, PROJ-9"));
+        Checks.Result retired = Checks.prPolicy(null, false);
+        check("trust: unless the pipeline names the story whose locks may go",
+                retired.fails().stream().noneMatch(f -> f.contains("is not removed")) && retired.warns().stream().anyMatch(w -> w.contains("locks removed, as the pipeline allows")));
+        env(Map.of("GITHUB_BASE_REF", "main", "SDLC_LOCKS_REMOVABLE", "PROJ-8"));
+        check("trust: another story's permission does not cover it", Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("is not removed by a pull request")));
         env(Map.of());
     }
 

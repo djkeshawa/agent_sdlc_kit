@@ -17,6 +17,8 @@ import sdlc.check.JUnitXml.Status;
  *   needs WORD          passes when prod.txt of the checkout holds the word, else fails by assertion
  *   error-unless WORD   passes when it does, else throws something that is not an assertion
  *   compile-needs WORD  passes when it does; else no file of the same run compiles
+ *   leans-on FILE       passes when the checkout holds that file, else fails by assertion
+ * A change that touches shared.lock is one whose two sides share an installed setup.
  */
 final class SelfTestRunner implements Runner {
     private int calls;
@@ -34,6 +36,11 @@ final class SelfTestRunner implements Runner {
     @Override
     public boolean support(String path) {
         return path.endsWith(".t");
+    }
+
+    @Override
+    public String sharedBySides(Change change) {
+        return change.files.stream().anyMatch(f -> f.path().equals("shared.lock")) ? "the change touches shared.lock, which both sides ran with" : null;
     }
 
     @Override
@@ -76,6 +83,7 @@ final class SelfTestRunner implements Runner {
                         case "needs" -> has ? Status.PASSED : Status.FAILED;
                         case "error-unless" -> has ? Status.PASSED : Status.ERRORED;
                         case "compile-needs" -> Status.PASSED; // it compiled, so the word is there
+                        case "leans-on" -> how.length > 1 && Files.isRegularFile(checkout.resolve(how[1])) ? Status.PASSED : Status.FAILED;
                         default -> Status.ERRORED;
                     };
                     cases.add(new JUnitXml.Case(f, name, s, s == Status.ERRORED ? "java.lang.IllegalStateException" : s == Status.FAILED ? "AssertionError" : "", s == Status.FAILED ? "expected something else" : ""));

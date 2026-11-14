@@ -1,6 +1,8 @@
 package sdlc.check;
 
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -13,16 +15,21 @@ public final class TestNames {
     private static final Pattern SCRIPT = Pattern.compile("\\b(?:it|test)(?:\\.\\w+)*\\s*\\(\\s*(['\"`])((?:\\\\.|(?!\\1).)*)\\1");
 
     public static Set<String> of(String path, String text) {
-        Set<String> out = new LinkedHashSet<>();
+        return new LinkedHashSet<>(counts(path, text).keySet());
+    }
+
+    /** Each declared name with how often the file declares it: a nested class or another describe block may use a name again. */
+    public static Map<String, Integer> counts(String path, String text) {
+        Map<String, Integer> out = new LinkedHashMap<>();
         if (text == null) return out;
         if (path.endsWith(".t")) { // the self test's stand-in format: "name: outcome"
-            for (String line : text.split("\\R")) if (line.contains(": ")) out.add(line.substring(0, line.indexOf(": ")));
+            for (String line : text.split("\\R")) if (line.contains(": ")) out.merge(plain(path, line.substring(0, line.indexOf(": "))), 1, Integer::sum);
         } else if (path.endsWith(".java")) {
             Matcher m = JAVA.matcher(text);
-            while (m.find()) out.add(m.group(1));
+            while (m.find()) out.merge(m.group(1), 1, Integer::sum);
         } else {
             Matcher m = SCRIPT.matcher(text);
-            while (m.find()) out.add(m.group(2));
+            while (m.find()) out.merge(m.group(2), 1, Integer::sum);
         }
         return out;
     }

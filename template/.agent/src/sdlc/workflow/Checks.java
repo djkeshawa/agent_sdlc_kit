@@ -152,7 +152,15 @@ public final class Checks {
                 return new Result(passes, fails, warns);
             }
             if (trusted == null) {
-                warns.add(shown + " has no .agent/sdlc.yml, so this pull request's own rules were used (a first installation; a tech lead reviews it)");
+                // No rules on the base branch: the only rules at hand are the pull request's own, which prove nothing.
+                // Only the pipeline can say that this is the pull request that installs the kit.
+                if (!Trusted.flag(Trusted.FIRST_INSTALLATION)) {
+                    fails.add(shown + " has no .agent/sdlc.yml, so there are no rules to judge this pull request by. For the pull request that installs the kit, "
+                            + "the pipeline sets " + Trusted.FIRST_INSTALLATION + "=true (the pipeline, not the pull request)");
+                    return new Result(passes, fails, warns);
+                }
+                warns.add(shown + " has no .agent/sdlc.yml and the pipeline says this is the first installation (" + Trusted.FIRST_INSTALLATION
+                        + "): this pull request's own rules were used (a tech lead reviews it)");
             } else {
                 Ctx.cfg = trusted;
                 passes.add("The rules are read from " + shown + ", not from this pull request");
@@ -189,9 +197,20 @@ public final class Checks {
         List<String> broken = sdlc.core.Locks.broken(Ctx.root);
         if (!sdlc.core.Locks.locked(Ctx.root).isEmpty() || !broken.isEmpty()) check(broken.isEmpty(), "Locked acceptance tests unchanged" + (broken.isEmpty() ? "" : ": " + broken), passes, fails);
         List<String> loosened = sdlc.core.Locks.loosened(Ctx.root, Contracts.mergeBase(base));
-        if (!loosened.isEmpty()) {
-            if (lockOnly(everyChange, Contracts.mergeBase(base))) warns.add("acceptance test locks of the base branch changed in a lock-only pull request: " + loosened + " (QE leads review it, CODEOWNERS)");
-            else fails.add("Locked acceptance tests keep the lock they have on " + shown + ": " + loosened
+        // Taking a lock away is never the reviewed exception: with the lock gone the test may be deleted or emptied in the
+        // same pull request. Only the pipeline can name stories whose locks may go (a retired feature).
+        Set<String> removable = Trusted.list(Trusted.LOCKS_REMOVABLE);
+        List<String> removed = loosened.stream().filter(l -> l.endsWith(": lock removed") && !removable.contains(storyOf(l))).toList();
+        List<String> released = loosened.stream().filter(l -> l.endsWith(": lock removed") && removable.contains(storyOf(l))).toList();
+        List<String> rehashed = loosened.stream().filter(l -> !l.endsWith(": lock removed")).toList();
+        if (!removed.isEmpty()) {
+            fails.add("A lock on " + shown + " is not removed by a pull request: " + removed + " (a locked test may be locked again with new content in QE's own pull request; "
+                    + "to retire one, the pipeline names its story in " + Trusted.LOCKS_REMOVABLE + ")");
+        }
+        if (!released.isEmpty()) warns.add("acceptance test locks removed, as the pipeline allows (" + Trusted.LOCKS_REMOVABLE + "): " + released + " (QE leads review it, CODEOWNERS)");
+        if (!rehashed.isEmpty()) {
+            if (lockOnly(everyChange, Contracts.mergeBase(base))) warns.add("acceptance tests of the base branch are locked again with new content in a lock-only pull request: " + rehashed + " (QE leads review it, CODEOWNERS)");
+            else fails.add("Locked acceptance tests keep the lock they have on " + shown + ": " + rehashed
                     + " (QE changes a lock in its own pull request that holds only the lock files and their tests)");
         }
         // a lock the base branch gained or changed after this branch left it: the branch's own lock files do not know it
@@ -240,6 +259,12 @@ public final class Checks {
             }
         }
         return new Result(passes, fails, warns);
+    }
+
+    /** The story of a line of Locks.loosened: "path (STORY): lock removed" -> STORY. */
+    private static String storyOf(String loosened) {
+        int close = loosened.lastIndexOf("): "), open = loosened.lastIndexOf(" (", close);
+        return open < 0 || close < 0 ? "" : loosened.substring(open + 2, close);
     }
 
     /**

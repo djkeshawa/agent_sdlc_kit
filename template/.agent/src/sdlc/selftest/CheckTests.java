@@ -31,6 +31,7 @@ final class CheckTests {
         Path repo = Files.createTempDirectory("sdlc-checktest").toRealPath();
         try {
             Trusted.env = name -> null;
+            output(repo);
             reports(repo);
             reactor(repo);
             scenarios(repo);
@@ -45,6 +46,19 @@ final class CheckTests {
                 }
             }
         }
+    }
+
+    /** The output of a child process is held in memory only up to a limit. */
+    private static void output(Path repo) {
+        Proc whole = Proc.run(repo, "git", "help", "-a");
+        Proc ends = Proc.exec(repo, Map.of(), null, 60, 40, 40, "git", "help", "-a");
+        check("output: a build's output is kept at both ends and the middle is left out, with a count", whole.ok() && whole.out().length() > 200
+                && ends.ok() && ends.out().startsWith(whole.out().substring(0, 40)) && ends.out().endsWith(whole.out().substring(whole.out().length() - 40))
+                && ends.out().contains((whole.out().getBytes(StandardCharsets.UTF_8).length - 80) + " bytes of output left out here"));
+        Proc strict = Proc.exec(repo, Map.of(), null, 60, 40, 0, "git", "help", "-a");
+        check("output: an answer that is read as a whole is an error when it is too large, not a shortened answer",
+                strict.code() == Proc.TOO_MUCH_OUTPUT && strict.out().isEmpty() && strict.err().contains("larger than"));
+        check("output: one that fits is unchanged", Proc.exec(repo, Map.of(), null, 60, 1 << 20, 0, "git", "help", "-a").out().equals(whole.out()));
     }
 
     private static void reports(Path repo) throws IOException {
@@ -188,6 +202,37 @@ final class CheckTests {
         Files.delete(repo.resolve("tests/feature.t"));
         Files.delete(repo.resolve("tests/feature2.t"));
         write(repo, "prod.txt", "v1\nfixed\n");
+
+        // a test that leans on another changed test file: alone before the change it fails for want of that file, not of the change
+        write(repo, "prod.txt", "v1\nfixed\nfeature\n");
+        write(repo, "tests/feature.t", "uses the new code: compile-needs feature\n");
+        write(repo, "tests/feature2.t", "also uses it: compile-needs feature\n");
+        write(repo, "tests/lean.t", "leans: leans-on tests/helper.t\n");
+        write(repo, "tests/helper.t", "helps: pass\n");
+        String lean = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("check: a test that fails before the change only for want of another changed test file is not called sensitive",
+                lean.contains("leans: after the change it passes only together with the other changed test files") && !lean.contains("        leans\n")
+                && lean.contains("1 fails before the change and passes after it, in 2 of 2 runs") && lean.contains("        sensitive"));
+        for (String f : new String[] {"feature.t", "feature2.t", "lean.t", "helper.t"}) Files.delete(repo.resolve("tests/" + f));
+        write(repo, "prod.txt", "v1\nfixed\n");
+
+        // a name the file declares more often than before: the new one cannot be told from the old one
+        write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\nnested > kept: pass\n");
+        String again = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a new test under a name the file already had is not passed off as an old one",
+                again.contains("nested > kept: passes before and after; the file now has more tests of this name than before")
+                && !again.contains("already in the edited files passes before and after") && !again.contains("so it does not test the change"));
+        write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\n");
+
+        // what both sides share although the change touches it: "passes on both" says nothing then
+        write(repo, "shared.lock", "v2\n");
+        write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\nidle: pass\n");
+        String sharedSetup = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: when both sides ran with a setup the change touches, a test that passes on both is not judged",
+                sharedSetup.contains("idle: passes before and after, but the change touches shared.lock") && !sharedSetup.contains("so it does not test the change")
+                && sharedSetup.contains("1 fails before the change and passes after it"));
+        Files.delete(repo.resolve("shared.lock"));
+        write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\n");
 
         // two cases under one name cannot be told apart
         write(repo, "tests/twins.t", "same: needs fixed\nsame: pass\n");

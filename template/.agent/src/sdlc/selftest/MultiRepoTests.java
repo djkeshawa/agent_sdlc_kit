@@ -473,6 +473,15 @@ final class MultiRepoTests {
     }
 
     private static void contractPolicy(Path tmp) throws IOException {
+        sdlc.core.Trusted.env = name -> null; // the self test may itself run in a pull request build
+        try {
+            contractPolicyOnADevelopersMachine(tmp);
+        } finally {
+            sdlc.core.Trusted.env = System::getenv;
+        }
+    }
+
+    private static void contractPolicyOnADevelopersMachine(Path tmp) throws IOException {
         String[] git = {"git", "-c", "user.name=t", "-c", "user.email=t@x", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"};
         Proc.run(tmp, "git", "switch", "-q", "-c", "feature/PROJ-80-contract");
         Store.writeText(tmp.resolve("api/openapi.yaml"), OPENAPI);
@@ -493,6 +502,23 @@ final class MultiRepoTests {
         check("contracts: an operation the slice does not list fails", Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("GET /refunds added, but the solution slice does not list it")));
         Store.write(allow, Store.map("story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds"), "remove", List.of(), "breaking", false))));
         check("contracts: an operation the slice lists passes", Contracts.prPolicy("PROJ-80", base, changed).fails().isEmpty());
+        // in a pull request build the allowance is the base branch's: the pull request's own copy grants nothing
+        sdlc.core.Trusted.env = name -> name.equals("GITHUB_BASE_REF") ? "main" : null;
+        try {
+            Contracts.Policy own = Contracts.prPolicy("PROJ-80", base, changed);
+            check("contracts: in a pull request build the pull request's own allowance is not used",
+                    own.fails().stream().anyMatch(f -> f.contains("has no docs/agent/contracts/PROJ-80.json on") && f.contains("merged first")));
+            Proc.run(tmp, "git", "switch", "-q", "-c", "allowance-merged", base);
+            Proc.run(tmp, "git", "add", "-f", "docs/agent/contracts/PROJ-80.json");
+            Proc.run(tmp, concat(git, "commit", "-q", "-m", "docs(PROJ-80): contract allowance"));
+            Proc.run(tmp, "git", "switch", "-q", "feature/PROJ-80-contract");
+            Store.write(allow, Store.map("story", "PROJ-80", "lane", "patch", "apis", Map.of()));
+            Contracts.Policy merged = Contracts.prPolicy("PROJ-80", "allowance-merged", List.of("api/openapi.yaml", "docs/agent/contracts/PROJ-80.json"));
+            check("contracts: an allowance merged on the base branch is the one that counts",
+                    merged.fails().isEmpty() && merged.warns().stream().anyMatch(w -> w.contains("is not used to judge this pull request")));
+        } finally {
+            sdlc.core.Trusted.env = name -> null;
+        }
         Store.writeText(tmp.resolve("api/openapi.yaml"), OPENAPI.replace("required: [amount]", "required: [amount, reason]"));
         Proc.run(tmp, "git", "add", "api/openapi.yaml");
         Proc.run(tmp, concat(git, "commit", "-q", "-m", "feat(PROJ-80): reason required"));
