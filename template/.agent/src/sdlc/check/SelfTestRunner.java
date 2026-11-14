@@ -38,20 +38,31 @@ import sdlc.check.JUnitXml.Status;
 final class SelfTestRunner implements Runner {
     /** Runs so far in each checkout: a flaky test's result depends on it, not on the order in which the checkouts are run. */
     private final Map<Path, Integer> calls = new java.util.HashMap<>();
+    /** The folder whose files this runner owns ("folder/"), or "" for every ".t" file. */
+    private final String under;
+
+    SelfTestRunner() {
+        this("");
+    }
+
+    /** A runner that owns only the ".t" files under a folder: two runners in one check. */
+    SelfTestRunner(String under) {
+        this.under = under;
+    }
 
     @Override
     public String name() {
-        return "self test";
+        return under.isEmpty() ? "self test" : "self test of " + under;
     }
 
     @Override
     public boolean runs(Path checkout, String path) {
-        return path.endsWith(".t");
+        return support(path);
     }
 
     @Override
     public boolean support(String path) {
-        return path.endsWith(".t");
+        return path.endsWith(".t") && path.startsWith(under);
     }
 
     @Override

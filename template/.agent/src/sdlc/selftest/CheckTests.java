@@ -206,6 +206,7 @@ final class CheckTests {
         write(repo, "checks/broken.t", BROKEN);
         write(repo, "checks/asleep.t", ASLEEP);
         write(repo, "checks/swap.t", SWAP);
+        write(repo, "checks/side/both.t", SIDE);
         write(repo, ".gitignore", "ignored/\n");
         git(repo, "init", "-q", "-b", "main");
         commit(repo, "base");
@@ -855,6 +856,12 @@ final class CheckTests {
             System.setErr(err);
         }
 
+        // two runners, each with a test gone: each runner's fourth checkout holds its own old files and no other runner's
+        write(repo, "checks/side/both.t", SIDE.replace("goes: pass\n", ""));
+        check("check: each runner runs its old tests in a fourth checkout of its own, with no other runner's old files in it",
+                Check.fourthCheckoutsApart(sdlc.check.Change.of(null), "checks/side/").equals("self test of checks/side/: checks/side/both.t; self test: checks/broken.t"));
+        write(repo, "checks/side/both.t", SIDE);
+
         // deleted: the same, said once, not also as removed
         write(repo, "checks/broken.t", MENDED.replace("holds: pass\n", ""));
         String deleted = report(Map.of("selftest-runner", "true", "runs", "1"));
@@ -934,6 +941,9 @@ final class CheckTests {
         write(repo, "checks/era.t", ERA);
         write(repo, "prod.txt", "v1\nfixed\n");
     }
+
+    /** A test file of the base that a second stand-in runner owns. */
+    private static final String SIDE = "stays: pass\ngoes: pass\n";
 
     /** A test file of the base whose test passes on the base's code and fails on the code of the fix, beside a skipped one. */
     private static final String SWAP = "guard: fails-with fixed\nidle: skip\n";

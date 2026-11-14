@@ -3,7 +3,9 @@ package sdlc.check;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 
 import sdlc.core.UsageException;
 
@@ -12,8 +14,8 @@ import sdlc.core.UsageException;
  * with the change's tests, fixtures and helpers laid over it, so the same tests can be run on
  * both sides. A third, "old", is the base commit as it is: there the test files the change edits
  * run as they were, to learn which tests they had. A fourth, "old-tests", holds the tree after the
- * change with old test files laid over it (see oldTests). Each is made when first asked for; all
- * are removed when closed.
+ * change with old test files laid over it, one for each runner (see oldTests). Each is made when
+ * first asked for; all are removed when closed.
  */
 final class Sides implements AutoCloseable {
     private final Change change;
@@ -21,7 +23,7 @@ final class Sides implements AutoCloseable {
     private Scratch head;
     private Scratch base;
     private Scratch old;
-    private Scratch oldTests;
+    private final Map<Runner, Scratch> oldTests = new IdentityHashMap<>();
 
     Sides(Change change, List<Runner> runners) {
         this.change = change;
@@ -56,19 +58,25 @@ final class Sides implements AutoCloseable {
     }
 
     /**
-     * The fourth checkout: the tree after the change, over which the witness lays the old version
-     * of the edited test files it needs, to run old tests on the code after the change. Made only
-     * when a test is gone, switched off or runs fewer times. It is a checkout of its own, so the
-     * checkout after the change is never touched for this.
+     * The fourth checkout of one runner: the tree after the change, over which the witness lays
+     * the old version of the edited test files of that runner it needs, to run old tests on the
+     * code after the change. Made only when the witness asks for it (see Witness.fourth). It is a
+     * checkout of its own, so the checkout after the change is never touched for this; and one
+     * for each runner, so the old files one runner's tests are run with are never in another
+     * runner's checkout, whatever a run did or threw. Nothing has to be put back.
      */
-    Scratch oldTests() {
-        if (oldTests == null) oldTests = Scratch.of(change.head, "old-tests");
-        return oldTests;
+    Scratch oldTests(Runner runner) {
+        return oldTests.computeIfAbsent(runner, r -> Scratch.of(change.head, "old-tests"));
     }
 
-    /** True when the fourth checkout was made. */
+    /** True when a fourth checkout was made, for any runner. */
     boolean madeOldTests() {
-        return oldTests != null;
+        return !oldTests.isEmpty();
+    }
+
+    /** True when the fourth checkout of this runner was made. */
+    boolean madeOldTests(Runner runner) {
+        return oldTests.containsKey(runner);
     }
 
     @Override
@@ -76,6 +84,6 @@ final class Sides implements AutoCloseable {
         if (head != null) head.close();
         if (base != null) base.close();
         if (old != null) old.close();
-        if (oldTests != null) oldTests.close();
+        for (Scratch s : oldTests.values()) s.close();
     }
 }

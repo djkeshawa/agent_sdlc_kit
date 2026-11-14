@@ -97,8 +97,9 @@ public final class Check {
      */
     public static List<java.nio.file.Path> checkoutsAfterClose(Change change) {
         List<java.nio.file.Path> made = new ArrayList<>();
-        try (Sides sides = new Sides(change, List.of(new SelfTestRunner()))) {
-            for (Scratch s : List.of(sides.head(), sides.base(), sides.old(), sides.oldTests())) {
+        Runner runner = new SelfTestRunner();
+        try (Sides sides = new Sides(change, List.of(runner))) {
+            for (Scratch s : List.of(sides.head(), sides.base(), sides.old(), sides.oldTests(runner))) {
                 if (!java.nio.file.Files.isDirectory(s.dir)) return List.of();
                 made.add(s.dir);
             }
@@ -118,6 +119,30 @@ public final class Check {
             Witness.run(change, runners, 1, 900, sides);
             boolean intact = files(sides.head().dir).equals(files(fresh.dir));
             return (sides.madeOldTests() ? "made" : "not made") + ", " + (intact ? "head intact" : "head changed");
+        }
+    }
+
+    /**
+     * For the self test: runs the witness of a change once with two stand-in runners, the first of
+     * which owns the test files under a folder (apart) and the second all others, and says of each
+     * runner's fourth checkout which files differ from the change's tree: "runner: a, b" for each
+     * runner that made one, joined by "; ".
+     */
+    public static String fourthCheckoutsApart(Change change, String apart) throws java.io.IOException {
+        List<Runner> runners = List.of(new SelfTestRunner(apart), new SelfTestRunner());
+        try (Sides sides = new Sides(change, runners); Scratch fresh = Scratch.of(change.head, "compare")) {
+            Witness.run(change, runners, 1, 900, sides);
+            Map<String, String> tree = files(fresh.dir);
+            List<String> out = new ArrayList<>();
+            for (Runner r : runners) {
+                if (!sides.madeOldTests(r)) continue;
+                Map<String, String> there = files(sides.oldTests(r).dir);
+                java.util.Set<String> differ = new java.util.TreeSet<>();
+                for (String p : tree.keySet()) if (!tree.get(p).equals(there.get(p))) differ.add(p);
+                for (String p : there.keySet()) if (!tree.containsKey(p)) differ.add(p);
+                out.add(r.name() + ": " + String.join(", ", differ));
+            }
+            return String.join("; ", out);
         }
     }
 

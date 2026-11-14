@@ -385,8 +385,9 @@ final class Witness {
      * it must do so in every run, on both sides: else it wavered.
      *
      * The checkout is the tree after the change with only these test files put back as the base
-     * has them (Sides.oldTests): production code, build files, fixtures, helpers and the other
-     * changed test files stay as the change has them. So a test renamed and not otherwise edited
+     * has them (Sides.oldTests, one checkout for each runner): production code, build files,
+     * fixtures, helpers and the other changed test files stay as the change has them. The files of
+     * one runner that this run needs go back together, as they ran together in the third run. So a test renamed and not otherwise edited
      * runs here exactly as its new name runs after the change, and cannot be accused for the
      * rename. A test whose fixture the change rewrote or deleted may fail here because of that
      * and not because of the production code; that is still a test that passed before, fails on
@@ -399,7 +400,7 @@ final class Witness {
         if (wanted.isEmpty()) return Fourth.NONE;
         List<String> files = new ArrayList<>(wanted.keySet());
         Map<String, FileRun> first = new LinkedHashMap<>();
-        Scratch mixed = sides.oldTests();
+        Scratch mixed = sides.oldTests(runner);
         try {
             mixed.write(change.base, files);
             runner.forgetBuilt(mixed.dir, files);
