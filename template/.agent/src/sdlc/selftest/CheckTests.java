@@ -127,6 +127,10 @@ final class CheckTests {
     private static void scenarios(Path repo) throws IOException {
         write(repo, "prod.txt", "v1\n");
         write(repo, "tests/old.t", "kept: pass\n");
+        // Files whose tests only the run judges. They lie outside a test folder, so the reading of the diff (Integrity)
+        // says nothing about them and the exit code is the run's alone.
+        write(repo, "checks/judged.t", JUDGED);
+        write(repo, "checks/legacy.t", LEGACY);
         write(repo, ".gitignore", "ignored/\n");
         git(repo, "init", "-q", "-b", "main");
         commit(repo, "base");
@@ -159,7 +163,7 @@ final class CheckTests {
         // an uncommitted change: the fix, an edited test file, a new untracked test file, an ignored file
         write(repo, "prod.txt", "v1\nfixed\n");
         write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\nproves nothing: pass\n");
-        write(repo, "tests/new.t", "new feature: error-unless fixed\nbroken: fail\nlater: skip\nrandom: flaky\n");
+        write(repo, "tests/new.t", "new feature: error-unless fixed\nbroken: fail\nlater: skip\nrandom: flaky fixed\n");
         write(repo, "ignored/x.t", "never: fail\n");
         String objectsBefore = Proc.run(repo, "git", "count-objects").out();
         String index = Proc.run(repo, "git", "ls-files", "--stage").out();
@@ -244,12 +248,12 @@ final class CheckTests {
         for (String f : new String[] {"feature.t", "feature2.t", "lean.t", "helper.t"}) Files.delete(repo.resolve("tests/" + f));
         write(repo, "prod.txt", "v1\nfixed\n");
 
-        // a name the file declares more often than before: the new one cannot be told from the old one
+        // a test of a name the file already had, in another group: the report tells them apart, so it is a new test
         write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\nnested > kept: pass\n");
         String again = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: a new test under a name the file already had is not passed off as an old one",
-                again.contains("nested > kept: passes before and after; the file now has more tests of this name than before")
-                && !again.contains("already in the edited files passes before and after") && !again.contains("so it does not test the change"));
+                again.contains("1 new test passes before and after, so it does not test the change") && again.contains("        nested > kept\n")
+                && again.contains("1 test that was already in the edited files passes before and after (not counted)") && code == 1);
         write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\n");
 
         // what both sides share although the change touches it: "passes on both" says nothing then
@@ -273,6 +277,8 @@ final class CheckTests {
         String twins = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: two tests that report one name are not judged", twins.contains("same: more than one test reports this name") && !twins.contains("        same\n"));
         Files.delete(repo.resolve("tests/twins.t"));
+
+        judgedByTheRun(repo);
 
         // in a pull request build the base is the event's branch, or the check stops
         Trusted.env = name -> name.equals("GITHUB_BASE_REF") ? "not-fetched" : null;
@@ -303,6 +309,38 @@ final class CheckTests {
         branch = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: commits on the branch and uncommitted edits are one change", branch.contains("2 files changed against main") && branch.contains("1 fails before the change and passes after it"));
     }
+
+    /** A test file of the base, for what only a run of it as it was can tell: which tests it had and which of them ran. */
+    private static final String JUDGED = "stays: pass\nturned off: pass\nwas off: skip\ngoes: pass\ngoes too: pass\n";
+
+    /**
+     * Which tests are new: read from the run of the file as it was, on the code as it was. Comes in
+     * with the fix and a sensitive test in tests/old.t, so a run that says nothing else exits with 0.
+     */
+    private static void judgedByTheRun(Path repo) throws IOException {
+        // the tests the file had, and one more
+        write(repo, "checks/judged.t", JUDGED + "idle: pass\n");
+        String r = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: a test the file as it was did not report is new, and is called out when it passes on both sides",
+                r.contains("1 new test passes before and after, so it does not test the change\n      checks/judged.t  [self test]\n        idle\n") && code == 1);
+        check("check: the tests the file as it was reported are not counted",
+                r.contains("5 tests that were already in the edited files pass before and after (not counted)") && !r.contains("        stays"));
+        write(repo, "checks/judged.t", JUDGED);
+
+        // the file as it was gives no result (its slow test is cut off): whether a test is new cannot be told
+        write(repo, "checks/legacy.t", "held: pass\nadded: pass\n");
+        String legacy = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("check: when the file as it was cannot be run, a test that passes on both sides could not be judged",
+                legacy.contains("added: passes before and after, but run as it was before the change, the file timed out after 900 s, so it cannot be told whether this test is new")
+                && legacy.contains("held: passes before and after, but run as it was before the change")
+                && legacy.contains("checks/legacy.t  [self test]\n        held: ") && !legacy.contains("so it does not test the change") && code == 0);
+        check("check: and the report says so for the file as a whole",
+                legacy.contains("        run as it was before the change, the file timed out after 900 s, so it cannot be told which of its tests are new\n"));
+        write(repo, "checks/legacy.t", LEGACY);
+    }
+
+    /** A test file of the base that, as it is there, gives no result: what it had cannot be learnt from a run of it. */
+    private static final String LEGACY = "held: pass\nslow: timeout\n";
 
     private static int code;
 

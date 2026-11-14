@@ -8,15 +8,18 @@ import java.util.List;
 import sdlc.core.UsageException;
 
 /**
- * The two throw-away checkouts of a change: after it, and before it. "Before" is the base commit
+ * The throw-away checkouts of a change: after it, and before it. "Before" is the base commit
  * with the change's tests, fixtures and helpers laid over it, so the same tests can be run on
- * both sides. Made when first asked for; removed when closed.
+ * both sides. A third, "old", is the base commit as it is: there the test files the change edits
+ * run as they were, to learn which tests they had. Each is made when first asked for; all are
+ * removed when closed.
  */
 final class Sides implements AutoCloseable {
     private final Change change;
     private final List<Runner> runners;
     private Scratch head;
     private Scratch base;
+    private Scratch old;
 
     Sides(Change change, List<Runner> runners) {
         this.change = change;
@@ -44,9 +47,16 @@ final class Sides implements AutoCloseable {
         return base;
     }
 
+    /** The base commit with nothing laid over it: the old version of each edited test file, on the code it was written for. */
+    Scratch old() {
+        if (old == null) old = Scratch.of(change.base, "old");
+        return old;
+    }
+
     @Override
     public void close() {
         if (head != null) head.close();
         if (base != null) base.close();
+        if (old != null) old.close();
     }
 }

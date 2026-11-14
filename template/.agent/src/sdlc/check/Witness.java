@@ -11,10 +11,18 @@ import sdlc.check.JUnitXml.Status;
 import sdlc.check.Runner.FileRun;
 
 /**
- * The executed statement about a change's own tests: each test the change adds or edits is run
- * before the change (the base commit, with only the change's test files laid over it) and after
- * it. A test that fails before and passes after is sensitive to the change; one that passes on
- * both sides does not test it.
+ * The executed statement about a change's own tests. Each test file the change adds or edits is
+ * run three ways:
+ *
+ *   after   the file as the change has it, on the code after the change
+ *   before  the same file, on the code before the change (the base commit, with only the
+ *           change's test files laid over it)
+ *   old     the file as it was, on the code before the change (the base commit as it is); only
+ *           for a file the change edits, as an added file has no earlier version
+ *
+ * A test that fails before and passes after is sensitive to the change; one that passes on both
+ * sides does not test it. Which tests are new is read from the reports of the old and the after
+ * run, not from the files' text: the test framework knows which tests a file has.
  *
  * What this says is narrow. The tests and the code come from the same author, so a pass here is
  * not evidence that the change is correct, only that these tests would notice its absence.
@@ -66,9 +74,9 @@ final class Witness {
             else if (Integrity.testNamed(path)) unsupported.add(path);
         }
         if (owned.isEmpty()) return new Result(verdicts, unsupported, 0);
-        Scratch base = sides.base();
+        Set<String> edited = new LinkedHashSet<>(change.paths("M"));
         for (Map.Entry<Runner, List<String>> e : owned.entrySet()) {
-            verdicts.addAll(judge(change, e.getKey(), e.getValue(), base, head, Math.max(1, runs), timeoutSeconds));
+            verdicts.addAll(judge(change, e.getKey(), e.getValue(), edited, sides, Math.max(1, runs), timeoutSeconds));
         }
         return new Result(verdicts, unsupported, Math.max(1, runs));
     }
@@ -77,10 +85,48 @@ final class Witness {
         return c.suite() + "#" + c.name();
     }
 
-    private static List<Verdict> judge(Change change, Runner runner, List<String> files, Scratch base, Scratch head, int runs, int timeout) {
+    /**
+     * What the run of a test file as it was before the change reported: its cases by identity, or
+     * why it reported nothing (problem). A file the change adds has no earlier version: NONE, and
+     * every test of it is new.
+     */
+    private record Earlier(Map<String, List<JUnitXml.Case>> cases, String problem) {
+        static final Earlier NONE = new Earlier(Map.of(), null);
+
+        /** True when the file had no test of this identity, false when it had one, null when that cannot be told. */
+        Boolean isNew(String key) {
+            return problem != null ? null : !cases.containsKey(key);
+        }
+    }
+
+    /** Runs the edited files as they were, on the code as it was: the third run. Added files need none. */
+    private static Map<String, Earlier> earlier(Runner runner, List<String> files, Set<String> edited, Sides sides, int timeout) {
+        Map<String, Earlier> out = new LinkedHashMap<>();
+        List<String> had = files.stream().filter(edited::contains).toList();
+        Map<String, FileRun> runs = had.isEmpty() ? Map.of() : runner.run(sides.old().dir, had, timeout);
+        for (String f : files) {
+            if (!edited.contains(f)) {
+                out.put(f, Earlier.NONE);
+                continue;
+            }
+            FileRun run = runs.get(f);
+            if (run == null || run.problem() != null) {
+                out.put(f, new Earlier(Map.of(), run == null ? "gave no result" : run.problem()));
+                continue;
+            }
+            Map<String, List<JUnitXml.Case>> cases = new LinkedHashMap<>();
+            for (JUnitXml.Case c : run.cases()) cases.computeIfAbsent(key(c), k -> new ArrayList<>()).add(c);
+            out.put(f, new Earlier(cases, null));
+        }
+        return out;
+    }
+
+    private static List<Verdict> judge(Change change, Runner runner, List<String> files, Set<String> edited, Sides sides, int runs, int timeout) {
         List<Verdict> out = new ArrayList<>();
+        Scratch head = sides.head(), base = sides.base();
         Map<String, FileRun> after = runner.run(head.dir, files, timeout);
         Map<String, FileRun> before = new LinkedHashMap<>(runner.run(base.dir, files, timeout));
+        Map<String, Earlier> earlier = earlier(runner, files, edited, sides, timeout);
         // One test of new code stops every test of its module from compiling before the change. Those files are
         // then run one at a time, each with the other changed tests put back as the base has them.
         Set<String> alone = new LinkedHashSet<>();
@@ -92,9 +138,7 @@ final class Witness {
         for (String f : files) {
             String shared = runner.sharedBySides(change, head.dir, f);
             FileRun a = after.get(f), b = before.get(f);
-            Map<String, Integer> declaredBefore = TestNames.counts(f, change.before(f)), declaredNow = TestNames.counts(f, change.after(f));
-            boolean builtAtRunTime = TestNames.namesBuiltAtRunTime(f, change.before(f)) || TestNames.namesBuiltAtRunTime(f, change.after(f));
-            boolean unsure = TestNames.unsure(f, change.before(f)) || TestNames.unsure(f, change.after(f));
+            Earlier e = earlier.get(f);
             if (a == null || a.problem() != null) {
                 // code that does not compile or load is the change's own failure; a missing build tool, a timeout or a name that cannot be passed on is not
                 boolean broken = a != null && a.broken();
@@ -108,10 +152,8 @@ final class Witness {
             for (JUnitXml.Case c : a.cases()) if (!seen.add(key(c))) twice.add(key(c));
             seen.clear();
             for (JUnitXml.Case c : a.cases()) {
-                String plain = TestNames.plain(f, c.name());
-                boolean old = declaredBefore.containsKey(plain);
-                // the file declares this name more often than it did: one of them is new, and which one cannot be read from a name
-                boolean oneIsNew = old && declaredNow.getOrDefault(plain, 0) > declaredBefore.get(plain);
+                // new: the file as it was did not report a test of this identity (null: that cannot be told)
+                Boolean isNew = e.isNew(key(c));
                 JUnitXml.Case p = was.get(key(c));
                 if (twice.contains(key(c))) {
                     if (seen.add(key(c))) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "more than one test reports this name, so they cannot be told apart", runner.name()));
@@ -121,15 +163,16 @@ final class Witness {
                 else if (b == null || b.problem() != null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "before the change the file " + (b == null ? "gave no result" : b.problem()), runner.name()));
                 else if (p == null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "was not found before the change", runner.name()));
                 else if (p.status() == Status.PASSED && shared != null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after, but " + shared, runner.name()));
-                else if (p.status() == Status.PASSED && oneIsNew) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after; the file now has more tests of this name than before, so a new one cannot be told from the old one", runner.name()));
-                else if (p.status() == Status.PASSED && !old && unsure) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after; the file could not be read with confidence, so it cannot be told whether this test is new", runner.name()));
-                else if (p.status() == Status.PASSED && !old && builtAtRunTime && !declaredNow.containsKey(plain)) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after; the file builds test names while it runs, so it cannot be read from the file whether this test is new", runner.name()));
-                else if (p.status() == Status.PASSED) out.add(new Verdict(f, c.name(), old ? Kind.EXISTING_PASSES_ON_BOTH : Kind.PASSES_ON_BOTH, "", runner.name()));
+                else if (p.status() == Status.PASSED && isNew == null) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "passes before and after, but run as it was before the change, the file "
+                        + e.problem() + ", so it cannot be told whether this test is new", runner.name()));
+                else if (p.status() == Status.PASSED) out.add(new Verdict(f, c.name(), isNew ? Kind.PASSES_ON_BOTH : Kind.EXISTING_PASSES_ON_BOTH, "", runner.name()));
                 else if (p.status() == Status.SKIPPED) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "was skipped before the change", runner.name()));
                 else if (p.status() == Status.FLAKY) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "before the change the build ran it again and got another result", runner.name()));
                 else if (p.status() == Status.ERRORED) out.add(new Verdict(f, c.name(), Kind.UNKNOWN, "before the change it threw " + shortType(p) + ", not an assertion", runner.name()));
                 else candidates.computeIfAbsent(f, k -> new LinkedHashSet<>()).add(key(c));
             }
+            if (e.problem() != null) out.add(new Verdict(f, "", Kind.UNKNOWN, "run as it was before the change, the file " + e.problem()
+                    + ", so it cannot be told which of its tests are new", runner.name()));
         }
         // A test that was run alone before the change may have failed there for want of another changed test file,
         // not for want of the change. It is run alone after the change too, and must pass there as well.

@@ -13,16 +13,19 @@ import sdlc.check.JUnitXml.Status;
 /**
  * A stand-in test runner for the self test, so the comparison logic is tested without a build
  * tool. A ".t" file lists one case per line, "name: outcome":
- *   pass | fail | skip | flaky (passes after the change, fails before it only in the first run)
+ *   pass | fail | skip
  *   needs WORD          passes when prod.txt of the checkout holds the word, else fails by assertion
+ *   flaky WORD          passes when it does; else fails in the first run in that checkout and passes in later ones
  *   error-unless WORD   passes when it does, else throws something that is not an assertion
  *   compile-needs WORD  passes when it does; else no file of the same run compiles
  *   leans-on FILE       passes when the checkout holds that file or an earlier run built it, else fails by assertion
+ *   timeout             the whole file gives no result, as a run cut off by the time limit
  * A changed shared.lock in a test's folder or above it is a setup both sides share. Like a build,
  * a run leaves something behind for each file it ran (.built/), until forgetBuilt removes it.
  */
 final class SelfTestRunner implements Runner {
-    private int calls;
+    /** Runs so far in each checkout: a flaky test's result depends on it, not on the order in which the checkouts are run. */
+    private final Map<Path, Integer> calls = new java.util.HashMap<>();
 
     @Override
     public String name() {
@@ -57,7 +60,7 @@ final class SelfTestRunner implements Runner {
 
     @Override
     public Map<String, FileRun> run(Path checkout, List<String> files, int timeoutSeconds) {
-        calls++;
+        int call = calls.merge(checkout, 1, Integer::sum);
         Map<String, FileRun> out = new LinkedHashMap<>();
         String prod;
         try {
@@ -85,6 +88,10 @@ final class SelfTestRunner implements Runner {
                 Path built = checkout.resolve(".built").resolve(f); // what a build leaves behind: the compiled form of the file
                 Files.createDirectories(built.getParent());
                 Files.writeString(built, "");
+                if (Files.readAllLines(checkout.resolve(f)).stream().anyMatch(line -> line.endsWith(": timeout"))) {
+                    out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
+                    continue;
+                }
                 for (String line : Files.readAllLines(checkout.resolve(f))) {
                     if (!line.contains(": ")) continue;
                     String name = line.substring(0, line.indexOf(": "));
@@ -94,7 +101,7 @@ final class SelfTestRunner implements Runner {
                         case "pass" -> Status.PASSED;
                         case "fail" -> Status.FAILED;
                         case "skip" -> Status.SKIPPED;
-                        case "flaky" -> calls % 2 == 1 || calls % 4 == 0 ? Status.PASSED : Status.FAILED; // after, before, after, before: fails before only the first time
+                        case "flaky" -> has || call > 1 ? Status.PASSED : Status.FAILED; // without the word: fails only the first time
                         case "needs" -> has ? Status.PASSED : Status.FAILED;
                         case "error-unless" -> has ? Status.PASSED : Status.ERRORED;
                         case "compile-needs" -> Status.PASSED; // it compiled, so the word is there
