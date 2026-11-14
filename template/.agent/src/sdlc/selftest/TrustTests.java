@@ -215,7 +215,7 @@ final class TrustTests {
         commit(repo, "feat(PROJ-12): quietly switch a test off");
         Ctx.init(repo);
         Checks.Result binary = Checks.prPolicy(null, false);
-        check("trust: lines of a file the pull request marks as binary are still scanned", binary.fails().stream().anyMatch(f -> f.contains("No test was disabled or focused")));
+        check("trust: lines of a file the pull request marks as binary are still scanned", binary.fails().stream().anyMatch(f -> f.contains("No switch that turns a test off or focuses one was found")));
 
         // the same, written so that no added line shows it
         git(repo, "switch", "-q", "-c", "feature/PROJ-15-spread", "origin/main");
@@ -224,7 +224,7 @@ final class TrustTests {
         commit(repo, "feat(PROJ-15): switch a test off over two lines");
         Ctx.init(repo);
         check("trust: a test switched off by a call written over two lines is still found",
-                Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No test was disabled or focused") && f.contains("WebTest.java")));
+                Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No switch that turns a test off or focuses one was found") && f.contains("WebTest.java")));
 
         // a script test file is linted by the lines the change adds; its run is the judge
         git(repo, "switch", "-q", "-c", "feature/PROJ-17-script", "origin/main");
@@ -233,7 +233,7 @@ final class TrustTests {
         commit(repo, "feat(PROJ-17): switch script tests off");
         Ctx.init(repo);
         check("trust: a script test switched off on an added line fails, and so does one written over two lines",
-                Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No test was disabled or focused") && f.contains("web.test.ts: it.skip('later'") && f.contains("web.test.ts: it .skip('sooner'")
+                Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No switch that turns a test off or focuses one was found") && f.contains("web.test.ts: it.skip('later'") && f.contains("web.test.ts: it .skip('sooner'")
                         && f.contains("web.test.ts: const r = /'/; it.skip('a'")));
 
         // a Java test file is linted by the lines the change adds, as a script test file is
@@ -243,7 +243,7 @@ final class TrustTests {
         commit(repo, "feat(PROJ-18): switch Java tests off");
         Ctx.init(repo);
         check("trust: a Java test switched off on an added line fails, by the line",
-                Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No test was disabled or focused") && f.contains("OffTest.java: @Disabled(\"later\")")
+                Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No switch that turns a test off or focuses one was found") && f.contains("OffTest.java: @Disabled(\"later\")")
                         && f.contains("OffTest.java: @Test void sooner() { assumeTrue(false); }") && f.contains("OffTest.java: @Test void never() { Assumptions.<Void>abort(")));
 
         // text that looks like a skipped test, inside a text block over several lines: the lint reads lines, so it fails (on the safe side)
@@ -254,7 +254,18 @@ final class TrustTests {
         Ctx.init(repo);
         Checks.Result example = Checks.prPolicy(null, false);
         check("trust: a skip inside a text block of a test file fails the pull request, by its line: the lint does not know a text over several lines",
-                example.fails().stream().anyMatch(f -> f.contains("No test was disabled or focused") && f.contains("DocsTest.java: @Disabled")));
+                example.fails().stream().anyMatch(f -> f.contains("No switch that turns a test off or focuses one was found") && f.contains("DocsTest.java: @Disabled")));
+
+        // a conditional skip passes; an added line longer than the lint reads is said as not read, a warning
+        git(repo, "switch", "-q", "-c", "feature/PROJ-19-conditional", "origin/main");
+        write(repo, "src/test/java/browser.spec.ts", "test.skip(browserName === 'webkit', 'not on Safari');\ntest('x', async () => {})\nconst data = '" + "x".repeat(3000) + "';\n");
+        write(repo, "src/main/java/A.java", "class A { int g; }\n");
+        commit(repo, "feat(PROJ-19): a test for some browsers");
+        Ctx.init(repo);
+        Checks.Result conditional = Checks.prPolicy(null, false);
+        check("trust: a conditional skip is not a switch, and a line too long for the lint is a warning, not a failure",
+                conditional.passes().stream().anyMatch(p -> p.startsWith("No switch that turns a test off or focuses one was found on the added test lines (a text check; a test run is the proof)"))
+                && conditional.warns().stream().anyMatch(w -> w.contains("browser.spec.ts: 1 added line(s) longer than 2000 characters were not read for switches")));
 
         // a branch with no commit in common with the base: every diff would be empty or fail
         git(repo, "switch", "-q", "--orphan", "feature/PROJ-13-orphan");

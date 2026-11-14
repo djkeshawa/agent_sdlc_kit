@@ -362,7 +362,8 @@ public final class Check {
         if (w != null) for (String f : w.unsupported()) out.add("the test file " + f + ": no runner for it in this version (Maven Surefire and Vitest are supported)");
         out.add("whether the tests execute the lines the change touches");
         out.add("whether tests that passed before the change still pass: run your full test suite");
-        out.add("whether the change is correct or complete; only that its own tests would notice its absence");
+        out.add(w == null ? "whether the change is correct or complete, or whether its tests would notice its absence: no test was run (--no-run), only the text checks (Integrity) were made"
+                : "whether the change is correct or complete; only that its own tests would notice its absence");
         out.add("any test this change did not add or edit" + (w != null && w.verdicts().stream().anyMatch(v -> v.runner().startsWith("Maven")) ? ", and integration tests (Maven Failsafe)" : ""));
         return out;
     }

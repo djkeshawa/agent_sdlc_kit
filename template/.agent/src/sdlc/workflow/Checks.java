@@ -190,8 +190,13 @@ public final class Checks {
         for (String f : files) {
             if (!Glob.any(Ctx.cfg.list("paths.test"), f)) continue;
             for (String hit : sdlc.check.Integrity.lintedSwitches(added.getOrDefault(f, List.of()))) disabled.add(f + ": " + hit);
+            int unread = sdlc.check.Integrity.unlinted(added.getOrDefault(f, List.of()));
+            if (unread > 0) {
+                warns.add(f + ": " + unread + " added line(s) longer than " + sdlc.check.Integrity.LONGEST + " characters were not read for switches (sdlc check runs the file)");
+            }
         }
-        check(disabled.isEmpty(), "No test was disabled or focused" + (disabled.isEmpty() ? "" : ": " + disabled), passes, fails);
+        check(disabled.isEmpty(), "No switch that turns a test off or focuses one was found on the added test lines (a text check; a test run is the proof)"
+                + (disabled.isEmpty() ? "" : ": " + disabled), passes, fails);
         List<String> secrets = secrets(added);
         check(secrets.isEmpty(), "No secrets added" + (secrets.isEmpty() ? "" : ": " + secrets), passes, fails);
         // .sdlc/ is one machine's working state. In a pull request build it is the pull request's to write, so it is not read.
