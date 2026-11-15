@@ -171,12 +171,12 @@ layer_lint() {
   while IFS= read -r f; do
     [ -f "$repo/$f" ] || continue
     case $f in
-      *.sh) echo "$f" >> "$work/shell.txt" ;;
-      *.py) echo "$f" >> "$work/python.txt" ;;
+      *.sh|*.bash) echo "$f" >> "$work/shell.txt" ;;
+      *.py|*.pyw) echo "$f" >> "$work/python.txt" ;;
       *)
-        first=$(head -n 1 "$repo/$f" 2>/dev/null | tr -d '\000')
-        if printf '%s\n' "$first" | grep -Eq '^#! *(/[^ ]*/)?(env +)?(ba|da|k)?sh( |$)'; then echo "$f" >> "$work/shell.txt"; fi
-        if printf '%s\n' "$first" | grep -Eq '^#! *(/[^ ]*/)?(env +)?python[0-9.]*( |$)'; then echo "$f" >> "$work/python.txt"; fi
+        first=$(head -n 1 "$repo/$f" 2>/dev/null | tr -d '\000\r')
+        if printf '%s\n' "$first" | grep -Eq '^#! *(/[^ ]*/)?(env +(-S +)?)?(ba|da|k)?sh( |$)'; then echo "$f" >> "$work/shell.txt"; fi
+        if printf '%s\n' "$first" | grep -Eq '^#! *(/[^ ]*/)?(env +(-S +)?)?python[0-9.]*( |$)'; then echo "$f" >> "$work/python.txt"; fi
         ;;
     esac
   done < "$work/files.txt"
@@ -204,7 +204,10 @@ layer_lint() {
   else not="$not actionlint"; fi
   # actionlint knows the inputs of an action only by its tag, so it cannot check one pinned by a
   # commit. What is checked here instead: every action is pinned by a full commit id.
-  unpinned=$(grep -En '^ *-? *uses: *[^ #]+' "$repo"/.github/workflows/*.yml | grep -Ev 'uses: *\./|@[0-9a-f]{40}( |$)')
+  # Every YAML file under .github (workflows by either extension, and actions of the repository);
+  # a comment and quotes are taken off first, so an id in a comment does not count.
+  unpinned=$(find "$repo/.github" -type f \( -name '*.yml' -o -name '*.yaml' \) -exec grep -EHn '^[[:space:]]*-?[[:space:]]*uses:' {} + 2>/dev/null \
+    | sed -E "s/[[:space:]]+#.*\$//; s/[\"']//g; s/[[:space:]]+\$//" | grep -Ev 'uses:[[:space:]]*\./|@[0-9a-f]{40}$')
   if [ -n "$unpinned" ]; then
     printf 'actions not pinned by a full commit id:\n%s\n' "$unpinned" >> "$log"
     bad="$bad unpinned-actions"
@@ -246,7 +249,19 @@ layer_bugs() {
   elif [ "$n" -gt 0 ]; then
     cat "$work/spotbugs.txt" >> "$log"
     result bugs FAIL "$n findings; see $work/spotbugs.txt"
-  else result bugs PASS "SpotBugs $(locked spotbugs), no finding at its default level"; fi
+  else
+    # A second pass for one kind only: a public mutable static (MS). SpotBugs rates most of them
+    # low, so the pass above does not show them.
+    "$java" -jar "$sb/lib/spotbugs.jar" -textui -effort:max -low -include "$here/spotbugs-statics.xml" -exclude "$here/spotbugs-exclude.xml" \
+      -sourcepath "$repo/template/.agent/src" "$work/classes" > "$work/spotbugs-statics.txt" 2>> "$log"
+    rc=$?
+    n=$(grep -c . "$work/spotbugs-statics.txt")
+    if [ "$rc" -ne 0 ]; then result bugs FAIL "SpotBugs did not finish its pass for mutable statics (exit $rc); see $log"
+    elif [ "$n" -gt 0 ]; then
+      cat "$work/spotbugs-statics.txt" >> "$log"
+      result bugs FAIL "$n mutable statics; see $work/spotbugs-statics.txt"
+    else result bugs PASS "SpotBugs $(locked spotbugs), no finding at its default level, no public mutable static"; fi
+  fi
 }
 
 layer_selftest() {
@@ -263,7 +278,8 @@ layer_selftest() {
   # The result line itself, not the exit code alone: a run that ends early with exit 0 has no such line.
   line=$(grep '^SELFTEST' "$log" | tail -1 | tr -s ' ')
   count=$(printf '%s\n' "$line" | sed -n 's/^SELFTEST PASSED (\([0-9][0-9]*\) passed, 0 failed)$/\1/p')
-  floor=$(grep -v '^#' "$here/selftest-count.txt" | grep -Eo '^[0-9]+' | head -1)
+  floor=$(grep -v '^#' "$here/selftest-count.txt" | grep . | sed -n '1{/^[0-9][0-9]*$/p;}')
+  [ "$(grep -v '^#' "$here/selftest-count.txt" | grep -c .)" -eq 1 ] || floor=
   if [ "$rc" -ne 0 ] || [ -z "$count" ]; then
     result selftest FAIL "${line:-the self tests printed no result} (exit $rc); see $log"
     return
@@ -308,18 +324,16 @@ maven_path() {
   fi
   command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || return 1
   mkdir -p "$work/bin" "$cache/m2/repository"
-  settings=
   if [ -n "${VERIFY_MAVEN_MIRROR:-}" ]; then
-    case $VERIFY_MAVEN_MIRROR in
-      https://*) ;;
-      *) echo "verify/run.sh: VERIFY_MAVEN_MIRROR must be an https address" >&2; return 1 ;;
-    esac
+    # an https address of plain characters only: it is written into an XML file
+    if ! printf '%s' "$VERIFY_MAVEN_MIRROR" | grep -Eq '^https://[A-Za-z0-9._~:/-]+$'; then
+      echo "verify/run.sh: VERIFY_MAVEN_MIRROR must be an https address of letters, digits and . _ ~ : / - only" >&2
+      return 1
+    fi
     printf '<settings><mirrors><mirror><id>verify-mirror</id><mirrorOf>central</mirrorOf><url>%s</url></mirror></mirrors></settings>\n' \
       "$VERIFY_MAVEN_MIRROR" > "$work/bin/settings.xml"
-    settings="-v $work/bin/settings.xml:/settings.xml:ro"
-    mirror="-s /settings.xml"
   else
-    mirror=
+    printf '<settings/>\n' > "$work/bin/settings.xml"
   fi
   cat > "$work/bin/mvn" <<EOF
 #!/bin/sh
@@ -329,8 +343,8 @@ maven_path() {
 # most of a minute through a container. Only when Maven says it lacks something offline is the run
 # made again online.
 run() {
-  docker run --rm -u "\$(id -u):\$(id -g)" -e HOME=/tmp/home -v "$cache/m2/repository:/m2" $settings -v "\$PWD:\$PWD" -w "\$PWD" \\
-    --entrypoint mvn $maven_image -Dmaven.repo.local=/m2 $mirror "\$@"
+  docker run --rm -u "\$(id -u):\$(id -g)" -e HOME=/tmp/home -v "$cache/m2/repository:/m2" -v "$work/bin/settings.xml:/settings.xml:ro" -v "\$PWD:\$PWD" -w "\$PWD" \\
+    --entrypoint mvn $maven_image -Dmaven.repo.local=/m2 -s /settings.xml "\$@"
 }
 out=\$(mktemp)
 run -o "\$@" > "\$out" 2>&1
@@ -367,7 +381,7 @@ layer_real() {
   fi
   mods=${SDLC_E2E_VITEST_NODE_MODULES:-}
   if [ -z "$mods" ] && command -v npm >/dev/null 2>&1; then
-    rt=$cache/vitest-runtime
+    rt=$work/vitest-runtime
     mkdir -p "$rt"
     cp "$repo/tests/e2e/vitest-runtime/package.json" "$repo/tests/e2e/vitest-runtime/package-lock.json" "$rt/"
     if (cd "$rt" && npm ci --ignore-scripts --no-audit --no-fund) >> "$log" 2>&1; then mods=$rt/node_modules; fi

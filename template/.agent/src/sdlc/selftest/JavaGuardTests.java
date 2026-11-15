@@ -45,6 +45,9 @@ final class JavaGuardTests {
         expect("force push", shell("git push -fu origin x"), Decision.Kind.DENY);
         expect("tag", shell("git tag v1.0.0"), Decision.Kind.DENY);
         expect("no-verify", shell("git commit --no-verify -m x"), Decision.Kind.DENY);
+        expect("no-verify after --namespace and its value", shell("git --namespace x commit -n -m y"), Decision.Kind.DENY);
+        expect("no-verify after -C and its value", shell("git -C . commit -n -m y"), Decision.Kind.DENY);
+        expect("no-verify after --config-env and its value", shell("git --config-env color.ui=HOME commit -n -m y"), Decision.Kind.DENY);
         expect("hooksPath", shell("git -c core.hooksPath=/dev/null commit -m x"), Decision.Kind.DENY);
         expect("gh pr merge", shell("gh pr merge 12 --squash"), Decision.Kind.DENY);
         expect("gh pr create without story", shell("gh pr create --base develop --title 'PROJ-1: x'"), Decision.Kind.DENY);

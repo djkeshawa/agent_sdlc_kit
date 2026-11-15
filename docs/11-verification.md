@@ -32,11 +32,11 @@ checked archives on every run, so an unpacked copy that was changed is never use
 | # | Layer | What it runs | What it catches | What it cannot see | Time |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `compile` | The Java compiler with every warning turned into an error, on Java 17 and 21 in CI | Code that does not compile on a supported Java; unchecked casts, raw types, a fall-through in a switch, calls that are deprecated for removal | Any error in logic. A switch that lacks a case (the compiler has no warning for it). Anything under `@SuppressWarnings` (nine places today) | 10 s |
-| 2 | `lint` | ShellCheck on every shell script (by its name or its first line), actionlint on the CI workflows, ruff on every Python file; and a check that every action is pinned by a full commit id | A script that breaks on another shell; a workflow with a wrong key; an undefined name in a test; an action that can change under us | Whether the scripts do the right thing. The inputs of an action (`with:`) and whether the pinned commit exists: actionlint knows an action only by its tag, so a misspelled input of a pinned action is seen only when CI runs | 5 s |
-| 3 | `bugs` | SpotBugs on the compiled tool | Bug patterns that no test happens to hit: a possible null, a resource left open, a wrong comparison | Bugs that are not a known pattern | 90 s |
+| 2 | `lint` | ShellCheck on every shell script (by its name or its first line), actionlint on the CI workflows, ruff on every Python file; and a check that every action in a YAML file under `.github` is pinned by a full commit id | A script that breaks on another shell; a workflow with a wrong key; an undefined name in a test; an action that can change under us | Whether the scripts do the right thing. The inputs of an action (`with:`) and whether the pinned commit exists: actionlint knows an action only by its tag, so a misspelled input of a pinned action is seen only when CI runs | 5 s |
+| 3 | `bugs` | SpotBugs on the compiled tool, and a second pass for public mutable statics | Bug patterns that no test happens to hit: a possible null, a resource left open, a wrong comparison | Bugs that are not a known pattern. A mutable static that is not public | 90 s |
 | 4 | `selftest` | The tool's own tests (about 1,400): their result line, their count against `verify/selftest-count.txt`, and line coverage per package against `verify/coverage-floors.txt` | Wrong logic inside the tool; a run that ends early; self tests that are lost; a package whose tests fall behind its code | How real test tools behave: the self tests use a stand-in runner. Untested new code that fits under a floor: the floors are per package and absolute (see below) | 90 s |
 | 5 | `e2e` | The whole flow from ticket to merge, against mock services | Commands that do not work together; a broken hook or guard | Real Jira, Confluence, Jenkins, GitHub | 3 min |
-| 6 | `real` | `sdlc check` against real Maven with JUnit 4 and 5 (20 cases), and against real Vitest (13 cases). Each case names the lines the check must print, and fails when the test tool did not run | A report shape of a real test tool that the tool reads wrongly | Versions of the test tools other than the pinned ones; a hanging test; a test in an abstract base class (the tool cannot judge it yet, and the case holds it to saying so); a custom report folder; `@RepeatedTest` and `@TestFactory` | 5 to 20 min |
+| 6 | `real` | `sdlc check` against real Maven with JUnit 4 and 5 (20 cases), and against real Vitest (13 cases). Each case names the lines the check must print, and fails when the test tool did not run | A report shape of a real test tool that the tool reads wrongly | Versions of the test tools other than the pinned ones; a hanging test; a test in an abstract base class (the tool cannot judge it yet, and the case holds it to saying so); a custom report folder; `@RepeatedTest` and `@TestFactory` | 10 to 25 min |
 | 7 | `package` | The bundle and the container image, with their smoke test | A bundle that does not start; a missing Java module (the bundle runs its own self tests) | Operating systems other than the two that are built. TLS is required only in CI (`SMOKE_REQUIRE_TLS=1`): on a machine without a network that check is skipped. Without a full JDK the bundle is built in a container, which needs a checkout in a folder Docker may mount; else the layer is `NOT RUN` | 5 min |
 
 Three more layers are not commands. They are steps of the work:
@@ -87,10 +87,19 @@ QE then planted about 46 more faults (2026-11-16). What they showed, and what wa
 | An undefined `json` or `state` in a Python test; Python outside `tests/e2e` | The lint knew 16 names everywhere, and read one folder | The names are declared in the two files that need them; every Python file is linted |
 | A misspelled input of a pinned action | actionlint cannot check it | Stated above as a limit; every action must now be pinned |
 | A changed, unpacked ShellCheck | Unpacked tools were reused | Tools are unpacked afresh on every run |
-| A mutable static collection; a lock on the class | The exclusions were for the whole tool | Excluded by field name only; the lock cache was fixed |
+| A mutable static collection; a lock on the class | The exclusions were for the whole tool | Excluded by field name only; the lock cache was fixed. Round 2: SpotBugs rates most of these low, so a second pass asks for them at every rank. A mutable static that is not public is still not seen |
 | A missing switch case | The compiler has no such warning | The guide no longer claims it |
 | A mandate reached through a linked folder was accepted | The kit had no self test for that check | The self test was added |
 | 120 untested lines | The floors are coarse | Stated above |
+
+QE round 2 (2026-11-16) planted the faults above again; all were noticed. It found four more gaps:
+
+| Fault that was NOT noticed | Done |
+| --- | --- |
+| A new `public static final List` (SpotBugs rates it low) | The second SpotBugs pass |
+| An unpinned action in a `.yaml` workflow, or pinned only in a comment | Every YAML file under `.github` is read, without comments and quotes |
+| A floors file with a line that cannot be read, a package twice, or no floor: no floor was applied | `verify/coverage.py` ends with exit 2 |
+| Three faults in the guard and the mandate that no self test saw (an option of git that takes a value, the size limit of a mandate, a mandate that is not in force) | Self tests added; each fault now fails one |
 
 QE's faults that were noticed: 6 kinds of bug by SpotBugs, 4 by the compiler, 3 by ShellCheck,
 logic faults in `check` and `guard` by the self tests, a broken hook and a wrong Jira path by the

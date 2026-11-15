@@ -21,7 +21,7 @@
 
   <!-- MS: a static field that is not final. Each one below is set once when a command starts, or
        is a switch that only the self tests set; none is set from anything a repository holds.
-       Any other mutable static is a finding. -->
+       Any other public mutable static is a finding (the second pass of verify/run.sh, with spotbugs-statics.xml). -->
   <Match><Class name="sdlc.core.Ctx"/><Field name="root"/><Bug code="MS"/></Match>
   <Match><Class name="sdlc.core.Ctx"/><Field name="cfg"/><Bug code="MS"/></Match>
   <Match><Class name="sdlc.core.Trusted"/><Field name="env"/><Bug code="MS"/></Match>

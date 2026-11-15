@@ -3,7 +3,8 @@
     python3 verify/coverage.py REPORT.csv FLOORS.txt
 
 Prints one line per package and a last line with the packages that have a floor. Exit 1 when a
-package is under its floor, or when a package with a floor is not in the report.
+package is under its floor, or when a package with a floor is not in the report. Exit 2 when the
+floors file has a line that cannot be read, a package twice, or no floor.
 """
 import csv
 import sys
@@ -14,10 +15,20 @@ def main():
     report, floors_file = sys.argv[1], sys.argv[2]
     floors = {}
     with open(floors_file, encoding="utf-8") as f:
-        for line in f:
-            line = line.split("#", 1)[0].split()
-            if len(line) == 2:
+        for number, text in enumerate(f, 1):
+            line = text.split("#", 1)[0].split()
+            if not line:
+                continue
+            try:
+                if len(line) != 2 or line[0] in floors:
+                    raise ValueError
                 floors[line[0]] = float(line[1])
+            except ValueError:
+                print("%s line %d is not '<package> <percent>', once per package: %s" % (floors_file, number, text.strip()))
+                return 2
+    if not floors:
+        print("%s names no floor" % floors_file)
+        return 2
     lines = defaultdict(lambda: [0, 0])
     with open(report, encoding="utf-8", newline="") as f:
         for row in csv.DictReader(f):

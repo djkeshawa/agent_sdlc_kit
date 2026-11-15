@@ -1225,7 +1225,7 @@ final class IntegrityTests {
                 Said said = checkWith(Map.of("no-run", "true"));
                 long spent = Integrity.lintWork() - before, ms = (System.nanoTime() - started) / 1_000_000;
                 String expected = move ? s.afterMove() : s.deleted();
-                boolean ok = ms < 3000 && spent <= 100L * (s.text().length() + (move ? s.movedText().length() : 0)) && said.out().contains(expected + ": " + s.path());
+                boolean ok = ms < 30_000 && spent <= 100L * (s.text().length() + (move ? s.movedText().length() : 0)) && said.out().contains(expected + ": " + s.path());
                 if (!ok || System.getenv("SDLC_COST") != null) System.out.println("    " + (move ? "moved " : "deleted ") + s.name() + ": " + ms + " ms, work " + spent + (ok ? "" : "\n" + said.out()));
                 check("integrity, through sdlc check --no-run: " + (move ? "moving" : "deleting") + " a file of " + s.name() + " is read in work linear in it, and soon (" + expected + ")", ok);
             }

@@ -227,6 +227,12 @@ final class MandateFlowTests {
         Deque<String> none = new ArrayDeque<>(List.of("it breaks search", "0", "fix"));
         check("mandate: approving with no covering test is allowed", MandateCli.approve(repo, "fix", q -> none.poll(), new PrintStream(new ByteArrayOutputStream())) == 0);
         check("mandate: and every verdict then says the sentence is unresolved", verdict().contains("unresolved \"this fails if it breaks search\": the approver named no test that covers it"));
+        String asApproved = Files.readString(repo.resolve("docs/mandates/fix.json"));
+        Files.writeString(repo.resolve("docs/mandates/fix.json"), asApproved + "\n");
+        check("mandate: a mandate edited since that approval is not in force, so its sentence is not called unresolved",
+                verdict().contains("Scope     AMENDED") && !verdict().contains("unresolved \"this fails if"));
+        Files.writeString(repo.resolve("docs/mandates/fix.json"), asApproved);
+        check("mandate: and with the approved text back the sentence is unresolved again", verdict().contains("unresolved \"this fails if it breaks search\""));
         Deque<String> blank = new ArrayDeque<>(List.of(""));
         check("mandate: an empty sentence approves nothing", MandateCli.approve(repo, "fix", q -> blank.poll(), new PrintStream(new ByteArrayOutputStream())) == 1);
         Deque<String> wrongId = new ArrayDeque<>(List.of("it breaks", "1", "yes"));
@@ -410,8 +416,16 @@ final class MandateFlowTests {
             git(repo, "worktree", "remove", "--force", linked.toString());
         }
 
-        write(repo, "docs/mandates/huge.json", "{\"mandate\": \"v0\", \"id\": \"huge\", \"intent\": \"" + "x".repeat(300_000) + "\"}");
-        check("mandate: a mandate larger than a page is refused before it is parsed", Asserts.throwsUsage(() -> Mandate.load(repo, "huge")));
+        String page = "{\"mandate\":\"v0\",\"id\":\"huge\",\"intent\":\"%s\",\"scope\":{\"paths\":[\"p\"]},\"oracle\":{\"scenarios\":[\"tests/fix.t#fixed\"]}}";
+        write(repo, "docs/mandates/huge.json", page.formatted("x".repeat(256 * 1024)));
+        String refusal = "";
+        try {
+            Mandate.load(repo, "huge");
+        } catch (sdlc.core.UsageException e) {
+            refusal = e.getMessage();
+        }
+        check("mandate: a mandate larger than a page is refused for its size", refusal.contains("is larger than 256 KB"));
+        Files.delete(repo.resolve("docs/mandates/huge.json"));
     }
 
     private static int code;
