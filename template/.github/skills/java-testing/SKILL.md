@@ -29,8 +29,9 @@ description: 'How to write and run tests in this Java repository: test-first, JU
 - **JT-07 Isolated and repeatable.** No dependence on test order, wall-clock time (inject a
   `Clock`), random values without a seed, the network, or shared files. Use `@TempDir`.
 - **JT-08 No disabling.** Never `@Disabled`, `@Ignore`, `assumeTrue(false)` or deleting an
-  assertion. The git hook and Jenkins refuse them. Fix the flake: usually time, order or
-  shared state.
+  assertion. The git hook and the PR policy look for the usual forms of these switches on the
+  lines you add, and `java .agent/Sdlc.java check` shows a test that no longer runs. Fix the
+  flake: usually time, order or shared state.
 - **JT-09 Test data** through small builders or factory methods in the test, not giant shared
   fixtures. Fake secrets in tests carry `// guard:allow-secret` on that line.
 - **JT-10 Coverage is a floor, not a goal.** JaCoCo and SonarQube check coverage on new code;

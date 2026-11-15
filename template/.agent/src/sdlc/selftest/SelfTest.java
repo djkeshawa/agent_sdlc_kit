@@ -48,6 +48,8 @@ public final class SelfTest {
             TrustTests.run();
             CheckTests.run();
             IntegrityTests.run();
+            MandateTests.run();
+            MandateFlowTests.run();
         } finally {
             Ctx.root = savedRoot;
             Ctx.cfg = savedCfg;

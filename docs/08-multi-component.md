@@ -177,7 +177,7 @@ hand). Locking again keeps the earlier files and updates the hashes. With
 | No agent edits a locked test (edit tools and shell writes) | agent hooks |
 | A commit that changes or deletes a locked test is refused | pre-commit |
 | `verify` refuses while a locked test differs from its lock | verify |
-| FAIL when a locked test differs, or when a lock the base branch has is removed or changed (read from the base, not from the PR); a pull request with only lock files and their tests gets a WARN instead, for QE review | PR gate, `check-pr` in CI |
+| FAIL when a locked test differs, or when a lock the base branch has is removed or changed (read from the base, not from the PR). A pull request with only lock files and their tests may lock a test again with new content: a WARN, for QE review. Removing a lock always fails, unless the pipeline names the story in `SDLC_LOCKS_REMOVABLE` | PR gate, `check-pr` in CI |
 | QE reviews lock changes | CODEOWNERS on `docs/test-locks/` |
 
 The check is on the file's content, not on who changed it, so it holds in every coding tool.
@@ -207,7 +207,14 @@ files is compared with the base branch (OpenAPI 3 / 2 paths, AsyncAPI 2 / 3 mess
 - `tasks create` (lanes on) writes `docs/agent/contracts/<STORY>.json`: what the story's lane
   allows. Patch: nothing. Component: additions to its own APIs. Cross-component: exactly the
   operations its slice lists, and breaking changes only if the solution says `compatibility: breaking`.
-  Commit it with the story; it is protected, so agents cannot widen it.
+  An operation is matched exactly: the method in any case and the path with its parameters
+  unnamed, nothing else (`/orders` and `/orders/` are two operations). A message and its channel
+  are compared byte for byte: another case, or a space more, is another message. It is protected, so agents cannot widen it.
+  An allowance written by a kit version before this rule lists operations in a looser form
+  and is refused with a message that says so: run `tasks create <STORY>` again to write it
+  from the approved solution, and merge it (to the base branch first, for CI). In a pull request build `check-pr` reads it from
+  the base branch, so it is merged first, in a pull request of its own that architects review;
+  the copy inside the pull request that changes the contract is not used.
 - `check-pr` and the PR gate fail an added or removed operation the allowance does not list,
   and a breaking change it does not allow. In CI the story comes from the branch name.
 - Breaking changes detected: removed operations or messages, removed response codes, new

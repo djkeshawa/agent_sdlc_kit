@@ -67,8 +67,11 @@ public final class Main {
             tasks create|list <STORY>            Jira sub-tasks from the approved LLD's work breakdown
             task start <TASK> | task finish      scope edits to the task, move Jira
             check [--base REF] [--runs N] [--no-run]   the change in front of you, nothing to configure: its tests before and after it
+            check --mandate <ID>                 the change against its mandate: inside it or not, and what is known
             check --since 30d [--max N]          the same, replayed over the recent commits of this branch
             check --stop-hook                    for an agent's Stop hook: keeps the agent working while a new test proves nothing
+            mandate check|show <ID>              what one change may do (docs/mandates/<ID>.json): is it valid | print it as a card
+            mandate list                         every mandate in docs/mandates, valid or not
             verify | trace [<STORY>] | check-pr [--title "..."] [--story KEY]
             review record <TASK> --file <report> | qa record [<STORY>] --file <report>
             ci status|failures|wait [--pr N]     read the PR's Jenkins and SonarQube results
@@ -113,23 +116,23 @@ public final class Main {
             code = dispatch(args, stdin);
         } catch (UsageException e) {
             if (guard) {
-                code = Hooks.emit(Decision.deny("the guard could not decide (" + e.getMessage() + ")."), hookFormat(args));
+                code = Hooks.emit(Decision.deny(sdlc.util.SafeOut.clean("the guard could not decide (" + e.getMessage() + ").")), hookFormat(args));
             } else {
-                System.err.println(e.getMessage());
+                System.err.println(sdlc.util.SafeOut.clean(e.getMessage())); // the message may quote a file name or a line of the repository
                 code = 3;
             }
         } catch (Http.ApiException e) {
-            System.err.println("Remote call failed: " + e.getMessage());
+            System.err.println(sdlc.util.SafeOut.clean("Remote call failed: " + e.getMessage()));
             code = 4;
         } catch (Throwable e) { // also StackOverflowError and OutOfMemoryError: a tool call built to crash the guard is refused
             if (guard) {
                 // fail closed: a broken guard must not wave tool calls through
-                code = Hooks.emit(Decision.deny("the guard failed (" + e + "). Ask a human to run: java .agent/Sdlc.java selftest"), hookFormat(args));
+                code = Hooks.emit(Decision.deny(sdlc.util.SafeOut.clean("the guard failed (" + e + "). Ask a human to run: java .agent/Sdlc.java selftest")), hookFormat(args));
             } else if (hook) {
-                System.err.println("[sdlc] hook error (ignored): " + e);
+                System.err.println(sdlc.util.SafeOut.clean("[sdlc] hook error (ignored): " + e));
                 code = args[0].equals("git-hook") ? 1 : 0;
             } else {
-                System.err.println("error: " + e);
+                System.err.println(sdlc.util.SafeOut.clean("error: " + e));
                 code = 3;
             }
         }
@@ -190,6 +193,7 @@ public final class Main {
         String c1 = a.length > 1 ? a[1] : "";
         Map<String, String> opt = Checks.options(a, 1);
         if (c0.equals("check")) return sdlc.check.Check.run(opt); // needs no configuration and no tracker
+        if (c0.equals("mandate")) return sdlc.mandate.MandateCli.run(a, opt); // nor does this
         Workflow w = new Workflow(new Jira(Ctx.cfg), new Confluence(Ctx.cfg), Console.TERMINAL); // the one place that says the tracker is Jira and the wiki is Confluence
         return switch (c0) {
             case "hook" -> Hooks.run(c1, stdin, hookFormat(a), w.sync);

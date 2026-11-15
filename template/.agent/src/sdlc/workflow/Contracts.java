@@ -188,13 +188,61 @@ public final class Contracts {
 
     // ---------------- diff ----------------
 
+    /** Operation keys by what they are (identity). Two keys of one spec that are the same operation stay apart under their own names. */
+    private static Map<String, String> canonical(Set<String> keys) {
+        Map<String, String> out = new LinkedHashMap<>();
+        Set<String> twice = new LinkedHashSet<>();
+        for (String key : keys) if (out.put(identity(key), key) != null) twice.add(identity(key));
+        for (String t : twice) out.remove(t);
+        for (String key : keys) if (twice.contains(identity(key))) out.put(key, key);
+        return out;
+    }
+
+    /** As normalize: what makes two operation keys the same operation. */
+    static String identity(String key) {
+        return normalize(key);
+    }
+
+    private static final java.util.regex.Pattern PLACEHOLDER = java.util.regex.Pattern.compile("\\{([^}/]*)\\}");
+
+    /** The old operation with its path parameters named as the new path template names them, position by position. */
+    private static Op renamed(Op a, String wasKey, String nowKey) {
+        List<String> was = new ArrayList<>(), now = new ArrayList<>();
+        java.util.regex.Matcher m = PLACEHOLDER.matcher(wasKey);
+        while (m.find()) was.add(m.group(1));
+        m = PLACEHOLDER.matcher(nowKey);
+        while (m.find()) now.add(m.group(1));
+        if (was.size() != now.size() || was.equals(now)) return a;
+        Map<String, String> names = new LinkedHashMap<>();
+        for (int i = 0; i < was.size(); i++) names.put("path:" + was.get(i), "path:" + now.get(i));
+        java.util.function.UnaryOperator<String> rename = entry -> {
+            for (Map.Entry<String, String> e : names.entrySet()) {
+                if (entry.equals(e.getKey())) return e.getValue();
+                if (entry.startsWith(e.getKey() + ".")) return e.getValue() + entry.substring(e.getKey().length());
+            }
+            return entry;
+        };
+        Set<String> required = new LinkedHashSet<>();
+        for (String r : a.requiredRequest()) required.add(rename.apply(r));
+        Map<String, String> types = new LinkedHashMap<>();
+        a.requestTypes().forEach((k, v) -> types.put(rename.apply(k), v));
+        Map<String, Set<String>> enums = new LinkedHashMap<>();
+        a.requestEnums().forEach((k, v) -> enums.put(rename.apply(k), v));
+        return new Op(a.responses(), required, types, enums, a.responseTypes(), a.responseEnums());
+    }
+
     /** What changed from the old spec to the new one. */
     public static List<Change> diff(Spec before, Spec after) {
         List<Change> out = new ArrayList<>();
-        Set<String> all = new LinkedHashSet<>(before.operations().keySet());
-        all.addAll(after.operations().keySet());
-        for (String key : all) {
-            Op a = before.operations().get(key), b = after.operations().get(key);
+        // "GET /orders/{id}" and "GET /orders/{orderId}" are one operation: the name of a path parameter is not part of it
+        Map<String, String> wasNamed = canonical(before.operations().keySet()), nowNamed = canonical(after.operations().keySet());
+        Set<String> all = new LinkedHashSet<>(wasNamed.keySet());
+        all.addAll(nowNamed.keySet());
+        for (String op : all) {
+            String key = nowNamed.containsKey(op) ? nowNamed.get(op) : wasNamed.get(op);
+            Op a = wasNamed.containsKey(op) ? before.operations().get(wasNamed.get(op)) : null;
+            Op b = nowNamed.containsKey(op) ? after.operations().get(nowNamed.get(op)) : null;
+            if (a != null && b != null) a = renamed(a, wasNamed.get(op), nowNamed.get(op));
             if (a == null) {
                 out.add(new Change(key, "added", "new"));
                 continue;
@@ -232,15 +280,25 @@ public final class Contracts {
         }
     }
 
-    /** "post /orders/{orderId}/refunds" and "POST /orders/{id}/refunds" name the same operation; messages compare by name and channel. */
+    /**
+     * "post /orders/{orderId}/refunds" and "POST /orders/{id}/refunds" name the same operation: the
+     * method in any case, the path with its parameters unnamed. Nothing else is taken as equal,
+     * in an allowance as in a comparison: "/orders" and "/orders/" may be two routes, and
+     * "Orders" and "orders" two channels.
+     */
     public static String normalize(String op) {
-        String s = op.strip().replaceAll("\\s+", " ");
-        int sp = s.indexOf(' ');
-        if (sp > 0 && METHODS.contains(s.substring(0, sp).toLowerCase(Locale.ROOT))) {
-            return s.substring(0, sp).toUpperCase(Locale.ROOT) + " " + s.substring(sp + 1).replaceAll("\\{[^}/]*\\}", "{}").replaceAll("/+$", "");
+        String s = op.strip();
+        java.util.regex.Matcher m = HTTP_OPERATION.matcher(s);
+        if (m.matches() && METHODS.contains(m.group(1).toLowerCase(Locale.ROOT))) {
+            return m.group(1).toUpperCase(Locale.ROOT) + " " + m.group(2).replaceAll("\\{[^}/]*\\}", "{}");
         }
-        return s.toLowerCase(Locale.ROOT);
+        return op; // a message and its channel: byte for byte as written, white space at its ends included
     }
+
+    private static final java.util.regex.Pattern HTTP_OPERATION = java.util.regex.Pattern.compile("(\\S+)\\s+(\\S.*)");
+
+    /** The mark of an allowance whose operations are written as normalize gives them. Older ones dropped a slash at the end and the case of messages. */
+    public static final String EXACT = "exact";
 
     /** A path a client calls (with or without {params}) matches a spec path template. */
     public static boolean pathMatches(String template, String called) {
@@ -271,9 +329,15 @@ public final class Contracts {
         // that drops an API from its own catalog-info.yaml still has that API's file checked
         Map<String, String> fileToApi = new LinkedHashMap<>();
         String catalogFile = sdlc.core.Ctx.root.relativize(Catalog.file()).toString().replace('\\', '/');
-        apiFiles(Catalog.parse(show(from, catalogFile)), fileToApi);
-        // the base branch's catalog as it is now: a branch made before the catalog existed is still held to it
-        if (!base.equals(from)) apiFiles(Catalog.parse(show(base, catalogFile)), fileToApi);
+        try {
+            apiFiles(Catalog.parse(show(from, catalogFile)), fileToApi);
+            // the base branch's catalog as it is now: a branch made before the catalog existed is still held to it
+            if (!base.equals(from)) apiFiles(Catalog.parse(show(base, catalogFile)), fileToApi);
+        } catch (RuntimeException e) {
+            // without the catalog it is not known which files are contracts: that is a failure, not "no contracts"
+            fails.add("The catalog " + catalogFile + " on " + sdlc.core.Trusted.shortName(base) + " cannot be read, so contract changes cannot be checked: " + e.getMessage());
+            return new Policy(passes, fails, warns);
+        }
         apiFiles(Catalog.load(), fileToApi);
         if (fileToApi.isEmpty()) return new Policy(passes, fails, warns);
         List<String> touched = changed.stream().filter(fileToApi::containsKey).toList();
@@ -283,9 +347,27 @@ public final class Contracts {
         for (String d : deleted) if (fileToApi.containsKey(d) && !all.contains(d)) all.add(d);
         if (all.isEmpty()) return new Policy(passes, fails, warns);
         String allowanceRel = "docs/agent/contracts/" + story + ".json";
-        if (!story.isBlank() && changed.contains(allowanceRel)) warns.add("contract allowance " + allowanceRel + " is added or changed in this pull request (architects review it, CODEOWNERS)");
         boolean lanes = Lanes.enabled();
-        Map<String, Object> allowance = story.isBlank() ? Map.of() : sdlc.core.Store.read(Lanes.allowanceFile(story));
+        // In a pull request build the allowance is the base branch's: a pull request must not write the permission it is
+        // judged by. Architects merge an allowance first, in a pull request of its own.
+        boolean ci = sdlc.core.Trusted.inCi();
+        String onBase = sdlc.core.Trusted.shortName(base);
+        Map<String, Object> allowance;
+        if (story.isBlank()) allowance = Map.of();
+        else if (!ci) allowance = sdlc.core.Store.read(Lanes.allowanceFile(story));
+        else {
+            try {
+                String text = sdlc.core.Trusted.read(base, allowanceRel);
+                allowance = text == null ? Map.of() : Json.map(Json.parse(text));
+            } catch (RuntimeException e) {
+                fails.add("The contract allowance " + allowanceRel + " on " + onBase + " cannot be read: " + e.getMessage());
+                return new Policy(passes, fails, warns);
+            }
+        }
+        if (!story.isBlank() && changed.contains(allowanceRel)) {
+            warns.add("contract allowance " + allowanceRel + " is added or changed in this pull request (architects review it, CODEOWNERS)"
+                    + (ci && lanes ? "; it is not used to judge this pull request, the one on " + onBase + " is" : ""));
+        }
         for (String file : all) {
             String api = fileToApi.get(file);
             List<Change> changes;
@@ -306,8 +388,10 @@ public final class Contracts {
                 continue;
             }
             if (allowance.isEmpty()) {
-                fails.add("Contract " + file + " changed, but " + (story.isBlank() ? "no story is known" : story + " has no " + Lanes.allowanceFile(story).getFileName()
-                        + " (java .agent/Sdlc.java tasks create " + story + " writes it; commit it)"));
+                fails.add("Contract " + file + " changed, but " + (story.isBlank() ? "no story is known" : ci
+                        ? story + " has no " + allowanceRel + " on " + onBase + " (java .agent/Sdlc.java tasks create " + story
+                                + " writes it; it is merged first, in a pull request of its own that architects review)"
+                        : story + " has no " + Lanes.allowanceFile(story).getFileName() + " (java .agent/Sdlc.java tasks create " + story + " writes it; commit it)"));
                 continue;
             }
             String lane = Json.str(allowance, "lane");
@@ -316,8 +400,17 @@ public final class Contracts {
                 fails.add("Contract " + api + " (" + file + ") changed, but the " + lane + " lane of " + story + " allows no change to it" + (lane.equals("patch") ? " (raise the LLD's lane, get it approved, tasks create again)" : ""));
                 continue;
             }
-            Set<String> add = new LinkedHashSet<>(Work.strings(entry.get("add")));
-            Set<String> remove = new LinkedHashSet<>(Work.strings(entry.get("remove")));
+            // exactly as the allowance holds them: an operation is not trimmed on its way in (see normalize)
+            Set<String> add = new LinkedHashSet<>(Work.exact(entry.get("add")));
+            Set<String> remove = new LinkedHashSet<>(Work.exact(entry.get("remove")));
+            boolean named = !remove.isEmpty() || add.stream().anyMatch(a -> !a.equals("*"));
+            if (named && !EXACT.equals(Work.str(allowance.get("operations")))) {
+                // written by an earlier version of the kit, which did not keep a slash at the end of a path or the case of a
+                // message: such a list cannot say which operation was meant
+                fails.add("The contract allowance " + allowanceRel + " was written by an earlier version of the kit and does not name its operations exactly. Write it again from the approved solution "
+                        + "(java .agent/Sdlc.java tasks create " + story + ") and commit it" + (ci ? "; in a pull request build it is read from " + onBase + ", so merge it there first, in a pull request of its own" : ""));
+                continue;
+            }
             boolean breaking = "true".equals(Work.str(entry.get("breaking")));
             for (Change ch : changes) {
                 String op = normalize(ch.operation());
@@ -350,8 +443,9 @@ public final class Contracts {
         return r.code() == 0 && !r.out().isBlank() ? r.out().strip() : base;
     }
 
+    /** A file as committed at a ref, "" when the ref does not hold it. A read that fails throws: it is not an empty file. */
     private static String show(String ref, String file) {
-        sdlc.util.Proc r = sdlc.util.Proc.run(sdlc.core.Ctx.root, "git", "show", ref + ":" + file);
-        return r.code() == 0 ? r.out() : "";
+        String text = sdlc.core.Trusted.read(ref, file);
+        return text == null ? "" : text;
     }
 }

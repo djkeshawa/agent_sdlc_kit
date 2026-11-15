@@ -29,7 +29,7 @@ final class Scratch implements AutoCloseable {
         try {
             Scratch s = new Scratch(Files.createTempDirectory("sdlc-check-" + label + "-").toRealPath());
             try {
-                s.write(tree, List.of());
+                s.checkout(tree, List.of());
             } catch (IOException | RuntimeException e) {
                 s.close();
                 throw e;
@@ -40,8 +40,40 @@ final class Scratch implements AutoCloseable {
         }
     }
 
-    /** Writes the given paths of a tree over what is here (all paths when the list is empty). */
+    /** Writes the given paths of a tree over what is here. No paths, nothing written. */
     void write(String tree, List<String> paths) throws IOException {
+        if (paths.isEmpty()) return;
+        for (String path : paths) makeRoom(path);
+        checkout(tree, paths);
+    }
+
+    /**
+     * Removes what stands where a file is about to be written: a file where one of its folders
+     * must be, or a folder where the file itself must be. A change that turns a fixture file into
+     * a folder of fixtures (or back) is an ordinary change.
+     */
+    private void makeRoom(String path) throws IOException {
+        Path target = dir.resolve(path).normalize();
+        if (!target.startsWith(dir)) throw new UsageException("a path that leaves the checkout: " + path);
+        // From the checkout's root downwards, and never through a link: a link on the way may lead out of the checkout,
+        // and what lies behind it is not ours to look at or remove. The link itself is removed; a folder takes its place.
+        Path at = dir;
+        Path rest = dir.relativize(target);
+        for (int i = 0; i < rest.getNameCount() - 1; i++) {
+            at = at.resolve(rest.getName(i));
+            if (Files.isSymbolicLink(at) || Files.isRegularFile(at, java.nio.file.LinkOption.NOFOLLOW_LINKS)) Files.delete(at);
+            if (!Files.exists(at, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return; // nothing below it stands in the way
+        }
+        if (Files.isSymbolicLink(target)) Files.delete(target);
+        else if (Files.isDirectory(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            try (Stream<Path> s = Files.walk(target)) {
+                for (Path p : s.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(p);
+            }
+        }
+    }
+
+    /** Writes every file of the tree (paths empty) or the given paths. */
+    private void checkout(String tree, List<String> paths) throws IOException {
         Path index = Files.createTempFile("sdlc-index", "");
         Files.delete(index); // git creates it
         try {

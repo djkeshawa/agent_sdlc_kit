@@ -12,7 +12,8 @@ description: "Rules for test code"
   every promise awaited.
 - One behaviour per test.
 - Never add `@Disabled`, `@Ignore`, `assumeTrue(false)`, `it.skip`, `xit`, `.only` or empty tests. The git hook and the PR
-  policy refuse them. Fix flaky tests; do not switch them off.
+  policy check the lines you add for the usual forms of these switches (not for empty tests);
+  `java .agent/Sdlc.java check` shows any test that no longer runs. Fix flaky tests; do not switch them off.
 - Never delete or weaken an existing assertion to make a test pass. If an existing test
   contradicts the approved LLD or test design, stop and ask the human.
 - Every test scenario `TS-..` of your task gets a row in `docs/test-links/<STORY>.md`:

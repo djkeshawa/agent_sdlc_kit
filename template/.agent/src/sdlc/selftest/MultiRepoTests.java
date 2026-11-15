@@ -209,7 +209,16 @@ final class MultiRepoTests {
         check("contracts: removed and added operations", d.stream().anyMatch(x -> x.kind().equals("removed") && x.operation().equals("GET /refunds/{id}"))
                 && d.stream().anyMatch(x -> x.kind().equals("added") && x.operation().equals("DELETE /refunds/{id}")));
         check("contracts: an unchanged spec has no changes", Contracts.diff(v1, Contracts.parse(OPENAPI)).isEmpty());
-        check("contracts: operation names normalise", Contracts.normalize("post  /orders/{orderId}/refunds/").equals(Contracts.normalize("POST /orders/{id}/refunds")));
+        check("contracts: a path with a slash at its end is another path",
+                Contracts.diff(v1, Contracts.parse(OPENAPI.replace("/orders/{orderId}/refunds:", "/orders/{orderId}/refunds/:"))).stream().anyMatch(c -> c.kind().equals("removed")));
+        check("contracts: a channel written in another case is another channel",
+                Contracts.diff(Contracts.parse(ASYNCAPI), Contracts.parse(ASYNCAPI.replace("refund-events", "Refund-Events"))).stream().anyMatch(c -> c.kind().equals("removed")));
+        check("contracts: another name for a path parameter is not another operation",
+                Contracts.diff(v1, Contracts.parse(OPENAPI.replace("/orders/{orderId}/refunds", "/orders/{id}/refunds"))).isEmpty());
+        check("contracts: operation names normalise", Contracts.normalize("post  /orders/{orderId}/refunds").equals(Contracts.normalize("POST /orders/{id}/refunds"))
+                && !Contracts.normalize("GET /orders/").equals(Contracts.normalize("GET /orders")) && !Contracts.normalize("message A on Orders").equals(Contracts.normalize("message A on orders"))
+                && !Contracts.normalize("message A on room 1").equals(Contracts.normalize("message A on room  1"))
+                && !Contracts.normalize("message A on orders").equals(Contracts.normalize("message A on orders ")));
         check("contracts: called paths match templates", Contracts.pathMatches("/orders/{id}", "/orders/{orderId}") && Contracts.pathMatches("/orders/{id}", "/orders/42?x=1")
                 && !Contracts.pathMatches("/orders/{id}", "/orders/42/lines"));
     }
@@ -473,6 +482,15 @@ final class MultiRepoTests {
     }
 
     private static void contractPolicy(Path tmp) throws IOException {
+        sdlc.core.Trusted.env = name -> null; // the self test may itself run in a pull request build
+        try {
+            contractPolicyOnADevelopersMachine(tmp);
+        } finally {
+            sdlc.core.Trusted.env = System::getenv;
+        }
+    }
+
+    private static void contractPolicyOnADevelopersMachine(Path tmp) throws IOException {
         String[] git = {"git", "-c", "user.name=t", "-c", "user.email=t@x", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"};
         Proc.run(tmp, "git", "switch", "-q", "-c", "feature/PROJ-80-contract");
         Store.writeText(tmp.resolve("api/openapi.yaml"), OPENAPI);
@@ -485,20 +503,55 @@ final class MultiRepoTests {
         List<String> changed = List.of("api/openapi.yaml");
         Path allow = Lanes.allowanceFile("PROJ-80");
         check("contracts: a change with no recorded lane fails", Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("has no PROJ-80.json")));
-        Store.write(allow, Store.map("story", "PROJ-80", "lane", "patch", "apis", Map.of()));
+        Store.write(allow, Store.map("operations", "exact", "story", "PROJ-80", "lane", "patch", "apis", Map.of()));
         check("contracts: a patch lane allows no contract change", Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("patch lane of PROJ-80 allows no change")));
-        Store.write(allow, Store.map("story", "PROJ-80", "lane", "component", "apis", Map.of("payments-api", Store.map("add", List.of("*"), "remove", List.of(), "breaking", false))));
+        Store.write(allow, Store.map("operations", "exact", "story", "PROJ-80", "lane", "component", "apis", Map.of("payments-api", Store.map("add", List.of("*"), "remove", List.of(), "breaking", false))));
         check("contracts: a component lane allows an added operation", Contracts.prPolicy("PROJ-80", base, changed).fails().isEmpty());
-        Store.write(allow, Store.map("story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("POST /orders/{}/refunds"), "remove", List.of(), "breaking", false))));
+        Store.write(allow, Store.map("operations", "exact", "story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("POST /orders/{}/refunds"), "remove", List.of(), "breaking", false))));
         check("contracts: an operation the slice does not list fails", Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("GET /refunds added, but the solution slice does not list it")));
-        Store.write(allow, Store.map("story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds"), "remove", List.of(), "breaking", false))));
+        Store.write(allow, Store.map("operations", "exact", "story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds"), "remove", List.of(), "breaking", false))));
         check("contracts: an operation the slice lists passes", Contracts.prPolicy("PROJ-80", base, changed).fails().isEmpty());
+        Store.write(allow, Store.map("story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds"), "remove", List.of(), "breaking", false))));
+        check("contracts: an operation in an allowance is taken as written, a space at its end included",
+                Work.exact(List.of("message A on orders ", "GET /a")).equals(List.of("message A on orders ", "GET /a"))
+                && !Contracts.normalize(Work.exact(List.of("message A on orders ")).get(0)).equals(Contracts.normalize("message A on orders")));
+        check("contracts: an allowance written before operations were kept exactly is refused, with the way to write it again",
+                Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("earlier version of the kit") && f.contains("tasks create PROJ-80")));
+        Store.write(allow, Store.map("operations", "exact", "story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds/"), "remove", List.of(), "breaking", false))));
+        check("contracts: an allowance for a path with a slash at its end does not cover the path without it",
+                Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("GET /refunds added, but the solution slice does not list it")));
+        Store.write(allow, Store.map("operations", "exact", "story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds"), "remove", List.of(), "breaking", false))));
+        // a contract that cannot be read is a failure, never an empty contract that "did not change"
+        int limit = Proc.maxOutput;
+        Proc.maxOutput = 200;
+        try {
+            check("contracts: a contract too large to read fails the check", Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("could not be read") || f.contains("cannot be read")));
+        } finally {
+            Proc.maxOutput = limit;
+        }
+        // in a pull request build the allowance is the base branch's: the pull request's own copy grants nothing
+        sdlc.core.Trusted.env = name -> name.equals("GITHUB_BASE_REF") ? "main" : null;
+        try {
+            Contracts.Policy own = Contracts.prPolicy("PROJ-80", base, changed);
+            check("contracts: in a pull request build the pull request's own allowance is not used",
+                    own.fails().stream().anyMatch(f -> f.contains("has no docs/agent/contracts/PROJ-80.json on") && f.contains("merged first")));
+            Proc.run(tmp, "git", "switch", "-q", "-c", "allowance-merged", base);
+            Proc.run(tmp, "git", "add", "-f", "docs/agent/contracts/PROJ-80.json");
+            Proc.run(tmp, concat(git, "commit", "-q", "-m", "docs(PROJ-80): contract allowance"));
+            Proc.run(tmp, "git", "switch", "-q", "feature/PROJ-80-contract");
+            Store.write(allow, Store.map("operations", "exact", "story", "PROJ-80", "lane", "patch", "apis", Map.of()));
+            Contracts.Policy merged = Contracts.prPolicy("PROJ-80", "allowance-merged", List.of("api/openapi.yaml", "docs/agent/contracts/PROJ-80.json"));
+            check("contracts: an allowance merged on the base branch is the one that counts",
+                    merged.fails().isEmpty() && merged.warns().stream().anyMatch(w -> w.contains("is not used to judge this pull request")));
+        } finally {
+            sdlc.core.Trusted.env = name -> null;
+        }
         Store.writeText(tmp.resolve("api/openapi.yaml"), OPENAPI.replace("required: [amount]", "required: [amount, reason]"));
         Proc.run(tmp, "git", "add", "api/openapi.yaml");
         Proc.run(tmp, concat(git, "commit", "-q", "-m", "feat(PROJ-80): reason required"));
-        Store.write(allow, Store.map("story", "PROJ-80", "lane", "component", "apis", Map.of("payments-api", Store.map("add", List.of("*"), "remove", List.of(), "breaking", false))));
+        Store.write(allow, Store.map("operations", "exact", "story", "PROJ-80", "lane", "component", "apis", Map.of("payments-api", Store.map("add", List.of("*"), "remove", List.of(), "breaking", false))));
         check("contracts: a breaking change fails outside a planned breaking change", Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("new required body:reason is a breaking change")));
-        Store.write(allow, Store.map("story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of(), "remove", List.of(), "breaking", true))));
+        Store.write(allow, Store.map("operations", "exact", "story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of(), "remove", List.of(), "breaking", true))));
         check("contracts: a planned breaking change passes", Contracts.prPolicy("PROJ-80", base, changed).fails().isEmpty());
         Config before = Ctx.cfg;
         Ctx.cfg = Config.parse(CONFIG.replace("enabled: true", "enabled: false"));
@@ -514,7 +567,7 @@ final class MultiRepoTests {
         Proc.run(tmp, "git", "add", "api/openapi.yaml");
         Proc.run(tmp, concat(git, "commit", "-q", "-m", "feat(PROJ-81): base only"));
         Proc.run(tmp, "git", "switch", "-q", "feature/PROJ-80-contract");
-        Store.write(allow, Store.map("story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds"), "remove", List.of(), "breaking", true))));
+        Store.write(allow, Store.map("operations", "exact", "story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds"), "remove", List.of(), "breaking", true))));
         Contracts.Policy moved = Contracts.prPolicy("PROJ-80", "base-moved", changed);
         check("contracts: an operation added on the base branch later is not seen as removed", moved.fails().isEmpty() && Contracts.mergeBase("base-moved").equals(base));
         check("contracts: without a common ancestor the base itself is compared", Contracts.mergeBase("no-such-ref").equals("no-such-ref"));
@@ -523,7 +576,7 @@ final class MultiRepoTests {
         Proc.run(tmp, "git", "mv", "api/openapi.yaml", "api/moved.yaml");
         Proc.run(tmp, concat(git, "commit", "-q", "-m", "chore(PROJ-82): move the contract"));
         Path allow82 = Lanes.allowanceFile("PROJ-82");
-        Store.write(allow82, Store.map("story", "PROJ-82", "lane", "component", "apis", Map.of("payments-api", Store.map("add", List.of("*"), "remove", List.of(), "breaking", false))));
+        Store.write(allow82, Store.map("operations", "exact", "story", "PROJ-82", "lane", "component", "apis", Map.of("payments-api", Store.map("add", List.of("*"), "remove", List.of(), "breaking", false))));
         check("contracts: a contract moved away with git mv is checked as removed", !Contracts.prPolicy("PROJ-82", base, List.of("api/moved.yaml")).fails().isEmpty());
         Files.deleteIfExists(allow82);
         // the base branch's catalog names the contract files: dropping the API from catalog-info.yaml does not skip the check
@@ -537,7 +590,7 @@ final class MultiRepoTests {
         Proc.run(tmp, "git", "add", "-f", "catalog-info.yaml", "api/openapi.yaml");
         Proc.run(tmp, concat(git, "commit", "-q", "-m", "feat(PROJ-83): hidden operation"));
         Path allow83 = Lanes.allowanceFile("PROJ-83");
-        Store.write(allow83, Store.map("story", "PROJ-83", "lane", "patch", "apis", Map.of()));
+        Store.write(allow83, Store.map("operations", "exact", "story", "PROJ-83", "lane", "patch", "apis", Map.of()));
         check("contracts: an API dropped from the pull request's catalog is still checked", Contracts.prPolicy("PROJ-83", catalogBase, List.of("catalog-info.yaml", "api/openapi.yaml")).fails().stream()
                 .anyMatch(f -> f.contains("patch lane of PROJ-83 allows no change")));
         Files.deleteIfExists(allow83);

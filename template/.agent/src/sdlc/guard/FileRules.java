@@ -323,7 +323,60 @@ public final class FileRules {
     }
 
     boolean isProtected(String rel) {
-        return Glob.any(g.cfg.list("paths.protected"), rel) && !Glob.any(g.cfg.list("paths.agentWritable"), rel) || sdlc.core.Locks.isLocked(g.root, rel);
+        if (Glob.any(g.cfg.list("paths.protected"), rel) && !Glob.any(g.cfg.list("paths.agentWritable"), rel) || sdlc.core.Locks.isLocked(g.root, rel)) return true;
+        String inGit = inGitFolder(rel);
+        return inGit != null && Glob.any(g.cfg.list("paths.protected"), inGit);
+    }
+
+    /**
+     * A path inside this checkout's git folder, written as if that folder were .git here, or null.
+     * In a linked worktree the git folder is somewhere else (.git is a file that names it), so the
+     * rules for .git/hooks, .git/config and the tool's own state under .git/sdlc would otherwise
+     * not see a write there: the path is outside the checkout.
+     */
+    String inGitFolder(String rel) {
+        try {
+            Path abs = g.root.resolve(rel).normalize();
+            for (Path git : gitFolders()) {
+                // the folder itself, and any folder that holds it: a copy or a move of a whole tree writes what is inside
+                if (abs.equals(git) || git.startsWith(abs)) return ".git";
+                if (abs.startsWith(git)) return ".git/" + git.relativize(abs).toString().replace('\\', '/');
+            }
+        } catch (RuntimeException e) {
+            // not a path: it names nothing in the git folder
+        }
+        return null;
+    }
+
+    private List<Path> gitFolders;
+
+    /** The git folder all worktrees of this repository share, as written and with links resolved. Empty in a plain checkout, whose .git the patterns already name. */
+    private List<Path> gitFolders() {
+        if (gitFolders != null) return gitFolders;
+        List<Path> out = new ArrayList<>();
+        try {
+            Path dot = g.root.resolve(".git");
+            if (Files.isRegularFile(dot)) {
+                String first = Files.readString(dot).lines().findFirst().orElse("").strip();
+                if (first.startsWith("gitdir:")) {
+                    Path own = g.root.resolve(first.substring("gitdir:".length()).strip()).normalize();
+                    Path shared = own;
+                    Path pointer = own.resolve("commondir");
+                    if (Files.isRegularFile(pointer)) shared = own.resolve(Files.readString(pointer).strip()).normalize();
+                    for (Path p : List.of(shared, own)) {
+                        // "own" comes second: under the shared folder it is already covered (worktrees/NAME/...)
+                        if (out.stream().anyMatch(p::startsWith)) continue;
+                        out.add(p);
+                        Path real = realish(p);
+                        if (!real.equals(p)) out.add(real);
+                    }
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            // no readable pointer: nothing more to protect than the patterns do
+        }
+        gitFolders = out;
+        return out;
     }
 
     public Decision checkRead(List<String> paths) {

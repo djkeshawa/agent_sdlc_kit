@@ -25,8 +25,11 @@ Status links like `.../job/payments/job/PR-12/5/display/redirect` are understood
 2. Run the same build developers run (`./mvnw -B -ntp verify`) and publish JUnit results
    (`junit 'target/surefire-reports/*.xml'`), so the kit can list failed tests by name.
 3. Run the SonarQube analysis **as a PR analysis** and fail the build when the gate fails.
-4. Optional but recommended: run the kit's PR policy, so the branch, commit, secret and
-   disabled-test rules hold even for someone who skipped the git hooks.
+4. Optional but recommended: run the kit's PR policy, so the branch, commit and secret rules
+   hold, and the disabled-test check runs, even for someone who skipped the git hooks. That check
+   reads the lines a pull request adds for the usual ways of switching a test off: it catches
+   mistakes and plain attempts, not an author set on hiding one. The guard is a test run:
+   `sdlc check` reports every test that ran before the change and does not run now.
 
 A minimal `Jenkinsfile` with these stages (adapt it to yours; the kit does not ship one):
 
@@ -68,23 +71,25 @@ own checkout, so in CI the tool does not take its rules from there:
 | --- | --- |
 | The base branch | The CI event: `CHANGE_TARGET` (Jenkins), `GITHUB_BASE_REF` (GitHub Actions), or `SDLC_BASE_BRANCH` if you set it. Not `delivery.baseBranch` of the checkout |
 | The rules (`.agent/sdlc.yml`, `.agent/org.yml`) | The tip of that base branch, read from git. A change to the rules takes effect after it is merged |
-| Acceptance test locks | The base branch: a lock cannot be removed or re-hashed, and a test the base branch locked after your branch was made cannot be changed |
+| Acceptance test locks | The base branch: a lock cannot be removed or re-hashed, and a test the base branch locked after your branch was made cannot be changed. The one exception: QE's own pull request, holding only lock files and their tests, may lock a test again with new content |
+| The contract allowance (`docs/agent/contracts/<STORY>.json`) | The tip of the base branch. An allowance is merged first, in a pull request of its own that architects review; the copy in the pull request that changes the contract is not used |
 | The story | `check-pr --story <KEY>` when you pass it; else the key in the branch name, with a warning, because the author chooses that name |
 | Local state (`.sdlc/`) | Not read. A pull request that commits files under `.sdlc/` fails |
 | The diff | Read as text whatever `.gitattributes` says, with file names exactly as git holds them. A checkout with no commit in common with the base branch (a shallow clone) fails; it does not pass on an empty diff |
 
 On a developer's machine none of these variables is set and the checkout's own rules apply, as
-before. If the base branch has no `.agent/sdlc.yml` yet (the pull request that installs the
-kit), the tool says so and uses the pull request's copy.
+before.
 
 Fetch enough history for the check: it needs the commit where the branch left the base branch.
 
-Still decided by the pull request itself, and therefore only a warning for a reviewer:
+Two exceptions exist, and only the pipeline can grant them. Both are environment variables,
+never files: what a pull request can write must not grant that pull request an exception. Set
+them from something the author cannot edit, for example a label only maintainers may apply.
 
-- the contract allowance (`docs/agent/contracts/<STORY>.json`) that says which API operations
-  the story may add or remove;
-- a pull request that holds only lock files and their tests may remove a lock. QE owns those
-  files through CODEOWNERS.
+| Variable | What it allows |
+| --- | --- |
+| `SDLC_FIRST_INSTALLATION=true` | The base branch has no `.agent/sdlc.yml` yet (the pull request that installs the kit). Without the variable the check fails: the only rules at hand would be the pull request's own. With it, those rules are used and a warning says so |
+| `SDLC_LOCKS_REMOVABLE=PAY-101,PAY-102` | The test locks of these stories may be removed (a retired feature). Without it, removing a lock fails, also in a pull request that holds only lock files and their tests: with the lock gone, the test could be deleted in the same pull request |
 
 This is half of the boundary. Two more things are the pull request's own and cannot be fixed
 inside the tool: the pipeline definition (this `Jenkinsfile`) and the tool's code (`.agent/`).

@@ -152,7 +152,7 @@ public final class Lanes {
                 }
             }
         }
-        Map<String, Object> out = Store.map("story", story, "lane", lane, "apis", apis);
+        Map<String, Object> out = Store.map("story", story, "lane", lane, "operations", Contracts.EXACT, "apis", apis);
         if (f.solution() != null && self != null && f.solution().components.containsKey(self.name())) out.put("solutionSlice", f.solution().sliceHash(self.name()));
         return out;
     }

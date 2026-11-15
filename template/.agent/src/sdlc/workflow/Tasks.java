@@ -139,7 +139,7 @@ public final class Tasks {
             Lanes.Floor floor = Lanes.floor(w, story, scopes);
             lane = Lanes.rank(declared) >= Lanes.rank(floor.lane()) ? declared : floor.lane();
             Store.write(Lanes.allowanceFile(story), Lanes.allowance(story, lane, floor));
-            w.console.out("Contract changes this story may make: " + Ctx.rel(Lanes.allowanceFile(story)) + " (commit it with the story; check-pr reads it in CI)");
+            w.console.out("Contract changes this story may make: " + Ctx.rel(Lanes.allowanceFile(story)) + " (architects merge it first, in a pull request of its own: check-pr in CI reads it from the base branch)");
         }
         Map<String, Object> state = Work.state(story);
         if (!lane.isEmpty()) state.put("lane", lane);

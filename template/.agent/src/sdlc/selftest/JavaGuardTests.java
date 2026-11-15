@@ -146,6 +146,9 @@ final class JavaGuardTests {
         expect("nor over its bootstrap", shell("cp payload .agent/Sdlc.java"), Decision.Kind.DENY);
         check("moving a file onto the launcher is not allowed either", shell("mv /tmp/x .agent/bin/sdlc").kind() != Decision.Kind.ALLOW);
         expect("packaged tool: check ok", shell("sdlc check"), Decision.Kind.ALLOW);
+        expect("approving a mandate by agent", shell("java .agent/Sdlc.java mandate approve fix-search"), Decision.Kind.DENY);
+        expect("packaged tool: approving a mandate by agent", shell("sdlc mandate approve fix-search"), Decision.Kind.DENY);
+        expect("reading a mandate ok", shell("sdlc mandate show fix-search"), Decision.Kind.ALLOW);
         expect("a folder named sdlc is not the tool", shell("ls sdlc setup"), Decision.Kind.ALLOW);
         expect("compile into build", shell("javac -d .agent/.build /tmp/Evil.java"), Decision.Kind.DENY);
         expect("curl asks", shell("curl https://example.com"), Decision.Kind.ASK);
@@ -195,6 +198,59 @@ final class JavaGuardTests {
         expect("git config filter", shell("git config filter.x.clean ./x.sh"), Decision.Kind.DENY);
         expect("git -c pager cat ok", shell("git -c core.pager=cat log -1"), Decision.Kind.ALLOW);
         expect("git config read program key ok", shell("git config --get core.pager"), Decision.Kind.ALLOW);
+        // what follows "--" is the key and its value, never an option: this sets core.hooksPath to the text "--get"
+        expect("git config value that looks like a read option", shell("git config -- core.hooksPath --get"), Decision.Kind.DENY);
+        expect("git config value that looks like a list option", shell("git config -- core.hooksPath -l"), Decision.Kind.DENY);
+        expect("git config program key after --", shell("git config -- core.pager ./x.sh"), Decision.Kind.DENY);
+        expect("git config read after -- ok", shell("git config --get -- core.hooksPath"), Decision.Kind.ALLOW);
+        expect("git config read of one key ok", shell("git config core.hooksPath"), Decision.Kind.ALLOW);
+        // a settings file of the command's choosing may be a file the guard protects
+        expect("git config into a chosen file", shell("git config --file .agent/new-protected probe.value yes"), Decision.Kind.DENY);
+        expect("git config into a chosen file, short", shell("git config -f .git/sdlc/mandate-approvals.json probe.value yes"), Decision.Kind.DENY);
+        expect("git config into a chosen file, shortened option", shell("git config --fil x.cfg probe.value yes"), Decision.Kind.DENY);
+        expect("git config read of a chosen file ok", shell("git config --file x.cfg --get probe.value"), Decision.Kind.ALLOW);
+        // an action taken back by its negation leaves git's default, which sets: only known options, written in full, each action once
+        expect("git config read taken back", shell("git config --get --no-get core.hooksPath /dev/null"), Decision.Kind.DENY);
+        expect("git config list taken back, into a file", shell("git config --list --no-list --file .agent/proof.cfg proof.value changed"), Decision.Kind.DENY);
+        expect("git config unset taken back", shell("git config --unset --no-unset core.fsmonitor /tmp/program"), Decision.Kind.DENY);
+        // the operand of an option is not the subcommand
+        expect("git config file named get", shell("git config --file get --file .git/config core.hooksPath /tmp/replacement"), Decision.Kind.DENY);
+        expect("git config file named list", shell("git config --file list --file .agent/proof.cfg proof.value changed"), Decision.Kind.DENY);
+        expect("git config default named get", shell("git config --default get core.hooksPath /tmp/replacement"), Decision.Kind.DENY);
+        expect("git config two actions", shell("git config --get --add core.hooksPath /tmp/x"), Decision.Kind.DENY);
+        expect("git config shortened read option", shell("git config --ge core.hooksPath"), Decision.Kind.DENY);
+        expect("git config unknown option", shell("git config --fixed-value core.hooksPath /tmp/x"), Decision.Kind.DENY);
+        expect("git config subcommand set of a protected key", shell("git config set core.hooksPath /tmp/x"), Decision.Kind.DENY);
+        expect("git config subcommand get ok", shell("git config get core.hooksPath"), Decision.Kind.ALLOW);
+        expect("git config list ok", shell("git config --list --show-origin"), Decision.Kind.ALLOW);
+        expect("git config plain set ok", shell("git config --local core.autocrlf false"), Decision.Kind.ALLOW);
+        expect("git config unset of a plain key ok", shell("git config --unset branch.x.merge"), Decision.Kind.ALLOW);
+        expect("git config unset of a protected key", shell("git config --unset core.hooksPath"), Decision.Kind.DENY);
+        // git stops reading options at the first key: what follows it is the value or a pattern, whatever it looks like
+        expect("git config value -l after the key", shell("git config core.hooksPath -l"), Decision.Kind.DENY);
+        expect("git config --list after key and value", shell("git config core.hooksPath /tmp/new-hooks -l"), Decision.Kind.DENY);
+        expect("git config into a file, -l after the value", shell("git config --file .agent/proof.cfg proof.value changed -l"), Decision.Kind.DENY);
+        expect("git config into the approval record, -l after the value", shell("git config --file .git/sdlc/mandate-approvals.json proof.value changed -l"), Decision.Kind.DENY);
+        expect("git config identity, --list after the value", shell("git config user.name somebody --list"), Decision.Kind.DENY);
+        expect("git config mixed case key, -l after it", shell("git config CoRe.HooKsPaTh /tmp/x -l"), Decision.Kind.DENY);
+        expect("git config program key, --unset after the value", shell("git config -- core.fsmonitor /tmp/program --unset"), Decision.Kind.DENY);
+        expect("git config program key, value --unset-all", shell("git config -- core.fsmonitor /tmp/program --unset-all"), Decision.Kind.DENY);
+        expect("git config program key, --get after the value", shell("git config core.pager ./x.sh --get"), Decision.Kind.DENY);
+        expect("git config set subcommand, -l after the value", shell("git config set core.hooksPath /tmp/x -l"), Decision.Kind.DENY);
+        // reads with no action: one key, in any scope or file
+        expect("git config read of a global key ok", shell("git config --global user.name"), Decision.Kind.ALLOW);
+        expect("git config read of a key in a file ok", shell("git config --file .git/config core.autocrlf"), Decision.Kind.ALLOW);
+        expect("git config global write", shell("git config --global user.name somebody"), Decision.Kind.DENY);
+        expect("git config subcommand get --all ok", shell("git config get --all remote.origin.url"), Decision.Kind.ALLOW);
+        expect("git config list of a file without includes ok", shell("git config --file .git/config --no-includes --list"), Decision.Kind.ALLOW);
+        expect("git config read with a value pattern ok", shell("git config --get core.pager -l"), Decision.Kind.ALLOW);
+        // git read from another repository's folders
+        expect("GIT_COMMON_DIR", shell("GIT_COMMON_DIR=/tmp/other.git git config proof.value changed"), Decision.Kind.DENY);
+        expect("GIT_INDEX_FILE", shell("GIT_INDEX_FILE=/tmp/other.index git status"), Decision.Kind.DENY);
+        // the files of the index written under a folder of the command's choosing: the approval record in the git folder
+        expect("git checkout-index with a prefix", shell("git checkout-index -f --prefix=.git/sdlc/ -- mandate-approvals.json"), Decision.Kind.DENY);
+        expect("git checkout-index with a shortened prefix", shell("git checkout-index --pre=out/ -a"), Decision.Kind.DENY);
+        expect("git checkout-index to temporary files", shell("git checkout-index --temp -- a.txt"), Decision.Kind.DENY);
         expect("GIT_SSH_COMMAND", shell("GIT_SSH_COMMAND=./x.sh git fetch"), Decision.Kind.DENY);
         expect("GIT_EDITOR=true ok", shell("GIT_EDITOR=true git rebase --continue"), Decision.Kind.ALLOW);
         expect("GIT_PAGER=cat ok", shell("GIT_PAGER=cat git log -1"), Decision.Kind.ALLOW);
@@ -401,6 +457,17 @@ final class JavaGuardTests {
         expect("git push --force-with-lea", shell("git push --force-with-lea origin feature/PROJ-1-x"), Decision.Kind.DENY);
         expect("git push --tag", shell("git push --tag origin feature/PROJ-1-x"), Decision.Kind.DENY);
         expect("write .git/config", shell("echo '[core] hooksPath=/dev/null' >> .git/config"), Decision.Kind.DENY);
+        expect("git config: remove a whole section", shell("git config --remove-section core"), Decision.Kind.DENY);
+        expect("git config: rename a whole section", shell("git config rename-section core gone"), Decision.Kind.DENY);
+        expect("git config: the editor", shell("git config -e"), Decision.Kind.DENY);
+        expect("git config: the editor, as a subcommand", shell("git config edit"), Decision.Kind.DENY);
+        expect("git config: reading stays allowed", shell("git config --get core.autocrlf"), Decision.Kind.ALLOW);
+        expect("git config: a shortened --remove-section", shell("git config --remove-sect core"), Decision.Kind.DENY);
+        expect("git config: a shortened --rename-section", shell("git config --rename-sect core gone"), Decision.Kind.DENY);
+        expect("git config: a shortened --edit", shell("git config --edi"), Decision.Kind.DENY);
+        expect("git config: -e among other short options", shell("git config -ze"), Decision.Kind.DENY);
+        expect("git config: a shortened --global", shell("git config --glob some.key value"), Decision.Kind.DENY);
+        expect("git config: setting an ordinary key stays allowed", shell("git config --replace-all core.autocrlf false"), Decision.Kind.ALLOW);
         expect("gh api -XPUT", shell("gh api -XPUT repos/o/r/x"), Decision.Kind.DENY);
         expect("gh api --field=", shell("gh api repos/o/r/issues --field=title=x"), Decision.Kind.DENY);
         expect("gh api -fkey=", shell("gh api repos/o/r/issues -ftitle=x"), Decision.Kind.DENY);

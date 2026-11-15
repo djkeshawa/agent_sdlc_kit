@@ -120,7 +120,8 @@ public final class Hooks {
     /** Writes the answer to a PreToolUse event for the host and returns the exit code. */
     public static int emit(Decision d, HookFormat format) {
         if (d.kind() == Decision.Kind.ALLOW) return 0;
-        String reason = (d.denied() ? "Refused by project guardrail: " : "Needs human approval: ") + d.reason();
+        // a reason may quote the command or the path it is about: nothing of that may steer the terminal it is shown on
+        String reason = sdlc.util.SafeOut.clean((d.denied() ? "Refused by project guardrail: " : "Needs human approval: ") + d.reason());
         System.out.println(Json.write(format.permission(d.denied() ? "deny" : "ask", reason)));
         if (d.denied()) {
             System.err.println(reason);

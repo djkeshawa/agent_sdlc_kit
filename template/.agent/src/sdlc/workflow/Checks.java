@@ -79,7 +79,15 @@ public final class Checks {
     // ---------------- tests ----------------
 
     public static boolean containsDisabled(String text) {
-        for (String re : Ctx.cfg.list("tests.disabledPatterns")) if (Pattern.compile(re).matcher(text).find()) return true;
+        for (String re : Ctx.cfg.list("tests.disabledPatterns")) {
+            try {
+                if (Pattern.compile(re).matcher(text).find()) return true;
+            } catch (StackOverflowError e) {
+                // a repository's own pattern that recurses once per repetition, on text made to drive it deep: the
+                // pattern could not be applied, and text written to break the check is not let through as clean
+                return true;
+            }
+        }
         return false;
     }
 
@@ -87,7 +95,9 @@ public final class Checks {
         List<String> hits = new ArrayList<>();
         for (Map.Entry<String, List<String>> e : added.entrySet()) {
             if (!Glob.any(Ctx.cfg.list("paths.test"), e.getKey())) continue;
-            for (String line : e.getValue()) if (containsDisabled(line)) hits.add(e.getKey() + ": " + line.trim());
+            // a line longer than the switch lint reads is not read here either (check-pr and check say how many were not read):
+            // the configured patterns are a repository's own, and their cost on a very long line is not known
+            for (String line : e.getValue()) if (line.length() <= sdlc.check.Integrity.LONGEST && containsDisabled(line)) hits.add(e.getKey() + ": " + line.trim());
         }
         return hits;
     }
@@ -152,7 +162,15 @@ public final class Checks {
                 return new Result(passes, fails, warns);
             }
             if (trusted == null) {
-                warns.add(shown + " has no .agent/sdlc.yml, so this pull request's own rules were used (a first installation; a tech lead reviews it)");
+                // No rules on the base branch: the only rules at hand are the pull request's own, which prove nothing.
+                // Only the pipeline can say that this is the pull request that installs the kit.
+                if (!Trusted.flag(Trusted.FIRST_INSTALLATION)) {
+                    fails.add(shown + " has no .agent/sdlc.yml, so there are no rules to judge this pull request by. For the pull request that installs the kit, "
+                            + "the pipeline sets " + Trusted.FIRST_INSTALLATION + "=true (the pipeline, not the pull request)");
+                    return new Result(passes, fails, warns);
+                }
+                warns.add(shown + " has no .agent/sdlc.yml and the pipeline says this is the first installation (" + Trusted.FIRST_INSTALLATION
+                        + "): this pull request's own rules were used (a tech lead reviews it)");
             } else {
                 Ctx.cfg = trusted;
                 passes.add("The rules are read from " + shown + ", not from this pull request");
@@ -173,8 +191,28 @@ public final class Checks {
         List<String> everyChange = Git.changed(base + "...HEAD");
         check(!testsMissing(files), "Main code changes come with test changes", passes, fails);
         Map<String, List<String>> added = Git.addedLines(Git.patch(base + "...HEAD"));
-        List<String> disabled = disabledTests(added);
-        check(disabled.isEmpty(), "No test was disabled or focused" + (disabled.isEmpty() ? "" : ": " + disabled), passes, fails);
+        // configured patterns that are also built-in switches are judged below by the line lint, where a comment or a string is
+        // known as one; the others (a repository's own marks, comment directives) are judged by the added line
+        Set<String> disabled = new LinkedHashSet<>();
+        for (String hit : disabledTests(added)) if (containsDisabled(sdlc.check.Integrity.withoutBuiltInSwitches(hit.substring(hit.indexOf(": ") + 2)))) disabled.add(hit);
+        // every test file, of every language, is linted by the lines the change adds, alone and two or three together
+        // (it, a line break, .skip; @, a line break, Disabled); which tests are skipped is for a run to say, and check-pr runs none.
+        // What the lint is sure of fails; what it cannot know to be a switch, or to be unconditional, is a warning
+        for (String f : files) {
+            if (!sdlc.check.Integrity.testFile(f, Ctx.cfg.list("paths.test"))) continue;
+            sdlc.check.Integrity.Lint lint = sdlc.check.Integrity.lint(added.getOrDefault(f, List.of()));
+            for (String hit : lint.sure()) disabled.add(f + ": " + hit);
+            if (!lint.notes().isEmpty()) {
+                warns.add(f + ": may switch a test off under a condition or in a test's body, or is no switch at all (a text check; sdlc check shows whether a test"
+                        + " stopped running): " + lint.notes());
+            }
+            int unread = sdlc.check.Integrity.unlinted(added.getOrDefault(f, List.of()));
+            if (unread > 0) {
+                warns.add(f + ": " + unread + " added line(s) longer than " + sdlc.check.Integrity.LONGEST + " characters were not read for switches (sdlc check runs the file)");
+            }
+        }
+        check(disabled.isEmpty(), "No switch that turns a test off or focuses one was found on the added test lines (a text check; a test run is the proof)"
+                + (disabled.isEmpty() ? "" : ": " + disabled), passes, fails);
         List<String> secrets = secrets(added);
         check(secrets.isEmpty(), "No secrets added" + (secrets.isEmpty() ? "" : ": " + secrets), passes, fails);
         // .sdlc/ is one machine's working state. In a pull request build it is the pull request's to write, so it is not read.
@@ -189,9 +227,20 @@ public final class Checks {
         List<String> broken = sdlc.core.Locks.broken(Ctx.root);
         if (!sdlc.core.Locks.locked(Ctx.root).isEmpty() || !broken.isEmpty()) check(broken.isEmpty(), "Locked acceptance tests unchanged" + (broken.isEmpty() ? "" : ": " + broken), passes, fails);
         List<String> loosened = sdlc.core.Locks.loosened(Ctx.root, Contracts.mergeBase(base));
-        if (!loosened.isEmpty()) {
-            if (lockOnly(everyChange, Contracts.mergeBase(base))) warns.add("acceptance test locks of the base branch changed in a lock-only pull request: " + loosened + " (QE leads review it, CODEOWNERS)");
-            else fails.add("Locked acceptance tests keep the lock they have on " + shown + ": " + loosened
+        // Taking a lock away is never the reviewed exception: with the lock gone the test may be deleted or emptied in the
+        // same pull request. Only the pipeline can name stories whose locks may go (a retired feature).
+        Set<String> removable = Trusted.list(Trusted.LOCKS_REMOVABLE);
+        List<String> removed = loosened.stream().filter(l -> l.endsWith(": lock removed") && !removable.contains(storyOf(l))).toList();
+        List<String> released = loosened.stream().filter(l -> l.endsWith(": lock removed") && removable.contains(storyOf(l))).toList();
+        List<String> rehashed = loosened.stream().filter(l -> !l.endsWith(": lock removed")).toList();
+        if (!removed.isEmpty()) {
+            fails.add("A lock on " + shown + " is not removed by a pull request: " + removed + " (a locked test may be locked again with new content in QE's own pull request; "
+                    + "to retire one, the pipeline names its story in " + Trusted.LOCKS_REMOVABLE + ")");
+        }
+        if (!released.isEmpty()) warns.add("acceptance test locks removed, as the pipeline allows (" + Trusted.LOCKS_REMOVABLE + "): " + released + " (QE leads review it, CODEOWNERS)");
+        if (!rehashed.isEmpty()) {
+            if (lockOnly(everyChange, Contracts.mergeBase(base))) warns.add("acceptance tests of the base branch are locked again with new content in a lock-only pull request: " + rehashed + " (QE leads review it, CODEOWNERS)");
+            else fails.add("Locked acceptance tests keep the lock they have on " + shown + ": " + rehashed
                     + " (QE changes a lock in its own pull request that holds only the lock files and their tests)");
         }
         // a lock the base branch gained or changed after this branch left it: the branch's own lock files do not know it
@@ -240,6 +289,12 @@ public final class Checks {
             }
         }
         return new Result(passes, fails, warns);
+    }
+
+    /** The story of a line of Locks.loosened: "path (STORY): lock removed" -> STORY. */
+    private static String storyOf(String loosened) {
+        int close = loosened.lastIndexOf("): "), open = loosened.lastIndexOf(" (", close);
+        return open < 0 || close < 0 ? "" : loosened.substring(open + 2, close);
     }
 
     /**

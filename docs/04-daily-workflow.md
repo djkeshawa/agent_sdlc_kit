@@ -125,8 +125,8 @@ them and records `VERDICT: PASS` with one `- TS-03 PASS - ...` line per scenario
 **The PR gate.** `sdlc status` shows what is missing; `gh pr create` is refused until every
 task has at least `loops.review.min` rounds ending in APPROVE at the current HEAD, QA passed at
 HEAD (if required), nothing is uncommitted, the build is verified for these exact files, and the
-PR policy passes (branch name, commit subjects, tests with main changes, no disabled tests, no
-secrets, every scenario linked to an existing test, no changed code outside the tasks' paths).
+PR policy passes (branch name, commit subjects, tests with main changes, no usual switch that
+turns a test off on the added test lines (a text check; `sdlc check` runs the tests), no secrets, every scenario linked to an existing test, no changed code outside the tasks' paths).
 
 ```
 PR gate: READY

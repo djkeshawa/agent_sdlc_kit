@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mandate, version 0",
+  "description": "What one change is authorised to do. See mandate-v0.md. A schema cannot check everything the tool checks: duplicate keys, that id equals the file name, and that each mustStayTrue test is a key of oracle.locked are checked by 'sdlc mandate check' only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mandate", "id", "intent", "scope", "oracle"],
+  "properties": {
+    "mandate": { "const": "v0" },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "intent": { "$ref": "#/$defs/sentence" },
+    "mustStayTrue": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["is", "test"],
+        "properties": {
+          "is": { "$ref": "#/$defs/sentence" },
+          "test": { "$ref": "#/$defs/file" }
+        }
+      }
+    },
+    "failsIf": { "$ref": "#/$defs/sentence" },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["paths"],
+      "properties": {
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/path" }
+        },
+        "apis": {
+          "description": "Reserved. Accepted and reported as not checked in version 0.",
+          "type": "object"
+        }
+      }
+    },
+    "oracle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scenarios"],
+      "properties": {
+        "scenarios": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "description": "A test file (every case in it) or file#name (one case).",
+            "allOf": [
+              { "$ref": "#/$defs/path" },
+              { "type": "string", "pattern": "^[^#]+(#[^#]+)?$" }
+            ]
+          }
+        },
+        "locked": {
+          "description": "A test file's path to the git blob id it must have (git hash-object <file>).",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/file" },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+          }
+        }
+      }
+    },
+    "feature": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "minLength": 1, "description": "Groups the mandates of one feature." }
+      }
+    }
+  },
+  "$defs": {
+    "sentence": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+    },
+    "path": {
+      "description": "Relative to the repository root: no leading '/', no drive letter, no '..' folder, no backslash.",
+      "type": "string",
+      "minLength": 1,
+      "not": {
+        "anyOf": [
+          { "pattern": "^/" },
+          { "pattern": "^[A-Za-z]:" },
+          { "pattern": "\\\\" },
+          { "pattern": "(^|/)\\.\\.(/|$)" },
+          { "pattern": "[\\u0000-\\u001f]" }
+        ]
+      }
+    },
+    "file": {
+      "allOf": [
+        { "$ref": "#/$defs/path" },
+        { "type": "string", "not": { "pattern": "/$" } }
+      ]
+    }
+  }
+}
