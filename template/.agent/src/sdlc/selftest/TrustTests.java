@@ -336,6 +336,24 @@ final class TrustTests {
                 outside.contains("web/disabled.test.ts: it.skip('x', () => {});") && outside.contains("web/__tests__/cases.ts: describe.only('y', () => {});")
                         && !outside.contains("web/helpers.ts"));
 
+        // audit round 6, findings 2 to 5 and 7, through check-pr: only what the lint proves from the text as written, standing on its
+        // own, fails; a quoted override, a condition on the line before a joined declaration and a caught assumption are warnings
+        git(repo, "switch", "-q", "-c", "feature/PROJ-23-round6", "origin/main");
+        write(repo, "src/test/java/round6.test.ts", "test('x', { skip: true, 'skip': false }, fn);\nif (isCI) {\n  describe.skip(\n    'database', () => {});\n}\n");
+        write(repo, "src/test/java/Round6Test.java", "class Round6Test {\n    @Test @Disabled void off() {}\n    @DisabledIf(\"false\") @Test void on() {}\n"
+                + "    @Test void caught() { assertThrows(TestAbortedException.class, () -> assumeTrue(false)); }\n}\n");
+        write(repo, "src/main/java/A.java", "class A { int k; }\n");
+        commit(repo, "feat(PROJ-23): the round 6 shapes");
+        Ctx.init(repo);
+        Checks.Result round6 = Checks.prPolicy(null, false);
+        String failed6 = round6.fails().stream().filter(f -> f.contains("No switch that turns a test off or focuses one was found")).findFirst().orElse("");
+        check("trust: check-pr fails on @Test @Disabled, and only on it",
+                failed6.contains("Round6Test.java: @Test @Disabled void off() {}") && !failed6.contains("round6.test.ts") && !failed6.contains("caught") && !failed6.contains("DisabledIf"));
+        check("trust: and warns on the quoted override, the declaration under a condition on the line before and the caught assumption; @DisabledIf(\"false\") is not said",
+                round6.warns().stream().anyMatch(w -> w.contains("round6.test.ts: may switch a test off") && w.contains("test('x', { skip: true, 'skip': false }, fn);")
+                        && w.contains("if (isCI) { describe.skip( 'database', () => {});"))
+                && round6.warns().stream().anyMatch(w -> w.contains("Round6Test.java: may switch a test off") && w.contains("assumeTrue(false)") && !w.contains("DisabledIf")));
+
         // a branch with no commit in common with the base: every diff would be empty or fail
         git(repo, "switch", "-q", "--orphan", "feature/PROJ-13-orphan");
         write(repo, "src/main/java/A.java", "class A { int o; }\n");
