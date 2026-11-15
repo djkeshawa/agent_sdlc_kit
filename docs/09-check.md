@@ -434,7 +434,7 @@ Claude Code, in `.claude/settings.json`:
   failure: whether it is a switch, or whether a condition holds it, needs more than the added
   lines hold, and the run of the file says whether a test stopped running.
 - No word, prefix or part of a line makes a switch sure by itself. A form is sure only when the
-  lint has read all of what it claims:
+  lint has read all of what it claims, **in the text as written** (see the two readings below):
   - **the argument list is complete** where the form depends on it: its closing bracket is on the
     line, or on the two or three lines read together (a title needs only its own argument to end);
   - **a literal is the whole argument**: `true`, `false`, `True`, `False` or `"true"` with nothing
@@ -452,17 +452,31 @@ Claude Code, in `.claude/settings.json`:
   - **a decorator or an annotation is the whole expression**: after it comes the end of the line,
     a comment, another annotation or decorator, or the declaration (`@(pytest.mark.skip if IS_CI
     else identity)` is a note; so is `"@Disabled"` in a string);
-  - and, for a declaration, an option, an assumption or `pytestmark`, **no condition stands
-    before it on its line**, nor on the added line just before it when that line opens a block
-    under a condition (`if (ci) it.skip('x', ...)`, or `if (!db) {` and then `describe.skip(...)`,
-    is a note).
+  - **it stands on its own**: an annotation after nothing on its statement but complete
+    annotations and modifiers (`@Test @Disabled`, `public @Disabled`, `@Tag("a") @Disabled`); a
+    decorator at the start of its line, after decorators only; a declaration, an option, an
+    assumption, `pytestmark` or a pending test at the start of its statement (the line's start,
+    or after `;`, `{`, `}` or the end of a comment), not an argument, a value or a lambda's body
+    (`f(it.skip('x', ...))`, `x = @Disabled`, `() -> assumeTrue(false)`, `assertThrows(...,
+    () -> assumeTrue(false))` are notes); `pytest.param(..., marks=...)` at the start of its line,
+    or after `[`, a comma or a `(` that opens no call (an element of a list or a tuple); an
+    assumption also ends its statement (`;`, `}`, a comment or the line's end after its closing
+    parenthesis);
+  - and, for a declaration, an option, an assumption, `pytestmark` or `pytest.param`, **no
+    condition stands before it on its line**, nor on the added line just before the line or lines
+    it is read from, when that line opens a block or a statement under a condition or ends where
+    an expression goes on (`?`, `&&`, `||`, `=`, `=>`, `->`): `if (ci) it.skip('x', ...)`, or
+    `if (!db) {` and then `describe.skip(...)` on one, two or three lines, is a note. Annotations
+    and decorators take no condition: Java has no conditional annotation, and a Python function
+    defined under an `if` is skipped wherever it is defined.
 - Sure, a problem ("test switched off", "test focused"; `check-pr` fails), on the lines added to
   any test file, each as just described:
-  - `@Disabled`, `@Ignore` (also qualified, `@org.junit.jupiter.api.Disabled`), TestNG's
-    `@Test(enabled = false)`, `@DisabledIf("true")`, `@EnabledIf("false")` (also as `value =` or
-    `expression =`);
-  - `@pytest.mark.skip` (bare or called, also in parentheses, as `pytestmark = ...` or `marks=...`,
-    alone or in a list); `skipif` with a plain `True` among its conditions or with none, also bare
+  - `@Disabled`, `@Ignore` (also qualified, `@org.junit.jupiter.api.Disabled`, and after other
+    annotations or modifiers, `@Test @Disabled void off()`, `public @Disabled void off()`),
+    TestNG's `@Test(enabled = false)`, `@DisabledIf("true")`, `@EnabledIf("false")` (also as
+    `value =` or `expression =`);
+  - `@pytest.mark.skip` (bare or called, also in parentheses, as `pytestmark = ...` or as the
+    `marks=` of `pytest.param`, alone or in a list); `skipif` with a plain `True` among its conditions or with none, also bare
     (`@pytest.mark.skipif`); pytest's rule is followed: when `condition=` is given it is the only
     condition and the positional ones are not read, otherwise every positional condition is, and
     any that holds skips (so `skipif(False, True, ...)` is sure and `skipif(True, condition=False)`
@@ -491,13 +505,24 @@ Claude Code, in `.claude/settings.json`:
     `const each = isWindows ? test.skip.each : test.each`);
   - a condition that is computed: `skipif(sys.platform == "win32", ...)`, `skipIf(IS_WINDOWS,
     ...)`, `xfail(run=RUN_SLOW)`, `@Test(enabled = RUN)`, `@DisabledIf("isWindows")`,
-    `it.skipIf(isWindows)`; an option whose value is computed or that a spread after it may change;
+    `it.skipIf(isWindows)`; an option whose value is computed or that a spread or a quoted key
+    after it may change (`{ skip: true, ...opts }`, `{ skip: true, 'skip': false }`);
   - a mark or an annotation that is not the whole expression: inside a larger decorator or value
     (`@(pytest.mark.skip if IS_CI else identity)`), kept in a variable or passed to a call
     (`skip_slow = pytest.mark.skip(...)`, `item.add_marker(pytest.mark.skip(...))`), or in a string;
+  - a sure form that does not stand on its own: an argument, a value or a lambda's body
+    (`f(it.skip('x', ...))`, `x = @Disabled`, `Runnable later = () -> assumeTrue(false)`,
+    `assertThrows(TestAbortedException.class, () -> assumeTrue(false))`), or after a word or a
+    quote on its statement (`see @Disabled`, `"it.skip('a', ...)"` in a string);
   - a sure form after a condition on its line (`if (x) assumeTrue(false)`, `cond && it.skip('x',
-    ...)`), or on the line after an added line that opens a block under a condition (`if (!db) {`,
-    then `describe.skip('db', ...)`; `except ImportError:`, then `pytestmark = pytest.mark.skip`);
+    ...)`; the text as written decides, so a condition's word in a string or a comment before it
+    counts too: `describe('when signed in', () => { it.skip('x', ...) })` on one line is a note), or
+    on the line after an added line that holds it (`if (!db) {`, then `describe.skip('db', ...)`,
+    on one line or over two or three; `except ImportError:`, then `pytestmark =
+    pytest.mark.skip`; `Runnable later = () ->`, then `assumeTrue(false);`);
+  - a form that only the code reading shows, or that the text as written does not prove: a
+    comment between a switch's words (`@/* why */Disabled`, `it` and `/* why */ .skip(...)` on the
+    next line), or inside what the lint reads (`@Test(enabled = false /* || RUN */)`);
   - `Assumptions.abort` (also `Assumptions.<Void>abort` and the line that imports it statically)
     and `abort(` called alone, which may be any method named `abort`;
   - a call or a list whose arguments do not say what it is in any of its readings (it opens on
@@ -509,8 +534,10 @@ Claude Code, in `.claude/settings.json`:
   then `=== browserName, ...);` is a note. No line is reported from a part of a call.
 - Not reported at all: the same forms with the literal that runs: `skipif(False, ...)` (every
   condition `False`), `skipUnless(True, ...)`, `xfail(...)` that runs, `@Test(enabled = true)`,
-  `@DisabledIf("false")`, `it.skipIf(false)`, Playwright's `test.skip(false, ...)` (also over
-  lines), `{ skip: false }`, a `skip: true` inside another property; JUnit's other conditional
+  `@DisabledIf("false")`, `@EnabledIf("true")`, `it.skipIf(false)`, Playwright's
+  `test.skip(false, ...)` (also over lines), `{ skip: false }`, `{ skip: true, skip: false }`, a
+  `skip: true` inside another property; an annotation's name right after a name (an address,
+  `ci@Disabled.example`); JUnit's other conditional
   annotations (`@DisabledOnOs`, `@EnabledOnJre`, `@DisabledIfEnvironmentVariable`); an
   assumption whose condition is computed (`assumeTrue(ready())`); a method declared with the name
   `abort` (`abort(): void {}`, also over lines) or another object's `abort` (`controller .
@@ -526,11 +553,19 @@ Claude Code, in `.claude/settings.json`:
   insides of strings emptied), and as it is written (unless the whole line is a comment: it starts
   with `//`, or with a `#` that no name follows). Two or three added lines are read the same two
   ways together: their code read across the line breaks, and the lines as written joined by a
-  space. One line cannot tell its quotes for certain, so what a line shows as written is never
-  hidden: a switch's words inside a string, a text block, a trailing comment or a block comment's
-  line are judged too, at the same two levels, and `check-pr` shows the line. A longer added line
-  is not read: Integrity says how many lines of the file were not (a note), `check-pr` warns. The
-  lint's work grows with the lines it is given and no faster, whatever they hold.
+  space. **The text as written decides what is sure**: the code reading lost text (an emptied
+  `'skip'` may be an override, a dropped comment may sit between a switch's words), so it never
+  makes a form sure. It adds what only it shows, as a note at most (a comment between a switch's
+  words), and where both readings judge the same form, the text as written says what it is
+  (`@DisabledIf("false")` is nothing, though its code is `@DisabledIf("")`). One line cannot tell
+  its quotes for certain, so what a line shows as written is never hidden: a switch's words
+  inside a string, a text block, a trailing comment or a block comment's line are read too, by the
+  same rules, and `check-pr` shows the line. They are sure where, as written, the whole form stands
+  on its own (`String s = "x"; @Disabled class X {}`, or `@Disabled` on its own line of a text
+  block), and a note otherwise (`"@Disabled"`, `"it.skip('a', ...)"`, `x(); // it.skip('a', ...)`,
+  ` * @Disabled until PAY-12` in a doc comment). A longer added line is not read: Integrity says
+  how many lines of the file were not (a note), `check-pr` warns. The lint's work grows with the
+  lines it is given and no faster, whatever they hold.
 - Not seen by the lint, as examples: a switch reached through another name (`const later =
   it.skip`, then `later('x', ...)`; a custom annotation that carries `@Disabled`; `@skip` imported
   from `unittest`); a switch of which the change wrote only a part (`.skip(` under an `it` that was
@@ -542,6 +577,10 @@ Claude Code, in `.claude/settings.json`:
   that is already switched off; an empty test. For a file a runner owns (Maven Surefire, Vitest),
   `sdlc check` reports how many tests that ran before the change do not run now, whatever the
   source says; for a file no runner owns, and in `check-pr`, which runs no test, nothing does.
+- `check-pr` lints the same test files as `sdlc check`: those named or placed like test files
+  (`*.test.ts`, `__tests__/`, `tests/`, `FooTest.java`, ...) and those under `paths.test`. The
+  repository's own patterns (`tests.disabledPatterns`) are read on the files under `paths.test`
+  only, since they are the repository's patterns for its own test paths.
 - A condition further from a switch than its own line and the added line before it is not seen:
   a declaration inside an `if` block that opened two lines up, or on a line the change did not
   add, is reported as sure. The lint reads lines; the run of the file says whether a test stopped
@@ -559,15 +598,19 @@ Claude Code, in `.claude/settings.json`:
   JUnit test annotation (`@Test`, `@ParameterizedTest`, ...). That code is read as one text, so an
   example inside a comment, a template string or a string in three quotes (a Java text block, a
   Python docstring) that runs over several lines is text, not code; one in three quotes that does
-  not close runs to the file's end. A
-  note when only a comment or a string in it mentions one, or it is not a source file (a fixture
-  that holds sample source); otherwise a note (a fixture or a helper). A test file deleted and added elsewhere with exactly the same lines is
-  a note; so is a JVM test class moved to another package (only its package line differs). One
-  whose import lines differ too is a note, "moved and its imports changed": an import can change
-  what a name in it means, and the run of the moved file is its judge. One edited otherwise on the
-  way is a problem.
+  not close runs to the file's end. A line of code longer than 2,000 characters is not read for a
+  test call: when no line that was read declares one, it is a note that says a line was not read.
+  A note when only a comment or a string in it mentions one, or it is not a source file (a fixture
+  that holds sample source); otherwise a note (a fixture or a helper). A test file deleted and
+  added elsewhere with exactly the same lines is a note; so is a JVM test class moved to another
+  package (only its package line differs). One whose import lines differ too is a note, "moved
+  and its imports changed": an import can change what a name in it means, and the run of the
+  moved file is its judge. A line longer than 2,000 characters is never taken for a package or an
+  import line: the two files match only when such lines are the same as written. One edited
+  otherwise on the way is a problem. Each of these readings walks a line once, whatever it holds.
 - "Fewer assertions" is a note and a plain count: the calls that look like assertions on the
-  lines an edit of a Java or script test file removes, against those on the lines it adds.
+  lines an edit of a Java or script test file removes, against those on the lines it adds, each
+  line read in pieces of 2,000 characters.
 - Test files are never read whole, so their size does not matter. Only build and configuration
   files are read whole (a pom, `package.json`, a coverage configuration); one larger than 2 MB
   is not read, and is a problem ("too large to scan").
