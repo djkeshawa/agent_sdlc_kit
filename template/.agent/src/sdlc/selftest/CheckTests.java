@@ -911,6 +911,31 @@ final class CheckTests {
         Files.delete(repo.resolve("attic/CalcTest.java"));
         write(repo, "tests/jvm/a/CalcTest.java", CALC);
         write(repo, "tests/a/move.test.t", MOVE);
+        // moved to where no runner runs it, where its run as it was does not say which passes were at the first try: not counted, could not be judged
+        write(repo, "tests/jvm/u/UntoldTest.java", "package u;\n\nkept: pass\nretries not said\n");
+        write(repo, "tests/jvm/u/AgainTest.java", "package u;\n\nkept: pass\nagain: pass-retried\n");
+        git(repo, "add", "tests/jvm/u");
+        git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "two to move away");
+        Files.delete(repo.resolve("tests/jvm/u/UntoldTest.java"));
+        write(repo, "attic/UntoldTest.java", "package u;\n\nkept: pass\nretries not said\n");
+        String untold = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("moves: a file moved to where no runner runs it, whose run as it was does not say its retries, could not be judged, with why, exit 0",
+                code == 0 && untold.contains("  1 could not be judged\n      tests/jvm/u/UntoldTest.java  [self test]\n        the file was moved to attic/UntoldTest.java, where no runner of "
+                        + "the check runs it. Run as it was before the change, the stand-in runner does not say whether a test passed only when it ran it again: so it is not known "
+                        + "whether a test of the file passed at the first try or only when it was run again, and whether tests that ran before the change do not run now is not known\n")
+                && !lostSaid(untold));
+        Files.delete(repo.resolve("attic/UntoldTest.java"));
+        write(repo, "tests/jvm/u/UntoldTest.java", "package u;\n\nkept: pass\nretries not said\n");
+        // and a case that passed only when the build ran it again is not counted as a test that ran
+        Files.delete(repo.resolve("tests/jvm/u/AgainTest.java"));
+        write(repo, "attic/AgainTest.java", "package u;\n\nkept: pass\nagain: pass-retried\n");
+        String again = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("moves: of a file moved to where no runner runs it, only the passes at the first try are counted, exit 1",
+                code == 1 && again.contains(L1 + "      tests/jvm/u/AgainTest.java  [self test]\n        the file passed 1 of its tests before the change and was moved to "
+                        + "attic/AgainTest.java, where no runner of the check runs it: at least 1 test that ran before the change does not run now\n"));
+        Files.delete(repo.resolve("attic/AgainTest.java"));
+        git(repo, "reset", "-q", "HEAD~1"); // the two are gone from the base again
+        for (String f : new String[] {"UntoldTest.java", "AgainTest.java"}) Files.deleteIfExists(repo.resolve("tests/jvm/u/" + f));
 
         // moved, and the code changed so that a test of it that failed before passes now: sensitive
         write(repo, "prod.txt", "v1\nfixed\nmended\n");
