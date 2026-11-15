@@ -300,6 +300,27 @@ final class TrustTests {
                 && honest.warns().stream().anyMatch(w -> w.contains("ready.spec.ts: may switch a test off") && w.contains("this.skip();") && w.contains("test.fixme(isMobile, ISSUE_REASON);")
                         && !w.contains("false,")));
 
+        // audit round 5: only what the lint proves whole fails; a title cut by the line, an option a spread may change, a computed
+        // annotation element, a .each kept for later and a mark inside a decorator expression are warnings
+        git(repo, "switch", "-q", "-c", "feature/PROJ-21-gate", "origin/main");
+        write(repo, "src/test/java/gate.spec.ts", "test.skip('webkit'\n  === browserName, 'webkit only');\ntest('x', { skip: true, ...options }, fn);\n"
+                + "const testEachIf = isWindows ? test.skip.each : test.each;\n");
+        write(repo, "src/test/java/GateTest.java", "class GateTest {\n  @Test(enabled = false || RUN_TESTS)\n  void a() {}\n}\n");
+        write(repo, "src/test/java/test_gate.py", "@(pytest.mark.skip if IS_CI else identity)\ndef test_a():\n    pass\n\n@pytest.mark.skipif(False, True, reason='off')\ndef test_b():\n    pass\n");
+        write(repo, "src/main/java/A.java", "class A { int i; }\n");
+        commit(repo, "feat(PROJ-21): conditional switches and one that is not");
+        Ctx.init(repo);
+        Checks.Result gate = Checks.prPolicy(null, false);
+        String failed = gate.fails().stream().filter(f -> f.contains("No switch that turns a test off or focuses one was found")).findFirst().orElse("");
+        check("trust: check-pr fails on a True among skipif's conditions, and only on it",
+                failed.contains("test_gate.py: @pytest.mark.skipif(False, True, reason='off')") && !failed.contains("gate.spec.ts") && !failed.contains("GateTest.java")
+                        && !failed.contains("if IS_CI"));
+        check("trust: and warns, with their lines, on what the lint cannot prove whole",
+                gate.warns().stream().anyMatch(w -> w.contains("gate.spec.ts: may switch a test off") && w.contains("test.skip('webkit' === browserName, 'webkit only');")
+                        && w.contains("test('x', { skip: true, ...options }, fn);") && w.contains("const testEachIf = isWindows ? test.skip.each : test.each;"))
+                && gate.warns().stream().anyMatch(w -> w.contains("GateTest.java: may switch a test off") && w.contains("@Test(enabled = false || RUN_TESTS)"))
+                && gate.warns().stream().anyMatch(w -> w.contains("test_gate.py: may switch a test off") && w.contains("@(pytest.mark.skip if IS_CI else identity)")));
+
         // a branch with no commit in common with the base: every diff would be empty or fail
         git(repo, "switch", "-q", "--orphan", "feature/PROJ-13-orphan");
         write(repo, "src/main/java/A.java", "class A { int o; }\n");

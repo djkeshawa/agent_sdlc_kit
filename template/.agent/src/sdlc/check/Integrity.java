@@ -101,7 +101,10 @@ public final class Integrity {
     // never holds). Anything else in which it sees a switch's words is a note, never a failure: whether a skip from inside a
     // test runs under a condition, whether a computed first argument is a condition or a title, whether abort( is the one
     // that skips, needs more than the added lines hold, and the run of the file says what happened. A call is never judged
-    // from a part of it: one whose arguments a line leaves open is judged with the lines after it.
+    // from a part of it: one whose arguments a line leaves open is judged with the lines after it. No pattern says sure by
+    // itself: every sure form goes through the readers of one gate (see judged and the table in lint): a complete argument
+    // list, a literal that is the whole argument, a title that is a string for certain, an option that is a top-level
+    // property, a call that registers a test, a decorator or an annotation that is the whole expression.
     //
     // Its work is bounded and linear in what it is given. An added line longer than LONGEST is not read at all (the report says
     // how many were not). A line is read two ways (see reading), and so is a run of two or three added lines, joined (see
@@ -120,27 +123,30 @@ public final class Integrity {
     /** it.skip, test.only, describe.todo, test.fixme; also it.concurrent.skip, it?.skip. Group 1 is the modifier. */
     private static final Pattern SCRIPT_SWITCH = Pattern.compile(
             "(?=[itdcs])\\b(?:it|test|describe|context|suite|specify)(?:" + DOT + "\\w+){0,8}?" + DOT + "(skip|todo|only|fixme)\\b");
-    /** Vitest's conditions with a plain literal that always skips: it.skipIf(true), describe.runIf(false). */
-    private static final Pattern LITERAL_IF = Pattern.compile(
-            "(?=[itdcs])\\b(?:it|test|describe|context|suite)(?:" + DOT + "\\w+){0,8}?" + DOT + "(?:skipIf\\s*\\(\\s*true|runIf\\s*\\(\\s*false)\\s*\\)");
+    /** Vitest's conditions: it.skipIf(...), describe.runIf(...), to their opening parenthesis. Group 1: skipIf or runIf. */
+    private static final Pattern CONDITIONAL_CALL = Pattern.compile(
+            "(?=[itdcs])\\b(?:it|test|describe|context|suite)(?:" + DOT + "\\w+){0,8}?" + DOT + "(skipIf|runIf)\\s*\\(");
     /**
-     * xit, xtest, xdescribe, xcontext, xspecify, fdescribe, called or with .each; fit with a
-     * title (fit('x', ...)), as fit(data) may be any function. Not another object's (model.fit(x))
-     * nor a declaration (def fit(...)).
+     * xit, xtest, xdescribe, xcontext, xspecify, fdescribe and fit, as names of their own: not
+     * another object's (model.fit(x)) nor a declaration (def fit(...)). What follows decides (see
+     * aliases).
      */
     private static final Pattern ALIAS = Pattern.compile("(?=[xf])(?<![\\w$.])(?<!def )(?<!function )(?<!fun )"
-            + "(?:(?:x(?:it|test|describe|context|specify)|fdescribe)(?=\\s*(?:\\(|\\.\\s*each\\b))|fit(?=\\s*(?:\\(\\s*['\"`]|\\.\\s*each\\b)))");
+            + "(?:x(?:it|test|describe|context|specify)|fdescribe|fit)(?![\\w$])");
     private static final String TYPE_ARGUMENTS = "(?:<[^()<>]{0,200}>\\s*)?";
-    /** @Disabled and @Ignore, also qualified; @DisabledIf("true") and @EnabledIf("false"), whose condition is a plain literal; TestNG's @Test(enabled = false). */
-    private static final Pattern ANNOTATION = Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*){0,12}(?:(?:Disabled|Ignore)\\b|Test\\s*\\([^()]{0,300}?\\benabled\\s*=\\s*false\\b"
-            + "|DisabledIf\\s*\\(\\s*(?:(?:value|expression)\\s*=\\s*)?\"\\s*true\\s*\"|EnabledIf\\s*\\(\\s*(?:(?:value|expression)\\s*=\\s*)?\"\\s*false\\s*\")");
+    /** @Disabled, @Ignore, @Test, @DisabledIf and @EnabledIf, also qualified, each as the whole name. Group 1: the name. */
+    private static final Pattern ANNOTATION = Pattern.compile("@\\s*(?:[\\w$]+\\s*\\.\\s*){0,12}(Disabled|Ignore|Test|DisabledIf|EnabledIf)(?![\\w$])");
+    /** An element of an annotation's arguments by its name (enabled = false). Group 1: the name. */
+    private static final Pattern ELEMENT = Pattern.compile("([\\w$]+)\\s*=(?!=)");
+    /** A string literal that is the whole value of a condition: "true", "false", with white space inside. Group 1: the word. */
+    private static final Pattern STRING_LITERAL = Pattern.compile("\"\\s*(true|false)\\s*\"");
     /** Assumptions.abort (also Assumptions.<Void>abort), and the line that imports it statically. */
     private static final Pattern ABORTS = Pattern.compile("(?=A)\\bAssumptions\\s*\\.\\s*" + TYPE_ARGUMENTS + "abort\\b");
-    /** A pytest mark where it applies to tests: a decorator, pytestmark = ..., marks=... Group 1: skip, skipif or xfail. */
-    private static final Pattern PYTEST_MARK = Pattern.compile(
-            "(?=[@pm])(?:@\\s*(?:\\(\\s*)?|\\b(?:pytestmark|marks)\\s*=\\s*(?:\\[[^\\]=]{0,200}?)?)pytest\\s*\\.\\s*mark\\s*\\.\\s*(skip|skipif|xfail)\\b");
-    /** unittest's decorators. Group 1: skip, skipIf or skipUnless. */
-    private static final Pattern UNITTEST_SKIP = Pattern.compile("@\\s*(?:\\(\\s*)?unittest\\s*\\.\\s*(skip|skipIf|skipUnless)\\b");
+    /** A mark of pytest (group 1: skip, skipif or xfail) or of unittest (group 2: skip, skipIf or skipUnless), as the whole name. */
+    private static final Pattern PY_MARK = Pattern.compile(
+            "(?=[pu])\\b(?:pytest\\s*\\.\\s*mark\\s*\\.\\s*(skip|skipif|xfail)|unittest\\s*\\.\\s*(skip|skipIf|skipUnless))(?![\\w$])");
+    /** Where a mark applies to tests: a decorator's @, pytestmark = and marks= (of pytest.param). */
+    private static final Pattern PY_CONTEXT = Pattern.compile("(?=[@pm])(?:@|\\b(?:pytestmark|marks)\\s*=(?!=))");
     /**
      * A skip from inside a test, as a statement of its own: pytest.skip(...), self.skipTest(...),
      * raise unittest.SkipTest(...), Mocha's this.skip() (no argument), Go's t.Skip, t.Skipf, t.SkipNow,
@@ -152,13 +158,17 @@ public final class Integrity {
     private static final Pattern CONDITION = Pattern.compile("(?=[iuewcf?&|])(?:\\b(?:if|unless|elif|else|when|except|catch|case|while|for)\\b|\\?(?![.?])|&&|\\|\\|)");
     /** A test declared without a body, on one line of its own (its code: strings emptied): it('pending'); Mocha and Vitest report it as pending. */
     private static final Pattern PENDING = Pattern.compile("^(?:it|test|specify)\\s*\\(\\s*(?:''|\"\"|``)\\s*\\)\\s*;?$");
-    /** A test declaration, for its option object (Vitest: test('x', { skip: true }, fn)). */
-    private static final Pattern DECLARATION = Pattern.compile("(?=[itdsc])\\b(?:it|test|describe|suite|context|specify)(?:" + DOT + "\\w+){0,3}?\\s*\\(");
-    private static final Pattern OPTION = Pattern.compile("(?=[sot])\\b(?:skip|only|todo)\\s*:\\s*true\\b");
+    /** A test declaration, for its option object (Vitest: test('x', { skip: true }, fn)); not another object's (regex.test(x)). */
+    private static final Pattern DECLARATION = Pattern.compile("(?=[itdsc])(?<![\\w$.])(?<!\\.\\s)\\b(?:it|test|describe|suite|context|specify)(?:" + DOT + "\\w+){0,3}?\\s*\\(");
+    /** A reading that may hold an option that switches (skip:, only:, todo:): only such a reading is read for option objects. */
+    private static final Pattern OPTION_KEY = Pattern.compile("(?=[sot])\\b(?:skip|only|todo)['\"]?\\s*:");
+    private static final List<String> OPTIONS = List.of("skip", "only", "todo");
+    /** A property of an object by its name, plain or quoted (skip: ..., 'skip': ...). Group 1, 2 or 3: the name. */
+    private static final Pattern PROPERTY = Pattern.compile("(?:([\\w$]+)|'([\\w$]*)'|\"([\\w$]*)\")\\s*:(?!:)");
     private static final Pattern ABORT = Pattern.compile("(?=a)\\babort\\s*" + TYPE_ARGUMENTS + "\\(");
     private static final Pattern ASSUME = Pattern.compile("(?=a)\\bassume(True|False)\\s*\\(");
-    /** A keyword argument of a Python call (reason="x"), not a comparison. */
-    private static final Pattern KEYWORD = Pattern.compile("[A-Za-z_]\\w*\\s*=(?!=)");
+    /** A keyword argument of a Python call (reason="x"), not a comparison. Group 1: its name. */
+    private static final Pattern KEYWORD = Pattern.compile("([A-Za-z_]\\w*)\\s*=(?!=)");
     /** Words after which abort( is still called alone: return abort(...), else abort(...). */
     private static final Set<String> CALLED_AFTER = Set.of("return", "await", "else", "yield", "do");
     /**
@@ -413,24 +423,55 @@ public final class Integrity {
      * What it finds is said at one of two levels, each as the line, or the lines joined:
      *
      * Sure (a problem): what switches a test off or focuses one wherever it stands, its whole
-     * meaning in what was read. @Disabled, @Ignore, TestNG's @Test(enabled = false),
-     * @DisabledIf("true"), @EnabledIf("false"); pytest's skip mark where it applies to tests,
-     * skipif with a plain True for its condition (by place or by keyword) or with none, xfail
-     * that does not run; unittest's skip, skipIf(True), skipUnless(False); a declaration with its
-     * title (it.skip('x', ...), describe.only('x', ...), test.todo('x'), xit(...), fit('x', ...),
-     * it.skip.each, test('x', { skip: true }, ...), a test declared without a body on one line),
-     * Vitest's it.skipIf(true) and runIf(false); assumeTrue with a plain false, or assumeFalse
-     * with a plain true, as an argument of its own, with no condition before it on its reading.
+     * meaning proven from what was read. No pattern says sure by itself: each sure form is proven
+     * by the readers of the gate (see judged), and a form they cannot prove is a note:
+     *
+     *   form                                              proven by
+     *   @Disabled, @Ignore (also qualified, with          annotation: arguments complete; the whole
+     *     arguments)                                        annotation (javaEnds, no quote before @)
+     *   @Test(enabled = false)                            annotation + element: a whole false
+     *   @DisabledIf("true"), @EnabledIf("false"), also    annotation + annotationCondition: a whole
+     *     value = / expression =                            string literal
+     *   @pytest.mark.skip, @unittest.skip (bare or        decorator: the whole decorator (also in
+     *     called)                                           parentheses), arguments complete
+     *   pytestmark = / marks= pytest.mark.skip, alone     markValue: the whole value or list element,
+     *     or in a list                                      the list complete
+     *   pytest skipif: a whole True among its             decorator/markValue + markLevel: every
+     *     conditions, or none (bare too)                    condition read, pytest's rule for condition=
+     *   pytest xfail(run=False), no condition or a True   markLevel: run a whole False
+     *   unittest skipIf(True), skipUnless(False)          markLevel: a whole literal, by place or keyword
+     *   it.skip('x', ...), describe.only, test.todo,      registering + title: the call, its first
+     *     test.fixme, specify.skip, it.concurrent.skip      argument ended and a title; held: no
+     *                                                       condition before it
+     *   it.skip.each(table)('x', ...), also `table`       registering: the table complete, then the
+     *                                                       call with a title
+     *   xit, xtest, xdescribe, xcontext, xspecify,        aliases + registering + title, as above
+     *     fdescribe, fit ('x', ...), also .each
+     *   it.skipIf(true)('x'), describe.runIf(false)('x')  conditionalCall: arguments complete, a whole
+     *                                                       literal; then registering + title
+     *   test('x', { skip: true }, fn), only:, todo:       options + optionObject: a top-level
+     *                                                       property, a whole true, nothing after it
+     *                                                       that may change it, the whole argument
+     *   it('x'); a test without a body                    PENDING: the whole line is the declaration
+     *   assumeTrue(false), assumeFalse(true)              assumption: an argument that is a whole
+     *                                                       literal and ended; held: no condition
+     *                                                       before it
      *
      * A note: everything else where it sees a switch's words, and where it would need more than
      * the added lines hold to know that it is a switch, or that no condition holds it. A skip
      * from inside a test (pytest.skip, self.skipTest, raise SkipTest, this.skip(), t.Skip,
      * Jasmine's pending('x'), Playwright's test.skip() and test.skip(true, ...)), which a
-     * condition on another line may hold; Playwright's test.skip and test.fixme with a computed
-     * first argument (a condition, or a computed title: test.skip(isMobile, REASON),
-     * it.skip(name, ...)); a switch kept or chosen (const later = it.skip, cond ? describe :
-     * describe.skip); Assumptions.abort and abort( called alone; an assumption that never holds
-     * after a condition on its reading; a call whose arguments end in none of its readings.
+     * condition on another line may hold; a modifier with a computed first argument (a
+     * Playwright condition, test.skip(isMobile, REASON), or a computed title, it.skip(name, ...),
+     * xit(name, ...)); a modifier that is referred to, not called (const later = it.skip, cond ?
+     * test.skip.each : test.each); a condition that is computed (skipif(sys.platform == ...),
+     * @Test(enabled = RUN), @DisabledIf("isWindows"), it.skipIf(isWindows)); an option whose value
+     * is computed or that a spread after it may change; a mark or an annotation inside a larger
+     * expression (@(pytest.mark.skip if IS_CI else identity), skip_slow = pytest.mark.skip(...),
+     * "@Disabled" in a string); a sure form after a condition on its reading (if (x) it.skip('x',
+     * ...)); Assumptions.abort and abort( called alone; a call whose arguments end in none of its
+     * readings. Nothing: the same forms with the literal that runs (skipif(False),
+     * test.skip(false, ...), @Test(enabled = true), a skip option inside another property).
      *
      * A call is judged where its arguments are: one whose arguments a line leaves open before
      * they say what it is (test.skip(, a line break, false,) is judged with the next line, then
@@ -549,143 +590,580 @@ public final class Integrity {
         CharSequence s = new Counted(text);
         if (single && code && PENDING.matcher(s).lookingAt()) return SURE;
         if (keys == 0) return NONE;
-        if ((keys & ANNOTATED) != 0 && ANNOTATION.matcher(s).find() || (keys & ALIASED) != 0 && ALIAS.matcher(s).find()) return SURE;
-        Budget budget = new Budget(s.length());
+        Read r = new Read(s);
         int level = NONE;
-        if ((keys & MODIFIER) != 0) level = options(s, budget) ? SURE : scriptSwitch(s, budget);
-        if (level < SURE && (keys & (SKIP | XFAIL)) != 0) level = Math.max(level, pythonSwitch(s, budget));
-        if (level < SURE && (keys & ASSUMED) != 0) level = Math.max(level, assumption(s, budget));
+        if ((keys & ANNOTATED) != 0) level = annotations(r);
+        if (level < SURE && (keys & ALIASED) != 0) level = Math.max(level, aliases(r));
+        if (level < SURE && (keys & MODIFIER) != 0) level = Math.max(level, options(r));
+        if (level < SURE && (keys & MODIFIER) != 0) level = Math.max(level, scriptSwitch(r));
+        if (level < SURE && (keys & (SKIP | XFAIL)) != 0) level = Math.max(level, python(r));
+        if (level < SURE && (keys & ASSUMED) != 0) level = Math.max(level, assumption(r));
         // the rest are notes: a skip from inside a test, abort
         if (level == NONE && code && (keys & SKIP) != 0 && BODY_SKIP.matcher(s).find()) level = NOTE;
-        if (level == NONE && (keys & ABORTED) != 0) level = ABORTS.matcher(s).find() ? NOTE : aborted(bareAborts(s, budget, true));
+        if (level == NONE && (keys & ABORTED) != 0) level = ABORTS.matcher(s).find() ? NOTE : aborted(bareAborts(s, r.budget, true));
         return level;
     }
 
+    // ---------------- the gate: what proves a switch sure ----------------
+    //
+    // No pattern says "sure" by itself. A pattern finds where a switch's words stand; the readers below then prove, from the
+    // reading alone, the whole meaning those words claim, or the find is a note (or nothing, where the reading shows that it
+    // switches nothing). The readers, each bounded (see Budget):
+    //   arguments    a bracketed list, read to its closing bracket, strings skipped; an argument counts where it ends, before
+    //                a comma of the list or at its closing bracket. A form that needs the whole list is OPEN until it closes.
+    //   whole        a literal (true, false, True, False, "true") that is the whole argument, nothing else in it
+    //   title        a whole argument that is a string for certain (see title)
+    //   optionObject the top-level properties of an object that is a whole argument of a test declaration
+    //   registering  the call that registers a test after a modifier: (title, ...), or .each(table)(title, ...)
+    //   ends         what follows a decorator or an annotation: the end of its expression
+    //   held         a condition (if, else, ?, &&, ||, ...) before the find on its reading
+
+    /** One reading being judged: its text, the budget of its calls, and where its first condition stands (see held). */
+    private static final class Read {
+        final CharSequence s;
+        final Budget budget;
+        private int condition = -2;
+
+        Read(CharSequence s) {
+            this.s = s;
+            budget = new Budget(s.length());
+        }
+
+        /** True when a condition (if, else, a ternary, &&, ||, ...) stands before at on the reading: what follows it may not run. */
+        boolean held(int at) {
+            if (condition == -2) {
+                Matcher c = CONDITION.matcher(s);
+                condition = c.find() ? c.start() : -1;
+            }
+            return condition >= 0 && condition < at;
+        }
+    }
+
+    private static int blanks(CharSequence s, int i) {
+        while (i < s.length() && blank(s.charAt(i))) i++;
+        return i;
+    }
+
+    private static int wordEnd(CharSequence s, int i) {
+        while (i < s.length() && Character.isJavaIdentifierPart(s.charAt(i))) i++;
+        return i;
+    }
+
+    /** True when the word that starts at i is this one, and ends there. */
+    private static boolean wordAt(CharSequence s, int i, String word) {
+        int end = wordEnd(s, i);
+        return end - i == word.length() && s.subSequence(i, end).toString().equals(word);
+    }
+
+    /** SURE when the argument is the literal that switches, NONE when it is the literal that does not, else (computed) NOTE. */
+    private static int whole(String argument, String switches, String runs) {
+        return argument.equals(switches) ? SURE : argument.equals(runs) ? NONE : NOTE;
+    }
+
     /**
-     * it.skip, test.only and their kin. Sure: a title for the first argument (a string, alone or
-     * joined to more with +: a declaration, it.skip('x', ...), Playwright's test.skip('x', ...)
-     * too), another member after the modifier (it.skip.each), and Vitest's it.skipIf(true) and
-     * runIf(false). A skip or a fixme whose first argument is a plain false or a number switches
-     * nothing (Playwright's test.skip(false, ...)). Anything else is a note: no call (const later =
-     * it.skip, cond ? describe : describe.skip); no argument or a plain true (Playwright's skip
-     * from inside a test, test.skip(), test.skip(true, 'reason'), which a condition around it may
-     * hold); a computed first argument (Playwright's condition, test.skip(isMobile, REASON), or a
-     * computed title, it.skip(name, ...)). OPEN when the reading ends before its first argument
-     * does.
+     * it.skip, test.only and their kin (test.describe.skip, it.concurrent.skip, it?.skip), and
+     * Vitest's it.skipIf(...) and runIf(...): judged by the call that registers a test after them
+     * (see registered, conditionalCall).
      */
-    private static int scriptSwitch(CharSequence s, Budget budget) {
-        if (LITERAL_IF.matcher(s).find()) return SURE;
+    private static int scriptSwitch(Read r) {
         int level = NONE;
-        Matcher m = SCRIPT_SWITCH.matcher(s);
-        while (level < SURE && m.find()) {
-            int at = m.end();
-            while (at < s.length() && blank(s.charAt(at))) at++;
-            if (at >= s.length()) level = Math.max(level, OPEN);
-            else if (s.charAt(at) == '.') return SURE;
-            else if (s.charAt(at) != '(') level = Math.max(level, NOTE);
-            else level = Math.max(level, called(m.group(1), arguments(s, at, budget)));
+        for (Matcher m = CONDITIONAL_CALL.matcher(r.s); level < SURE && m.find();) level = Math.max(level, conditionalCall(r, m));
+        for (Matcher m = SCRIPT_SWITCH.matcher(r.s); level < SURE && m.find();) {
+            String modifier = m.group(1);
+            level = Math.max(level, registered(r, m.start(), m.end(), modifier.equals("skip") || modifier.equals("fixme"), true, true));
         }
         return level;
     }
 
-    /** it.skip(...) and its kin, judged by their arguments (see scriptSwitch). */
-    private static int called(String modifier, Arguments a) {
-        List<String> args = a.list();
-        String first = args.isEmpty() ? "" : args.get(0);
-        if (title(first)) return SURE;
-        if (args.size() < 2 && !a.closed()) return OPEN; // its first argument may go on
-        boolean skips = modifier.equals("skip") || modifier.equals("fixme");
-        if (skips && (first.equals("false") || NUMBER.matcher(first).matches())) return NONE;
-        return NOTE;
+    /**
+     * Vitest's it.skipIf(condition) and runIf(condition), whose parenthesis ends m: sure when the
+     * condition is the whole literal that skips (true for skipIf, false for runIf) and a test is
+     * registered with it (see registered); nothing when it is the literal that runs; a note when
+     * it is computed; OPEN while its parentheses do not close.
+     */
+    private static int conditionalCall(Read r, Matcher m) {
+        Arguments a = arguments(r.s, m.end() - 1, r.budget);
+        if (!a.closed()) return OPEN;
+        boolean skipIf = m.group(1).equals("skipIf");
+        int level = whole(a.list().size() == 1 ? a.list().get(0) : "", skipIf ? "true" : "false", skipIf ? "false" : "true");
+        return level == SURE ? registered(r, m.start(), a.end(), false, true, true) : level;
     }
 
-    /** A title: a string (quoted or a template) that begins the argument, alone or joined to more with +. */
+    /**
+     * xit, xtest, xdescribe, xcontext, xspecify, fdescribe, fit: judged as a modifier is (see
+     * registered); one that is not called is nothing (an import names it). fit is called by other
+     * functions too (fit(data)): only a call of it with a title says anything.
+     */
+    private static int aliases(Read r) {
+        int level = NONE;
+        for (Matcher m = ALIAS.matcher(r.s); level < SURE && m.find();) {
+            boolean fit = m.group().equals("fit");
+            level = Math.max(level, registered(r, m.start(), m.end(), false, false, !fit));
+        }
+        return level;
+    }
+
+    /**
+     * A modifier whose words run from start to after, judged by the call that registers a test
+     * after it (see registering). Sure: called with a title for its first argument (see title),
+     * directly or after .each, and no condition before it on its reading (see Read.held). OPEN
+     * while the reading ends before the first argument does. A skip or a fixme called directly with
+     * a plain false or a number is nothing (Playwright's test.skip(false, ...)). Anything else is a
+     * note (a first argument that is computed: a Playwright condition or a computed title; a
+     * modifier that is referred to, not called), or nothing where referenced or computed says so.
+     */
+    private static int registered(Read r, int start, int after, boolean skips, boolean referenced, boolean computed) {
+        Call call = registering(r, after);
+        if (call.args() == null) return call.level() == NOTE && !referenced ? NONE : call.level();
+        Arguments a = call.args();
+        if (a.list().isEmpty()) return !a.closed() ? OPEN : computed ? NOTE : NONE; // test.skip(): a skip from inside a test
+        if (a.ended() == 0) return OPEN; // its first argument may go on
+        String first = a.list().get(0);
+        if (title(first)) return r.held(start) ? NOTE : SURE;
+        if (skips && !call.each() && (first.equals("false") || NUMBER.matcher(first).matches())) return NONE;
+        return computed ? NOTE : NONE;
+    }
+
+    /** The call that registers a test after a modifier: its arguments, or (args null) OPEN or NOTE; each when it follows .each(...). */
+    private record Call(int level, Arguments args, boolean each) {}
+
+    /**
+     * The call after a modifier whose words end at after: ( directly, or after members (.each with
+     * its table, a call or a tagged template, and then the call). OPEN when the reading ends first;
+     * NOTE when no call follows (the modifier is referred to: const later = it.skip, cond ?
+     * test.skip.each : test.each).
+     */
+    private static Call registering(Read r, int after) {
+        CharSequence s = r.s;
+        int n = s.length(), i = blanks(s, after);
+        for (int hops = 0; hops <= 8; hops++) {
+            if (i >= n) return new Call(OPEN, null, false);
+            if (s.charAt(i) == '(') return new Call(NONE, arguments(s, i, r.budget), false);
+            if (s.charAt(i) != '.') return new Call(NOTE, null, false);
+            i = blanks(s, i + 1);
+            int w = wordEnd(s, i);
+            if (w == i) return new Call(i >= n ? OPEN : NOTE, null, false);
+            boolean each = w - i == 4 && s.subSequence(i, w).toString().equals("each");
+            i = blanks(s, w);
+            if (!each) continue;
+            if (i >= n) return new Call(OPEN, null, true);
+            int table;
+            if (s.charAt(i) == '(') {
+                Arguments rows = arguments(s, i, r.budget);
+                if (!rows.closed()) return new Call(OPEN, null, true);
+                table = rows.end();
+            } else if (s.charAt(i) == '`') {
+                int end = closingQuote(s, i, Math.min(n, i + SCAN), r.budget);
+                if (end < 0) return new Call(OPEN, null, true);
+                table = end + 1;
+            } else {
+                return new Call(NOTE, null, true);
+            }
+            i = blanks(s, table);
+            if (i >= n) return new Call(OPEN, null, true);
+            return s.charAt(i) == '(' ? new Call(NONE, arguments(s, i, r.budget), true) : new Call(NOTE, null, true);
+        }
+        return new Call(NOTE, null, false);
+    }
+
+    /**
+     * A title: a whole argument whose value is a string for certain. It begins with a string
+     * literal (a template too, whose ${...} close before it does), and is that literal alone or
+     * followed by + and more operands, each a string literal, a name or a member, called or
+     * indexed or not, a number, or a group in parentheses, and no other operator. + binds tighter
+     * than any comparison, logical operator or ternary, and with a string on its left it makes a
+     * string, so the whole is a string (it.skip('adds ' + n, ...)): a test's title, never
+     * Playwright's condition. Anything else (test.skip('a' + b === c, ...), 'x' || y, a spread, a
+     * string that does not end in the argument) is not a title.
+     */
     private static boolean title(String arg) {
-        if (arg.isEmpty() || "'\"`".indexOf(arg.charAt(0)) < 0) return false;
-        char quote = arg.charAt(0);
-        work += arg.length();
-        for (int i = 1; i < arg.length(); i++) {
+        int n = arg.length();
+        work += n;
+        int i = 0;
+        for (boolean first = true;; first = false) {
+            if (i >= n) return false;
             char c = arg.charAt(i);
+            if (c == '\'' || c == '"' || c == '`') i = stringEnd(arg, i);
+            else if (first) return false;
+            else if (c == '(') i = groupEnd(arg, i);
+            else if (Character.isJavaIdentifierStart(c) || Character.isDigit(c)) i = chainEnd(arg, i);
+            else return false;
+            if (i < 0) return false;
+            i = blanks(arg, i);
+            if (i >= n) return true;
+            if (arg.charAt(i) != '+' || i + 1 < n && (arg.charAt(i + 1) == '+' || arg.charAt(i + 1) == '=')) return false;
+            i = blanks(arg, i + 1);
+        }
+    }
+
+    /** The index after the string that starts at i (a template's ${...} must close before the template does), or -1. */
+    private static int stringEnd(String t, int i) {
+        char quote = t.charAt(i);
+        int depth = 0; // braces open in a template's ${...}
+        for (int k = i + 1; k < t.length(); k++) {
+            char c = t.charAt(k);
             if (c == '\\') {
-                i++;
+                k++;
+            } else if (quote == '`' && c == '$' && k + 1 < t.length() && t.charAt(k + 1) == '{') {
+                depth++;
+                k++;
+            } else if (depth > 0 && c == '{') {
+                depth++;
+            } else if (depth > 0 && c == '}') {
+                depth--;
             } else if (c == quote) {
-                String rest = arg.substring(i + 1).strip();
-                return rest.isEmpty() || rest.charAt(0) == '+';
+                return depth == 0 ? k + 1 : -1; // a backtick inside ${...}: a template in a template, not read
             }
         }
-        return false;
+        return -1;
+    }
+
+    /** The index after the bracket that closes the one at i, strings skipped, or -1. */
+    private static int groupEnd(String t, int i) {
+        int depth = 0;
+        for (int k = i; k < t.length(); k++) {
+            char c = t.charAt(k);
+            if (c == '\'' || c == '"' || c == '`') {
+                int end = stringEnd(t, k);
+                if (end < 0) return -1;
+                k = end - 1;
+            } else if (c == '(' || c == '[' || c == '{') {
+                depth++;
+            } else if ((c == ')' || c == ']' || c == '}') && --depth == 0) {
+                return k + 1;
+            }
+        }
+        return -1;
+    }
+
+    /** The index after a name or a member chain at i (a.b?.c), with the calls and indexes on it, or -1. */
+    private static int chainEnd(String t, int i) {
+        while (i < t.length()) {
+            char c = t.charAt(i);
+            if (Character.isJavaIdentifierPart(c) || c == '.') {
+                i++;
+            } else if (c == '?' && i + 1 < t.length() && t.charAt(i + 1) == '.') {
+                i += 2;
+            } else if (c == '(' || c == '[') {
+                i = groupEnd(t, i);
+                if (i < 0) return -1;
+            } else {
+                break;
+            }
+        }
+        return i;
     }
 
     /**
-     * pytest's marks where they apply to tests (a decorator, pytestmark = ..., marks=...) and
-     * unittest's decorators. Sure: pytest's skip; skipif with a plain True for its condition, by
-     * place or by keyword (skipif(True, ...), skipif(reason=..., condition=True)), or with no
-     * condition at all (pytest then skips); xfail with run=False and no condition or a plain
-     * True; unittest's skip, skipIf(True, ...) and skipUnless(False, ...), also by keyword. Another
-     * condition switches nothing. OPEN while the arguments read so far do not say it.
+     * A test declaration (test('x', { skip: true }, fn), Vitest) whose option object switches (see
+     * optionObject): sure when its first argument is a title, and no condition stands before it
+     * on its reading; a note otherwise. Only a reading that holds skip:, only: or todo: is read.
      */
-    private static int pythonSwitch(CharSequence s, Budget budget) {
+    private static int options(Read r) {
+        if (!OPTION_KEY.matcher(r.s).find()) return NONE;
         int level = NONE;
-        for (Matcher m = PYTEST_MARK.matcher(s); level < SURE && m.find();) {
-            level = m.group(1).equals("skip") ? SURE : Math.max(level, marked(m.group(1), s, m.end(), budget));
-        }
-        for (Matcher u = UNITTEST_SKIP.matcher(s); level < SURE && u.find();) {
-            level = u.group(1).equals("skip") ? SURE : Math.max(level, marked(u.group(1), s, u.end(), budget));
+        for (Matcher m = DECLARATION.matcher(r.s); level < SURE && m.find();) {
+            Arguments a = arguments(r.s, m.end() - 1, r.budget);
+            int found = NONE;
+            for (int k = 1; k < a.list().size() && found < SURE; k++) {
+                if (a.list().get(k).startsWith("{")) found = Math.max(found, optionObject(r, a.starts().get(k)));
+            }
+            if (found == SURE && (!title(a.list().get(0)) || r.held(m.start()))) found = NOTE;
+            level = Math.max(level, found);
         }
         return level;
     }
 
-    /** skipif, xfail (pytest), skipIf, skipUnless (unittest), whose name ends at at: judged by their condition (see pythonSwitch). */
-    private static int marked(String mark, CharSequence s, int at, Budget budget) {
-        while (at < s.length() && blank(s.charAt(at))) at++;
-        boolean pytest = mark.equals("skipif") || mark.equals("xfail");
-        if (at >= s.length()) return OPEN;
-        if (s.charAt(at) != '(') return mark.equals("skipif") ? SURE : NONE; // pytest's mark applied bare skips, with no condition
-        Arguments a = arguments(s, at, budget);
-        List<String> args = a.list();
-        int ended = a.closed() ? args.size() : args.size() - 1; // an argument counts where it ends
-        String condition = null;
-        boolean runs = true;
-        for (int k = 0; k < ended; k++) {
-            String arg = args.get(k).replace(" ", "");
-            if (arg.startsWith("condition=")) condition = arg.substring("condition=".length());
-            else if (arg.equals("run=False")) runs = false;
-            else if (k == 0 && !KEYWORD.matcher(args.get(k)).lookingAt()) condition = arg;
+    /**
+     * The object at at, an argument of a test declaration. Sure when one of its top-level
+     * properties says skip, only or todo with a whole true, nothing after it in the object can
+     * change that (a spread, a property it cannot read: a computed key, a method, a getter; a later
+     * one of the same name is read for its value), and the object is the whole argument (a comma
+     * or the declaration's closing parenthesis follows it). A note when such a property's value is
+     * computed or may be changed, or the object stands in more than the argument. Nothing when no
+     * top-level property says so (a skip: true inside another property is metadata). OPEN while
+     * the reading ends inside the object or before its argument ends.
+     */
+    private static int optionObject(Read r, int at) {
+        Arguments props = arguments(r.s, at, r.budget);
+        if (!props.closed()) return OPEN;
+        int[] said = new int[OPTIONS.size()]; // for each option: 0 not said, 1 a whole true, 2 a whole false, 3 computed or may be changed
+        for (String p : props.list()) {
+            if (p.isEmpty()) continue;
+            Matcher key = PROPERTY.matcher(p);
+            if (p.startsWith("...")) {
+                for (int k = 0; k < said.length; k++) if (said[k] != 0) said[k] = 3;
+            } else if (key.lookingAt()) {
+                String name = key.group(1) != null ? key.group(1) : key.group(2) != null ? key.group(2) : key.group(3);
+                int k = OPTIONS.indexOf(name);
+                String value = p.substring(key.end()).strip();
+                if (k >= 0) said[k] = value.equals("true") ? 1 : value.equals("false") ? 2 : 3;
+            } else if (p.matches("[\\w$]+")) {
+                int k = OPTIONS.indexOf(p); // shorthand: { skip }
+                if (k >= 0) said[k] = 3;
+            } else {
+                for (int k = 0; k < said.length; k++) if (said[k] == 1) said[k] = 3;
+            }
         }
-        if (condition != null && !condition.equals(mark.equals("skipUnless") ? "False" : "True")) return NONE;
-        if (mark.equals("xfail")) return !a.closed() && (runs || condition == null) ? OPEN : runs ? NONE : SURE; // a condition= may still come
-        if (condition != null) return SURE;
-        return !a.closed() ? OPEN : pytest ? SURE : NONE; // no condition: pytest skips; unittest's call is an error
-    }
-
-    /** A test declaration whose option object, an argument after its title, says skip, only or todo: true (Vitest). */
-    private static boolean options(CharSequence s, Budget budget) {
-        if (!OPTION.matcher(s).find()) return false;
-        Matcher m = DECLARATION.matcher(s);
-        while (m.find()) {
-            List<String> args = arguments(s, m.end() - 1, budget).list();
-            for (int k = 1; k < args.size(); k++) if (args.get(k).startsWith("{") && OPTION.matcher(args.get(k)).find()) return true;
-        }
-        return false;
-    }
-
-    /** The arguments of a call, each stripped; whether its closing parenthesis was reached; the index after it, or after where the reading stopped. */
-    private record Arguments(List<String> list, boolean closed, int end) {}
-
-    /** The arguments of the call whose ( follows at (after white space), or null when none follows. */
-    private static Arguments argumentsAfter(CharSequence s, int at, Budget budget) {
-        while (at < s.length() && blank(s.charAt(at))) at++;
-        return at < s.length() && s.charAt(at) == '(' ? arguments(s, at, budget) : null;
+        int level = NONE;
+        for (int v : said) level = Math.max(level, v == 1 ? SURE : v == 3 ? NOTE : NONE);
+        if (level == NONE) return NONE;
+        int next = blanks(r.s, props.end());
+        if (next >= r.s.length()) return OPEN;
+        return r.s.charAt(next) == ',' || r.s.charAt(next) == ')' ? level : NOTE;
     }
 
     /**
-     * The arguments of the call whose parenthesis is at open, told apart by their parentheses,
-     * brackets and braces, and strings, read at most SCAN characters far, and while the budget
-     * lasts: a call whose end is further has its last argument cut there. No argument is an
-     * empty list.
+     * Java's annotations: @Disabled and @Ignore (sure); TestNG's @Test(enabled = false);
+     * @DisabledIf("true") and @EnabledIf("false"), by place or as value = or expression = (sure
+     * when that element is the whole literal that switches, nothing when it is the other, a note
+     * when it is computed or a method's name). Each sure only with its arguments complete and as
+     * the whole annotation: nothing but white space and a name before its @ (not a quote), and
+     * after it the end of the reading, another annotation, a declaration or a comment.
+     */
+    private static int annotations(Read r) {
+        int level = NONE;
+        for (Matcher m = ANNOTATION.matcher(r.s); level < SURE && m.find();) level = Math.max(level, annotation(r, m));
+        return level;
+    }
+
+    private static int annotation(Read r, Matcher m) {
+        CharSequence s = r.s;
+        int i = blanks(s, m.end()), end = m.end();
+        Arguments a = null;
+        if (i < s.length() && s.charAt(i) == '(') {
+            a = arguments(s, i, r.budget);
+            if (!a.closed()) return OPEN;
+            end = a.end();
+        }
+        int level = switch (m.group(1)) {
+            case "Disabled", "Ignore" -> SURE;
+            case "Test" -> a == null ? NONE : element(a, "enabled", "false", "true");
+            default -> a == null ? NONE : annotationCondition(a, m.group(1).equals("DisabledIf"));
+        };
+        if (level != SURE) return level;
+        int before = m.start() - 1;
+        while (before >= 0 && blank(s.charAt(before))) before--;
+        boolean alone = before < 0 || "'\"`".indexOf(s.charAt(before)) < 0 && !word(s.charAt(before));
+        return alone && javaEnds(s, end) ? SURE : NOTE;
+    }
+
+    /** The element of this name among an annotation's arguments, judged by its value (see whole); NONE when there is none. */
+    private static int element(Arguments a, String name, String switches, String runs) {
+        for (String arg : a.list()) {
+            Matcher e = ELEMENT.matcher(arg);
+            if (e.lookingAt() && e.group(1).equals(name)) return whole(arg.substring(e.end()).strip(), switches, runs);
+        }
+        return NONE;
+    }
+
+    /** The condition of @DisabledIf / @EnabledIf: its one argument by place, or value = or expression =, a whole string literal. */
+    private static int annotationCondition(Arguments a, boolean disabledIf) {
+        String condition = null;
+        for (String arg : a.list()) {
+            Matcher e = ELEMENT.matcher(arg);
+            if (!e.lookingAt()) condition = arg;
+            else if (e.group(1).equals("value") || e.group(1).equals("expression")) condition = arg.substring(e.end()).strip();
+        }
+        if (condition == null) return NONE;
+        Matcher literal = STRING_LITERAL.matcher(condition);
+        if (!literal.matches()) return NOTE;
+        return whole(literal.group(1), disabledIf ? "true" : "false", disabledIf ? "false" : "true");
+    }
+
+    /** True when a Java annotation's expression ends at at: the reading ends, or another annotation, a declaration or a comment follows. */
+    private static boolean javaEnds(CharSequence s, int at) {
+        int i = blanks(s, at);
+        if (i >= s.length()) return true;
+        char c = s.charAt(i), next = i + 1 < s.length() ? s.charAt(i + 1) : ' ';
+        return c == '@' || Character.isJavaIdentifierStart(c) || c == '/' && (next == '/' || next == '*') || c == '*' && next == '/';
+    }
+
+    /** What follows an expression: it ends, it goes on (it is part of more), or the reading ends where it may go on. */
+    private static final int ENDS = 0, GOES_ON = 1, CUT = 2;
+    /** Where a mark stands: a decorator, the value of a statement (pytestmark = ...), an argument of a call (marks=...). */
+    private static final int DECORATOR = 0, STATEMENT = 1, ARGUMENT = 2;
+
+    /**
+     * pytest's marks and unittest's decorators where they apply to tests: a decorator (also in
+     * parentheses), pytestmark = and marks= (alone, or as an element of a list or a tuple). Sure
+     * when the mark switches (see markLevel) and is the whole decorator or the whole value or
+     * element (see decorator, markValue). A mark anywhere else (kept in a variable, passed to a
+     * call, inside a larger expression: @(pytest.mark.skip if IS_CI else identity)) is a note
+     * when it would switch, nothing when it would not.
+     */
+    private static int python(Read r) {
+        int level = NONE;
+        Set<Integer> judged = new java.util.HashSet<>(); // the marks a decorator or a value has judged, by where they start
+        for (Matcher c = PY_CONTEXT.matcher(r.s); level < SURE && c.find();) {
+            level = Math.max(level, c.group().equals("@") ? decorator(r, c.end(), judged) : markValue(r, c.end(), c.group().startsWith("marks"), judged));
+        }
+        for (Matcher m = PY_MARK.matcher(r.s); level < SURE && m.find();) {
+            if (judged.contains(m.start())) continue;
+            int alone = mark(r, m)[0];
+            level = Math.max(level, alone == SURE ? NOTE : alone);
+        }
+        return level;
+    }
+
+    /** A decorator whose @ ends at after: the level of the mark it is, as a whole (see python); NONE when it is no mark of these. */
+    private static int decorator(Read r, int after, Set<Integer> judged) {
+        CharSequence s = r.s;
+        int i = blanks(s, after), parens = 0;
+        while (i < s.length() && s.charAt(i) == '(') {
+            parens++;
+            i = blanks(s, i + 1);
+        }
+        Matcher m = PY_MARK.matcher(s).region(i, s.length());
+        if (!m.lookingAt()) return NONE;
+        judged.add(m.start());
+        int[] mark = mark(r, m);
+        if (mark[0] == OPEN || mark[0] == NONE) return mark[0];
+        int end = mark[1];
+        for (int k = 0; k < parens; k++) {
+            end = blanks(s, end);
+            if (end >= s.length()) return OPEN;
+            if (s.charAt(end) != ')') return NOTE;
+            end++;
+        }
+        int ends = pythonEnds(s, end, DECORATOR);
+        return ends == ENDS ? mark[0] : ends == CUT ? OPEN : NOTE;
+    }
+
+    /**
+     * The value of pytestmark = or (argument) marks= whose = ends at after: its marks as whole
+     * values or elements (see python).
+     */
+    private static int markValue(Read r, int after, boolean argument, Set<Integer> judged) {
+        CharSequence s = r.s;
+        int i = blanks(s, after);
+        if (i >= s.length()) return NONE;
+        int level, end;
+        if (s.charAt(i) == '[' || s.charAt(i) == '(') {
+            Arguments list = arguments(s, i, r.budget);
+            level = NONE;
+            for (int k = 0; k < list.list().size(); k++) {
+                int at = list.starts().get(k);
+                Matcher m = PY_MARK.matcher(s).region(at, s.length());
+                if (!m.lookingAt() || m.group(1) == null) continue;
+                judged.add(at);
+                int[] mark = mark(r, m);
+                boolean whole = mark[0] != OPEN && blanks(s, mark[1]) >= at + list.list().get(k).length();
+                level = Math.max(level, mark[0] == OPEN ? OPEN : whole || mark[0] == NONE ? mark[0] : NOTE);
+            }
+            if (level == NONE) return NONE;
+            if (!list.closed()) return OPEN;
+            end = list.end();
+        } else {
+            Matcher m = PY_MARK.matcher(s).region(i, s.length());
+            if (!m.lookingAt() || m.group(1) == null) return NONE;
+            judged.add(i);
+            int[] mark = mark(r, m);
+            if (mark[0] == OPEN || mark[0] == NONE) return mark[0];
+            level = mark[0];
+            end = mark[1];
+        }
+        if (level == OPEN) return OPEN;
+        int ends = pythonEnds(s, end, argument ? ARGUMENT : STATEMENT);
+        return ends == ENDS ? level : ends == CUT ? OPEN : NOTE;
+    }
+
+    /**
+     * What follows a mark where it stands (see DECORATOR), at at. A decorator and a statement end
+     * with their line: at the end of the reading or a comment; a decorator also before (lines read
+     * together) the next decorator or the declaration it decorates. A value ends at a comma, a
+     * semicolon or a closing bracket; an argument stands inside its call's parentheses, where the
+     * line may go on, so the end of the reading or a comment is CUT for it, as a backslash that
+     * ends the reading is for all. Anything else (if, or, a call on it) GOES_ON: the mark is part
+     * of more.
+     */
+    private static int pythonEnds(CharSequence s, int at, int where) {
+        int i = blanks(s, at);
+        if (i >= s.length()) return where == ARGUMENT ? CUT : ENDS;
+        char c = s.charAt(i);
+        if (c == '\\' && blanks(s, i + 1) >= s.length()) return CUT;
+        if (c == '#') return where == ARGUMENT ? CUT : ENDS;
+        if (where == DECORATOR) return c == '@' || wordAt(s, i, "def") || wordAt(s, i, "async") || wordAt(s, i, "class") ? ENDS : GOES_ON;
+        return c == ',' || c == ';' || c == ')' || c == ']' ? ENDS : GOES_ON;
+    }
+
+    /** A mark found by m (see PY_MARK), with its arguments if a call follows: {its level (see markLevel), the index after it}. */
+    private static int[] mark(Read r, Matcher m) {
+        int i = blanks(r.s, m.end());
+        Arguments a = null;
+        int end = m.end();
+        if (i < r.s.length() && r.s.charAt(i) == '(') {
+            a = arguments(r.s, i, r.budget);
+            if (!a.closed()) return new int[] {OPEN, a.end()};
+            end = a.end();
+        }
+        boolean unittest = m.group(2) != null;
+        return new int[] {markLevel(unittest ? m.group(2) : m.group(1), unittest, a), end};
+    }
+
+    /**
+     * What a mark does with its arguments (complete, or none: applied bare). pytest's skip and
+     * unittest's skip: they switch. pytest's skipif and xfail follow pytest's own reading
+     * (_pytest/skipping.py, evaluate_skip_marks and evaluate_xfail_marks, as of pytest 9): when
+     * condition= is given it is the only condition and the positional ones are not read; otherwise
+     * every positional condition is, and any that holds applies the mark; with no condition at all
+     * it applies. So sure when a condition is a whole True, or there is none; nothing when every
+     * condition is a whole False; else a note. xfail switches only with run=False, a whole False
+     * (run computed: a note; run left out or True: nothing). unittest's skipIf and skipUnless take
+     * one condition, by place or as condition=: sure with a whole True (skipIf) or False
+     * (skipUnless). Arguments of *args or **kwargs leave the conditions unread: a note.
+     */
+    private static int markLevel(String name, boolean unittest, Arguments a) {
+        if (name.equals("skip")) return SURE;
+        List<String> positional = new ArrayList<>();
+        Map<String, String> keyword = new HashMap<>();
+        for (String arg : a == null ? List.<String>of() : a.list()) {
+            if (arg.isEmpty()) continue;
+            if (arg.startsWith("*")) return NOTE;
+            Matcher k = KEYWORD.matcher(arg);
+            if (k.lookingAt()) keyword.put(k.group(1), arg.substring(k.end()).strip());
+            else positional.add(arg);
+        }
+        if (unittest) {
+            String condition = !positional.isEmpty() ? positional.get(0) : keyword.get("condition");
+            boolean skipIf = name.equals("skipIf");
+            return condition == null ? NONE : whole(condition, skipIf ? "True" : "False", skipIf ? "False" : "True");
+        }
+        List<String> conditions = keyword.containsKey("condition") ? List.of(keyword.get("condition")) : positional;
+        int level = conditions.isEmpty() ? SURE : NONE;
+        for (String condition : conditions) level = Math.max(level, whole(condition, "True", "False"));
+        if (name.equals("xfail")) {
+            String run = keyword.get("run");
+            level = Math.min(level, run == null ? NONE : whole(run, "False", "True"));
+        }
+        return level;
+    }
+
+    /**
+     * The arguments of a call, each stripped, with where each starts; whether its closing bracket
+     * was reached; the index after it, or after where the reading stopped. An argument has ended
+     * before a comma of the list, and the last one when the list closed.
+     */
+    private record Arguments(List<String> list, List<Integer> starts, boolean closed, int end) {
+        int ended() {
+            return closed ? list.size() : Math.max(0, list.size() - 1);
+        }
+    }
+
+    /**
+     * The arguments of the list whose bracket ((, [ or {) is at open, told apart by their
+     * parentheses, brackets and braces, and strings, read at most SCAN characters far, and while
+     * the budget lasts: a list whose end is further has its last argument cut there. No argument
+     * is an empty list.
      */
     private static Arguments arguments(CharSequence s, int open, Budget budget) {
+        char closer = switch (s.charAt(open)) {
+            case '[' -> ']';
+            case '{' -> '}';
+            default -> ')';
+        };
         List<String> out = new ArrayList<>();
+        List<Integer> starts = new ArrayList<>();
         int depth = 0, from = open + 1, stop = Math.min(s.length(), open + 1 + SCAN);
         for (int i = open + 1; i < stop; i++) {
             if (!budget.spend()) {
@@ -701,15 +1179,21 @@ public final class Integrity {
                 depth++;
             } else if ((c == ')' || c == ']' || c == '}') && depth > 0) {
                 depth--;
-            } else if (depth == 0 && (c == ',' || c == ')')) {
+            } else if (depth == 0 && (c == ',' || c == closer)) {
                 String arg = s.subSequence(from, i).toString().strip();
-                if (c == ',' || !arg.isEmpty() || !out.isEmpty()) out.add(arg);
+                if (c == ',' || !arg.isEmpty() || !out.isEmpty()) {
+                    out.add(arg);
+                    starts.add(blanks(s, from));
+                }
                 from = i + 1;
-                if (c == ')') return new Arguments(out, true, i + 1);
+                if (c == closer) return new Arguments(out, starts, true, i + 1);
             }
         }
-        out.add(s.subSequence(Math.min(from, stop), stop).toString().strip());
-        return new Arguments(out.size() == 1 && out.get(0).isEmpty() ? List.of() : out, false, stop);
+        String last = s.subSequence(Math.min(from, stop), stop).toString().strip();
+        if (last.isEmpty() && out.isEmpty()) return new Arguments(List.of(), List.of(), false, stop);
+        out.add(last);
+        starts.add(blanks(s, Math.min(from, stop)));
+        return new Arguments(out, starts, false, stop);
     }
 
     /** The index of the quote that closes the string starting at from, before limit and while the budget lasts, or -1. */
@@ -793,26 +1277,23 @@ public final class Integrity {
      * assumeTrue with a plain false as an argument of its own, or assumeFalse with a plain true,
      * whatever the other arguments are (a message, a lambda, String.format(...)): sure, unless a
      * condition stands before it on its reading (if (x) assumeTrue(false)): a note then. An
-     * argument counts where it ends; OPEN while the call is not closed and none counts.
+     * argument counts where it ends, and only a whole literal counts (assumeTrue(false || x) is
+     * computed: nothing, as any computed assumption); OPEN while the call is not closed and none
+     * counts.
      */
-    private static int assumption(CharSequence s, Budget budget) {
-        int level = NONE, condition = -2;
-        Matcher m = ASSUME.matcher(s);
+    private static int assumption(Read r) {
+        int level = NONE;
+        Matcher m = ASSUME.matcher(r.s);
         while (level < SURE && m.find()) {
-            Arguments a = arguments(s, m.end() - 1, budget);
+            Arguments a = arguments(r.s, m.end() - 1, r.budget);
             String never = m.group(1).equals("True") ? "false" : "true";
-            List<String> args = a.list();
             boolean holds = false;
-            for (int k = 0, ended = a.closed() ? args.size() : args.size() - 1; k < ended && !holds; k++) holds = args.get(k).equals(never);
+            for (int k = 0; k < a.ended() && !holds; k++) holds = a.list().get(k).equals(never);
             if (!holds) {
                 if (!a.closed()) level = Math.max(level, OPEN);
                 continue;
             }
-            if (condition == -2) {
-                Matcher c = CONDITION.matcher(s);
-                condition = c.find() ? c.start() : -1;
-            }
-            level = Math.max(level, condition >= 0 && condition < m.start() ? NOTE : SURE);
+            level = Math.max(level, r.held(m.start()) ? NOTE : SURE);
         }
         return level;
     }
@@ -864,7 +1345,7 @@ public final class Integrity {
 
     /** How a reported line is named: focused (only this test runs) or switched off. */
     private static final Pattern FOCUSED = Pattern.compile("\\b(?:it|test|describe|context|suite|specify)(?:" + DOT + "\\w+){0,8}" + DOT + "only\\b"
-            + "|(?<![\\w$.])f(?:it|describe)(?=\\s*(?:\\(|\\.\\s*each\\b))|\\bonly\\s*:\\s*true\\b");
+            + "|(?<![\\w$.])f(?:it|describe)(?=\\s*(?:\\(|\\.\\s*each\\b))|\\bonly['\"]?\\s*:\\s*true\\b");
     private static final Pattern JAVA_ASSERT = Pattern.compile(
             "\\b(?:assert|verify)\\w*\\s*\\(|\\b(?=\\w*?(?i:expect))\\w++\\s*\\(|\\.should\\w*\\s*\\(|\\bfail\\s*\\(|\\bassert\\s|\\bexpected\\s*=");
     private static final Pattern SCRIPT_ASSERT = Pattern.compile("\\bexpect(?:TypeOf)?\\s*[(.]|\\bassert\\w*\\s*[(.]|\\.should\\b|\\bshould\\s*\\(");
