@@ -465,8 +465,12 @@ Claude Code, in `.claude/settings.json`:
   - and, for a declaration, an option, an assumption, `pytestmark` or `pytest.param`, **no
     condition stands before it on its line**, nor on the added line just before the line or lines
     it is read from, when that line opens a block or a statement under a condition or ends where
-    an expression goes on (`?`, `&&`, `||`, `=`, `=>`, `->`): `if (ci) it.skip('x', ...)`, or
-    `if (!db) {` and then `describe.skip(...)` on one, two or three lines, is a note. Annotations
+    an expression goes on (an operator such as `?`, `&&`, `||`, `=`, `+`, `=>` or `->`, a
+    backslash, or a word such as `else`, `return` or `and`): `if (ci) it.skip('x', ...)`, or
+    `if (!db) {` and then `describe.skip(...)` on one, two or three lines, is a note. A line that
+    ends with an open bracket or a comma holds a declaration, an option, an assumption or
+    `pytestmark` after it (it is an argument or an element there: `wrap(`, then `it.skip('x',
+    ...)`), but not a `pytest.param` (an element of a parametrize list). Annotations
     and decorators take no condition: Java has no conditional annotation, and a Python function
     defined under an `if` is skipped wherever it is defined.
 - Sure, a problem ("test switched off", "test focused"; `check-pr` fails), on the lines added to
@@ -519,7 +523,8 @@ Claude Code, in `.claude/settings.json`:
     counts too: `describe('when signed in', () => { it.skip('x', ...) })` on one line is a note), or
     on the line after an added line that holds it (`if (!db) {`, then `describe.skip('db', ...)`,
     on one line or over two or three; `except ImportError:`, then `pytestmark =
-    pytest.mark.skip`; `Runnable later = () ->`, then `assumeTrue(false);`);
+    pytest.mark.skip`; `Runnable later = () ->`, then `assumeTrue(false);`; `else` or `wrap(`,
+    then `it.skip('x', ...)`);
   - a form that only the code reading shows, or that the text as written does not prove: a
     comment between a switch's words (`@/* why */Disabled`, `it` and `/* why */ .skip(...)` on the
     next line), or inside what the lint reads (`@Test(enabled = false /* || RUN */)`);

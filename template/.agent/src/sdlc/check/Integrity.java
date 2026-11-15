@@ -10,7 +10,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.function.BooleanSupplier;
+import java.util.function.IntSupplier;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -298,7 +298,7 @@ public final class Integrity {
     private static int level(String line) {
         if (line.length() > LONGEST) return NONE;
         String d = decoded(line);
-        return judged(readDecoded(d), keys(d), true, () -> false).level();
+        return judged(readDecoded(d), keys(d), true, () -> FREE).level();
     }
 
     /** True when a line shows what the test finds, in one of its two readings (see reading). */
@@ -658,27 +658,39 @@ public final class Integrity {
         notes.putIfAbsent(i, lineBefore && i > 0 ? shown(lines, i - 1, width + 1) : shown(lines, i, width));
     }
 
-    /** Whether the added line before line i holds it (see holdsNext), read when the gate asks, once. */
-    private static BooleanSupplier lineBefore(List<String> lines, boolean[] read, byte[] memo, int i) {
+    /** How the added line before line i holds it (see holdsNext), read when the gate asks, once. */
+    private static IntSupplier lineBefore(List<String> lines, boolean[] read, byte[] memo, int i) {
         return () -> {
-            if (i == 0 || !read[i - 1]) return false;
-            if (memo[i] == 0) memo[i] = (byte) (holdsNext(lines.get(i - 1)) ? 2 : 1);
-            return memo[i] == 2;
+            if (i == 0 || !read[i - 1]) return FREE;
+            if (memo[i] == 0) memo[i] = (byte) (holdsNext(lines.get(i - 1)) + 1);
+            return memo[i] - 1;
         };
     }
 
+    /** How an added line holds the one after it (see holdsNext): not at all; as part of a list or a call; wholly. */
+    private static final int FREE = 0, IN_BRACKETS = 1, HELD = 2;
+    /** Words after which a line goes on: a condition, a value or an operand follows (else, return, and, ...). */
+    private static final Set<String> ENDS_GOING_ON = Set.of("if", "elif", "else", "unless", "when", "while", "for", "do", "case", "return", "throw", "yield",
+            "await", "typeof", "void", "new", "delete", "in", "of", "instanceof", "is", "and", "or", "not", "lambda");
+
     /**
-     * True when an added line holds the one after it, which then may not run, or not as a
+     * How an added line holds the one after it. HELD when what follows may not run, or not as a
      * statement of its own: its code opens a block or a statement under a condition (it holds a
      * condition and ends with {, ) or :: if (ci) {, except ImportError:), or it ends where an
-     * expression goes on (?, &&, ||, =, =>, ->: a ternary, an operand, a value, a lambda's body).
+     * expression goes on: an operator (?, &&, ||, =, =>, ->, +, ...), a backslash, or a word such
+     * as else, return or and. IN_BRACKETS when it ends with an opening bracket or a comma: what
+     * follows is an argument or an element (a pytest.param may be one; a statement is not).
      */
-    private static boolean holdsNext(String line) {
+    private static int holdsNext(String line) {
         String c = fold(code(decoded(line)));
-        if (c.isEmpty()) return false;
+        if (c.isEmpty()) return FREE;
         char last = c.charAt(c.length() - 1);
-        if ((last == '{' || last == ')' || last == ':') && CONDITION.matcher(new Counted(c)).find()) return true;
-        return last == '?' || last == '=' || c.endsWith("&&") || c.endsWith("||") || c.endsWith("=>") || c.endsWith("->");
+        if ((last == '{' || last == ')' || last == ':') && CONDITION.matcher(new Counted(c)).find()) return HELD;
+        if (last == '(' || last == '[' || last == ',') return IN_BRACKETS;
+        if ("?=&|+-*/%!<>^~.\\".indexOf(last) >= 0) return HELD;
+        int w = c.length();
+        while (w > 0 && word(c.charAt(w - 1))) w--;
+        return w < c.length() && ENDS_GOING_ON.contains(c.substring(w)) ? HELD : FREE;
     }
 
     /** True when the lines from i, width of them, are read and not yet said. */
@@ -698,7 +710,7 @@ public final class Integrity {
     private static final Verdict NOTHING_FOUND = new Verdict(NONE, false), FOUND_SURE = new Verdict(SURE, false);
 
     /** What the lint makes of the lines from i, width of them, read together (see joined). */
-    private static Verdict judged(List<String> lines, int[] keys, int i, int width, BooleanSupplier lineBefore) {
+    private static Verdict judged(List<String> lines, int[] keys, int i, int width, IntSupplier lineBefore) {
         int key = 0;
         for (int k = i; k < i + width; k++) key |= keys[k];
         return judged(joined(lines.subList(i, i + width)), key, false, lineBefore);
@@ -717,7 +729,7 @@ public final class Integrity {
      * 'skip' hid the override). single is false for lines read together, where a pending test (a
      * whole declaration on one line) is not looked for. lineBefore: see sure.
      */
-    private static Verdict judged(Reading r, int keys, boolean single, BooleanSupplier lineBefore) {
+    private static Verdict judged(Reading r, int keys, boolean single, IntSupplier lineBefore) {
         if (keys == 0 && !single) return NOTHING_FOUND;
         Read w = judge(r.written(), keys, false, single, lineBefore);
         if (w.level == SURE) return FOUND_SURE;
@@ -741,7 +753,7 @@ public final class Integrity {
     }
 
     /** What one reading holds, each form said through the gate (Read.form); keys are its line's (see keys): each kind of switch is looked for only where its word stands. */
-    private static Read judge(String text, int keys, boolean code, boolean single, BooleanSupplier lineBefore) {
+    private static Read judge(String text, int keys, boolean code, boolean single, IntSupplier lineBefore) {
         Read r = new Read(new Counted(text), lineBefore);
         if (single) pending(r);
         if (keys == 0) return r;
@@ -796,7 +808,7 @@ public final class Integrity {
     private static final class Read {
         final CharSequence s;
         final Budget budget;
-        private final BooleanSupplier lineBefore;
+        private final IntSupplier lineBefore;
         /** Each form judged on this reading: {its kind, where it starts, its level}. */
         final List<int[]> forms = new ArrayList<>(2);
         int level = NONE;
@@ -805,7 +817,7 @@ public final class Integrity {
         private int condition = -2;
         private byte[] starts;
 
-        Read(CharSequence s, BooleanSupplier lineBefore) {
+        Read(CharSequence s, IntSupplier lineBefore) {
             this.s = s;
             this.lineBefore = lineBefore;
             budget = new Budget(s.length());
@@ -858,7 +870,8 @@ public final class Integrity {
         if (stands == AS_ANNOTATION) return r.startsAt(at, AT_DECLARATION) ? SURE : NOTE;
         if (stands == AS_DECORATOR) return r.startsAt(at, AT_DECORATOR) ? SURE : NOTE;
         if (!(stands == AS_STATEMENT ? r.startsAt(at, AT_STATEMENT) : element(r, at)) || r.held(at)) return NOTE;
-        if (r.lineBefore.getAsBoolean()) {
+        int before = r.lineBefore.getAsInt();
+        if (before == HELD || before == IN_BRACKETS && stands == AS_STATEMENT) {
             r.heldByLineBefore = true;
             return NOTE;
         }

@@ -868,6 +868,18 @@ final class IntegrityTests {
                 Integrity.lint(List.of("if (isCI) {", "  describe.skip('database', () => {});")).equals(noted("if (isCI) { describe.skip('database', () => {});"))
                 && Integrity.lint(joinedTwo).equals(noted("if (isCI) { describe.skip( 'database', () => {});"))
                 && Integrity.lint(joinedThree).equals(noted("if (isCI) { describe .skip( 'database', () => {});")));
+        // the auditor's own pass: a line that ends in else or return, a backslash or an operator holds the line after it; one that
+        // ends in an open bracket or a comma holds a statement (it is an argument or an element there), not an element of a list
+        List<List<String>> heldBelow = List.of(List.of("if (x) run();", "else", "  it.skip('x', () => {});"), List.of("function f() {", "  return", "  it.skip('x', () => {});"),
+                List.of("wrap(", "  it.skip('x', () => {}));"), List.of("const tests = [", "  it.skip('x', () => {}),"), List.of("x = a and \\\\", "pytestmark = pytest.mark.skip"),
+                List.of("const t = a +", "  it.skip('x', () => {});"), List.of("Runnable r = cond ? null :", "    () -> {}; assumeTrue(false);"));
+        check("integrity: a form on the line after one that ends in else, return, a backslash, an operator, an open bracket or a comma is not sure",
+                heldBelow.stream().allMatch(l -> Integrity.lint(l).sure().isEmpty() && !Integrity.lint(l).notes().isEmpty()));
+        check("integrity: its neighbours, a pytest.param as an element of a parametrize list, and a declaration in a describe block, are sure",
+                Integrity.lint(List.of("@pytest.mark.parametrize('x', [", "    pytest.param(1, marks=pytest.mark.skip),")).sure().size() == 1
+                && Integrity.lint(List.of("@pytest.mark.parametrize('x', [", "    pytest.param(0),", "    pytest.param(1, marks=pytest.mark.skip),")).sure().size() == 1
+                && Integrity.lint(List.of("describe('x', () => {", "  it.skip('y', () => {});")).sure().size() == 1
+                && Integrity.lint(List.of("    }", "    @Test void a() { assumeTrue(false); }")).sure().size() == 1);
         check("integrity: a line that is a note of its own and holds the next: both are said",
                 Integrity.lint(List.of("if not has_gpu: pytest.skip('needs a GPU')", "pytestmark = pytest.mark.skip")).equals(
                         noted("if not has_gpu: pytest.skip('needs a GPU')", "if not has_gpu: pytest.skip('needs a GPU') pytestmark = pytest.mark.skip")));
