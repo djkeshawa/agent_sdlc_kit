@@ -6,3 +6,7 @@ dist/
 
 # worktrees of coding agents
 .claude/worktrees/
+
+# Python cache of the end-to-end tests
+__pycache__/
+*.pyc
