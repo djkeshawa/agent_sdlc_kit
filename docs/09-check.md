@@ -576,35 +576,31 @@ Claude Code, in `.claude/settings.json`:
     else identity)` is a note; so is `"@Disabled"` in a string);
   - **it stands on its own**: an annotation after nothing on its statement but complete
     annotations and modifiers (`@Test @Disabled`, `public @Disabled`, `@Tag("a") @Disabled`); a
-    decorator at the start of its line, after decorators only; a declaration, an option, an
-    assumption, `pytestmark` or a pending test at the start of its statement (the line's start,
-    or after `;`, `{`, `}` or the end of a comment), not an argument, a value or a lambda's body
-    (`f(it.skip('x', ...))`, `x = @Disabled`, `() -> assumeTrue(false)`, `assertThrows(...,
-    () -> assumeTrue(false))` are notes), and at the line's own level: read from the line's start,
-    outside every parenthesis or bracket the line opened and after none it closes that it did not
-    open, outside a brace it opened for a value (after `->`, `=>`, `=` or `return`), and outside
-    every string, character literal, text block, template literal, regular expression or comment
-    the line opened (`String fixture = "{ @Disabled class Example {} }";`, `assertThrows(...,
-    () -> { assumeTrue(false); })`, `runInSandbox(function () { it.skip('x', ...) })` and
-    `Runnable r = () -> { assumeTrue(false); };` are notes; `{ it.skip('x', () => {}); }` is sure). A line that begins inside something an earlier line opened does not show it: what
-    the line opens, read alone, decides; `pytest.param(..., marks=...)` at the start of its line,
-    or after `[`, a comma or a `(` that opens no call (an element of a list or a tuple); an
-    assumption is the first thing on its line and also ends its statement (`;`, `}`, a comment or
-    the line's end after its closing parenthesis): after anything else on the line (a method
-    written on one line, `@Test void t() { assumeTrue(false); }`; a lambda's brace after a
-    comment; a trailing lambda, `assertThrows<X> { assumeTrue(false) }`) it is a note, as the
-    line alone does not show whether the call runs in the test's own body;
-  - and, for a declaration, an option, an assumption, `pytestmark` or `pytest.param`, **no
+    decorator at the start of its line, after decorators only; a declaration, an option,
+    `pytestmark` or a pending test at the start of its statement (the line's start, or after `;`,
+    `{`, `}` or the end of a comment), not an argument, a value or a lambda's body
+    (`f(it.skip('x', ...))`, `x = @Disabled`, `() => it.skip('x', ...)` are notes), and at the
+    line's own level: read from the line's start, outside every parenthesis or bracket the line
+    opened and after none it closes that it did not open, outside a brace it opened for a value
+    (after `->`, `=>`, `=` or `return`), and outside every string, character literal, text block,
+    template literal, regular expression or comment the line opened
+    (`String fixture = "{ @Disabled class Example {} }";`,
+    `runInSandbox(function () { it.skip('x', ...) })` and
+    `const later = () => { it.skip('x', ...) };` are notes; `{ it.skip('x', () => {}); }` is
+    sure). A line that begins inside something an earlier line opened does not show it: what the
+    line opens, read alone, decides; `pytest.param(..., marks=...)` at the start of its line, or
+    after `[`, a comma or a `(` that opens no call (an element of a list or a tuple);
+  - and, for a declaration, an option, `pytestmark` or `pytest.param`, **no
     condition stands before it on its line**, nor on the added line just before the line or lines
     it is read from, when that line opens a block or a statement under a condition or ends where
     an expression goes on (an operator such as `?`, `&&`, `||`, `=`, `+`, `=>` or `->`, a
     backslash, or a word such as `else`, `return` or `and`): `if (ci) it.skip('x', ...)`, or
     `if (!db) {` and then `describe.skip(...)` on one, two or three lines, is a note. A line that
-    ends with an open bracket or a comma holds a declaration, an option, an assumption or
-    `pytestmark` after it (it is an argument or an element there: `wrap(`, then `it.skip('x',
-    ...)`), but not a `pytest.param` (an element of a parametrize list). Annotations
-    and decorators take no condition: Java has no conditional annotation, and a Python function
-    defined under an `if` is skipped wherever it is defined.
+    ends with an open bracket or a comma holds a declaration, an option or `pytestmark` after it
+    (it is an argument or an element there: `wrap(`, then `it.skip('x', ...)`), but not a
+    `pytest.param` (an element of a parametrize list). Annotations and decorators take no
+    condition: Java has no conditional annotation, and a Python function defined under an `if` is
+    skipped wherever it is defined.
 - Sure, a problem ("test switched off", "test focused"; `check-pr` fails), on the lines added to
   any test file, each as just described:
   - `@Disabled`, `@Ignore` (also qualified, `@org.junit.jupiter.api.Disabled`, and after other
@@ -625,11 +621,26 @@ Claude Code, in `.claude/settings.json`:
     table); `xit`/`xtest`/`xdescribe`/`xcontext`/`xspecify`, `fdescribe` and `fit` with a title
     (also with `.each`); `it.skipIf(true)('x', ...)` and `runIf(false)('x', ...)`; an option object
     that says `skip`, `only` or `todo: true` (`test('x', { skip: true }, fn)`); a test declared
-    without a body, its whole declaration on one line (`it('pending');`);
-  - `assumeTrue` with a plain `false` as an argument of its own (`assumeTrue(false, () -> "later")`),
-    or `assumeFalse` with a plain `true`.
+    without a body, its whole declaration on one line (`it('pending');`).
 - A note ("may switch a test off", "may focus a test"; a warning in `check-pr`), every other place
   where the lint sees a switch's words:
+  - an assumption that never holds: `assumeTrue` with a plain `false` as an argument of its own
+    (`assumeTrue(false);`, `assumeTrue(false, () -> "later")`, `Assume.assumeTrue("x", false)`), or
+    `assumeFalse` with a plain `true`, wherever it stands, on a line of its own in a test method
+    too. It is noted, not failed, by the text check, because the lines a change adds do not show
+    whether it runs in the test's own body: `assertThrows(TestAbortedException.class, () -> {` on
+    one line and `assumeTrue(false);` on the next is an ordinary exception assertion (the abort is
+    caught and the test runs), Kotlin's `assertThrows<TestAbortedException> {` and
+    `assumeTrue(false)` on the next line is the same, and a lambda kept for later does not run.
+    `sdlc check` shows a test that stopped running: where a runner owns the file, its run reports
+    the tests that ran before the change and do not run now, and that fails the check. The
+    configured patterns (`tests.disabledPatterns`) do not change this in `sdlc check` and
+    `check-pr`: there they are read on the line with the built-in switches taken out, so the Java default `assume(True|That)\s*\(\s*false\s*\)` finds nothing
+    left of `assumeTrue(false);`. The git pre-commit hook reads them on the added line as it is,
+    and with the Java defaults it refuses a commit that adds `assumeTrue(false)` or
+    `assumeFalse(true)` written that way (a message after it, `assumeTrue(false, "x")`, is not
+    matched). A repository that wants it refused keeps those patterns for its commits, and runs
+    `sdlc check` in its pipeline;
   - a skip from inside a test, which a condition on another line may hold: `pytest.skip(...)`,
     `self.skipTest(...)`, `raise unittest.SkipTest(...)`, Mocha's `this.skip()`, `t.Skip`,
     `t.Skipf`, `t.SkipNow`, Jasmine's `pending('reason')`, Playwright's `test.skip()`,
@@ -647,18 +658,18 @@ Claude Code, in `.claude/settings.json`:
     (`@(pytest.mark.skip if IS_CI else identity)`), kept in a variable or passed to a call
     (`skip_slow = pytest.mark.skip(...)`, `item.add_marker(pytest.mark.skip(...))`), or in a string;
   - a sure form that does not stand on its own: an argument, a value or a lambda's body
-    (`f(it.skip('x', ...))`, `x = @Disabled`, `Runnable later = () -> assumeTrue(false)`,
-    `assertThrows(TestAbortedException.class, () -> assumeTrue(false))`), inside a parenthesis, a
-    bracket, a value's brace, a literal or a comment the line opened, though a `{` or a `;` stands
-    before it there (`"{ @Disabled class Example {} }"`, `f(() -> { assumeTrue(false); })`), or
+    (`f(it.skip('x', ...))`, `x = @Disabled`, `const later = () => it.skip('x', ...)`), inside a
+    parenthesis, a bracket, a value's brace, a literal or a comment the line opened, though a `{`
+    or a `;` stands before it there (`"{ @Disabled class Example {} }"`,
+    `f(() => { it.skip('x', ...); })`), or
     after a word or a quote on its statement (`see @Disabled`, `"it.skip('a', ...)"` in a string);
-  - a sure form after a condition on its line (`if (x) assumeTrue(false)`, `cond && it.skip('x',
+  - a sure form after a condition on its line (`if (x) it.skip('x', ...)`, `cond && it.skip('x',
     ...)`; the text as written decides, so a condition's word in a string or a comment before it
     counts too: `describe('when signed in', () => { it.skip('x', ...) })` on one line is a note), or
     on the line after an added line that holds it (`if (!db) {`, then `describe.skip('db', ...)`,
     on one line or over two or three; `except ImportError:`, then `pytestmark =
-    pytest.mark.skip`; `Runnable later = () ->`, then `assumeTrue(false);`; `else` or `wrap(`,
-    then `it.skip('x', ...)`);
+    pytest.mark.skip`; `const later = () =>`, then `it.skip('x', ...)`; `else` or `wrap(`, then
+    `it.skip('x', ...)`);
   - a form that only the code reading shows, or that the text as written does not prove: a
     comment between a switch's words (`@/* why */Disabled`, `it` and `/* why */ .skip(...)` on the
     next line), or inside what the lint reads (`@Test(enabled = false /* || RUN */)`);

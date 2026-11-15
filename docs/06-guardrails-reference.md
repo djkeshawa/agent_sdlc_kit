@@ -37,7 +37,7 @@ layer-1 and layer-2 rules (532 checks, with the multi-component ones).
 | Switching a Maven profile off (`-P!quality`, `-P-quality`) | ask | - | the build runs them | required checks |
 | CI-only goals: `deploy`, `release:*`, `sonar:sonar`, `versions:set`, `npm publish`, `npm version` | deny | - | - | - |
 | Dependency and snapshot changes: `npm install` / `pnpm add` / `yarn add`, `-u` / `--updateSnapshot` | ask | - | - | - |
-| Disabled or focused tests, in their usual spellings (`@Disabled`, `@Ignore`, `assumeTrue(false)`, `it.skip`, `.only`): a text check of the added lines, a helper (see the limits below) | note after edit | commit refused (the configured patterns) | check-pr (what the lint is sure of; a skip it cannot know to be unconditional is a warning) | - |
+| Disabled or focused tests, in their usual spellings (`@Disabled`, `@Ignore`, `assumeTrue(false)`, `it.skip`, `.only`): a text check of the added lines, a helper (see the limits below) | note after edit | commit refused (the configured patterns) | check-pr (what the lint is sure of; a skip it cannot know to be unconditional, and an assumption that never holds, is a warning) | - |
 | `--no-verify` (and any abbreviation git accepts, e.g. `--no-veri`), `-n`, changing `core.hooksPath`, `SDLC_*`/`HUSKY=0`/`SKIP=` variables | deny | - | - | - |
 | Git settings and variables that make git run a program: `core.fsmonitor`, `core.pager`, `core.editor`, `core.sshCommand`, `diff.external`, `filter.*`, `merge.*.driver`, ... (`git config` and `git -c`), `GIT_SSH_COMMAND`, `GIT_EXTERNAL_DIFF`, `GIT_EDITOR`, ... Harmless values (`cat`, `less`, `true`, empty) are fine | deny | - | - | - |
 | Variables and options that load other code into the tools: `LD_PRELOAD`, `DYLD_*`, `BASH_ENV`; an agent, trust store or proxy setting in `JAVA_TOOL_OPTIONS`, `MAVEN_OPTS`, `GRADLE_OPTS`, ... (`-javaagent`, `-Djavax.net.ssl.*`); `--require` / `--import` in `NODE_OPTIONS`; Java options on the guard's own tool (`java -javaagent:... .agent/Sdlc.java`, `java -cp ... sdlc.Main`) | deny | - | - | - |
@@ -133,12 +133,18 @@ GitHub Enterprise and SonarQube servers in read-only mode.
   plain attempts, not a switch written so that it does not read as one, and not an empty test.
   `check-pr` fails only on what a line shows for sure, read whole from the text as written and
   standing on its own: an annotation or a decorator that is the whole expression, a declaration
-  with its title, an option or a condition that is a whole literal, an assumption that never
-  holds, each a statement or a declaration of its own (not an argument, a value or a lambda's
-  body) and under no condition on its line or on the added line before. A skip from inside a
-  test, a computed condition, a switch inside a larger expression or only named, or `abort(` is a
-  warning, since a condition may hold it. It lints the same test files as `sdlc check`: named or
-  placed like test files, or under `paths.test`.
+  with its title, an option or a condition that is a whole literal, each a statement or a
+  declaration of its own (not an argument, a value or a lambda's body) and under no condition on
+  its line or on the added line before. A skip from inside a test, a computed condition, a switch
+  inside a larger expression or only named, or `abort(` is a warning, since a condition may hold
+  it. So is an assumption that never holds (`assumeTrue(false)`, `assumeFalse(true)`), on a line
+  of its own too: the lines a change adds do not show whether it runs in the test's own body (an
+  exception assertion opened on the line above, `assertThrows(TestAbortedException.class, () -> {`,
+  catches the abort, and the test runs). `check-pr` reads the configured patterns with the
+  built-in switches taken out, so the Java default `assume(True|That)\s*\(\s*false\s*\)` does
+  not fail it there; the git pre-commit hook reads them on the added line as written and refuses
+  `assumeTrue(false)` with the Java defaults. `check-pr` lints the same test files as
+  `sdlc check`: named or placed like test files, or under `paths.test`.
   `sdlc check` runs the tests and shows every test that ran before the change and does not run
   now; a pipeline that must be sure runs it ([docs/09](09-check.md)).
 - **Approvals** prove that a listed human posted the exact line in Jira. If agents use **your**

@@ -257,9 +257,15 @@ final class TrustTests {
         Checks.Result offJava = Checks.prPolicy(null, false);
         check("trust: a Java test switched off on an added line fails, by the line",
                 offJava.fails().stream().anyMatch(f -> f.contains("No switch that turns a test off or focuses one was found") && f.contains("OffTest.java: @Disabled(\"later\")")
-                        && f.contains("OffTest.java: assumeTrue(false);") && !f.contains("Assumptions.<Void>abort(")));
-        check("trust: Assumptions.abort, which a condition on another line may hold, is a warning, not a failure",
-                offJava.warns().stream().anyMatch(w -> w.contains("OffTest.java: may switch a test off") && w.contains("Assumptions.<Void>abort(\"later\")")));
+                        && !f.contains("assumeTrue(false)") && !f.contains("Assumptions.<Void>abort(")));
+        // an assumption that never holds is the lint's to judge, also where the Java default pattern (assume(True|That)\s*\(\s*false\s*\))
+        // matches it: check-pr reads the configured patterns on the line with the built-in switches taken out
+        check("trust: Assumptions.abort, which a condition on another line may hold, and an assumption on a line of its own in a test method are warnings, not failures",
+                offJava.warns().stream().anyMatch(w -> w.contains("OffTest.java: may switch a test off") && w.contains("Assumptions.<Void>abort(\"later\")")
+                        && w.contains("assumeTrue(false);")));
+        // the git hook reads the configured patterns on the added line as it is: there the Java default refuses it
+        check("trust: the commit hook's check, the configured patterns on the added lines, still finds assumeTrue(false); with the Java defaults",
+                Checks.disabledTests(Map.of("src/test/java/OffTest.java", List.of("    assumeTrue(false);"))).equals(List.of("src/test/java/OffTest.java: assumeTrue(false);")));
 
         // text that looks like a skipped test, inside a text block over several lines: the lint reads lines, so it fails (on the safe side)
         git(repo, "switch", "-q", "-c", "feature/PROJ-16-example", "origin/main");

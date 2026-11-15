@@ -122,11 +122,12 @@ public final class Integrity {
     // (sdlc check) is the guard.
     //
     // It says what it finds at one of two levels (see lint). Sure, a problem: a switch whose whole meaning stands in what it
-    // read, with no condition possible (an annotation that switches off, a declaration with its title, an assumption that
-    // never holds). Anything else in which it sees a switch's words is a note, never a failure: whether a skip from inside a
-    // test runs under a condition, whether a computed first argument is a condition or a title, whether abort( is the one
-    // that skips, needs more than the added lines hold, and the run of the file says what happened. A call is never judged
-    // from a part of it: one whose arguments a line leaves open is judged with the lines after it. No pattern says sure by
+    // read, with no condition possible (an annotation that switches off, a declaration with its title). Anything else in
+    // which it sees a switch's words is a note, never a failure: whether a skip from inside a test runs under a condition,
+    // whether a computed first argument is a condition or a title, whether abort( is the one that skips, whether an
+    // assumption that never holds runs in the test's own body, needs more than the added lines hold, and the run of the file
+    // says what happened. A call is never judged from a part of it: one whose arguments a line leaves open is judged with the
+    // lines after it. No pattern says sure by
     // itself: every sure form goes through the readers of one gate (see the table in lint): a complete argument list, a
     // literal that is the whole argument, a title that is a string for certain, an option that is a top-level property, a
     // call that registers a test, a decorator or an annotation that is the whole expression; and then through the gate
@@ -531,9 +532,6 @@ public final class Integrity {
      *                                                       a title first; a statement
      *   it('x'); a test without a body                    pending: one string literal, the whole line
      *                                                       the declaration; a statement
-     *   assumeTrue(false), assumeFalse(true)              assumption: an argument that is a whole
-     *                                                       literal and ended, the call closed and its
-     *                                                       statement ended there; a statement
      *
      * The gate (see sure): declared, an annotation after nothing on its statement but complete
      * annotations and modifiers; decorated, a decorator after decorators only, from the start of
@@ -557,15 +555,19 @@ public final class Integrity {
      * is computed or that a spread or a quoted key after it may change; a mark or an annotation
      * inside a larger expression (@(pytest.mark.skip if IS_CI else identity), skip_slow =
      * pytest.mark.skip(...), "@Disabled" in a string); a sure form that is not a statement or a
-     * declaration of its own (() -> assumeTrue(false), f(it.skip('x', fn)), x = @Disabled), or
+     * declaration of its own (() => it.skip('x', fn), f(it.skip('x', fn)), x = @Disabled), or
      * after a condition on its reading (if (x) it.skip('x', ...)), or on the line after an added
      * line that holds it (if (!db) {, then describe.skip('db', ...): see holdsNext; a condition
      * further away is not seen); a form the code reading proves but the text as written does not
-     * (a comment between its words: @, a comment, Disabled); Assumptions.abort and abort( called
-     * alone; a call whose arguments end in none of its readings. Nothing: the same forms with the
-     * literal that runs (skipif(False), test.skip(false, ...), @Test(enabled = true),
-     * @DisabledIf("false"), a skip option inside another property), and an annotation's name
-     * right after a name (an address: ci@Disabled.example).
+     * (a comment between its words: @, a comment, Disabled); an assumption that never holds
+     * (assumeTrue(false), assumeFalse(true)) wherever it stands, on a line of its own too: whether
+     * it runs in the test's own body, and not in a lambda kept for later or in the body of an
+     * exception assertion that catches the abort, opened on a line above, is not on the added
+     * lines; Assumptions.abort and abort( called alone; a call whose arguments end in none of its
+     * readings. Nothing: the same forms with the literal that runs (skipif(False),
+     * test.skip(false, ...), @Test(enabled = true), @DisabledIf("false"), a skip option inside
+     * another property), and an annotation's name right after a name (an address:
+     * ci@Disabled.example).
      *
      * A call is judged where its arguments are: one whose arguments a line leaves open before
      * they say what it is (test.skip(, a line break, false,) is judged with the next line, then
@@ -793,7 +795,7 @@ public final class Integrity {
     //   title        a whole argument that is a string for certain (see title)
     //   optionObject the top-level properties of an object that is a whole argument of a test declaration
     //   registering  the call that registers a test after a modifier: (title, ...), or .each(table)(title, ...)
-    //   ends         what follows a decorator, an annotation or an assumption: the end of its expression or statement
+    //   ends         what follows a decorator, an annotation or a mark's value: the end of its expression or statement
     // and in the gate:
     //   starts       where each token of the reading stands: at a statement's start, after annotations and modifiers only, ...
     //   held         a condition (if, else, ?, &&, ||, ...) before the form on its reading
@@ -861,12 +863,12 @@ public final class Integrity {
      *                  (@Test @Disabled, public @Disabled; not f(@Disabled), x = @Disabled, a
      *                  word or a quote before it);
      *   a decorator    at the start of its reading, after complete decorators only;
-     *   a statement    (a declaration, an option, an assumption, pytestmark =, a pending test) at
-     *                  the start of its statement: the reading's start, or after ;, {, } or the
+     *   a statement    (a declaration, an option, pytestmark =, a pending test) at the start
+     *                  of its statement: the reading's start, or after ;, {, } or the
      *                  end of a comment, nothing between (not after =, (, ->, =>, return, a word
      *                  or a quote: an argument, a value, a deferred body), and at the reading's
      *                  own level: outside every parenthesis or bracket it opened (not in a lambda
-     *                  or a block passed to a call: f(() -> { assumeTrue(false); })), after none it
+     *                  or a block passed to a call: f(() => { it.skip('x', fn); })), after none it
      *                  closes that it did not open, outside every literal it opened ("{ @Disabled
      *                  class X {} }") and outside a comment (see starts);
      *   an element     (pytest.param with marks=) at the start of its statement, or an element of
@@ -1151,14 +1153,6 @@ public final class Integrity {
             if (q == p) return start;
             start = q + 1;
         }
-    }
-
-    /** True when a statement ends at at: the reading ends, or ;, } or a comment follows. */
-    private static boolean endsStatement(CharSequence s, int at) {
-        int i = blanks(s, at);
-        if (i >= s.length()) return true;
-        char c = s.charAt(i), next = i + 1 < s.length() ? s.charAt(i + 1) : ' ';
-        return c == ';' || c == '}' || c == '#' || c == '/' && (next == '/' || next == '*');
     }
 
     private static int blanks(CharSequence s, int i) {
@@ -1830,13 +1824,13 @@ public final class Integrity {
 
     /**
      * assumeTrue with a plain false as an argument of its own, or assumeFalse with a plain true,
-     * whatever the other arguments are (a message, a lambda, String.format(...)), as a statement
-     * of its own: the call, qualified or not (Assumptions., Assume.), starts its statement (see
-     * sure: not after =, (, ->, =>, return: a deferred body or an argument, as in
-     * assertThrows(X.class, () -> assumeTrue(false))) and ends it (;, }, a comment or the
-     * reading's end after its closing parenthesis): sure then, for the gate to place, else a
-     * note. An argument counts where it ends, and only a whole literal counts (assumeTrue(false ||
-     * x) is computed: nothing, as any computed assumption); OPEN while the call is not closed.
+     * whatever the other arguments are (a message, a lambda, String.format(...)), qualified or not
+     * (Assumptions., Assume.): a note wherever it stands, never sure. Whether the call runs in the
+     * test's own body is not on the lines a change adds: assertThrows(TestAbortedException.class,
+     * () -> { on one line and assumeTrue(false); on the next is an exception assertion that
+     * catches the abort, and a lambda kept for later does not run; the run of the file judges it.
+     * An argument counts where it ends, and only a whole literal counts (assumeTrue(false || x) is
+     * computed: nothing, as any computed assumption); OPEN while the call is not closed.
      */
     private static void assumption(Read r) {
         Matcher m = ASSUME.matcher(r.s);
@@ -1846,22 +1840,11 @@ public final class Integrity {
             boolean holds = false;
             for (int k = 0; k < a.ended() && !holds; k++) holds = a.list().get(k).equals(never);
             int from = qualified(r.s, m.start());
-            // sure only where the call is the first thing on its line: after anything else on the line (a brace of a lambda or of a
-            // Kotlin trailing lambda, a comment and then a brace, a declaration written on one line) the line alone does not show
-            // whether the call runs in the test's own body, and the run of the file judges it
-            int level = !a.closed() ? OPEN : !holds ? NONE : endsStatement(r.s, a.end()) && startsLine(r.s, from) ? SURE : NOTE;
+            // never sure: whether the call runs in the test's own body (and not in a lambda that is kept for later, or in the body
+            // of an exception assertion that catches the abort, opened on a line above) is not on the lines the change adds
+            int level = !a.closed() ? OPEN : holds ? NOTE : NONE;
             r.form(K_ASSUME, from, level, AS_STATEMENT);
         }
-    }
-
-    /** True when only blanks stand between the start of the line that holds this place and the place. */
-    private static boolean startsLine(CharSequence s, int at) {
-        for (int i = at - 1; i >= 0; i--) {
-            char c = s.charAt(i);
-            if (c == '\n' || c == '\r') return true;
-            if (c != ' ' && c != '\t') return false;
-        }
-        return true;
     }
 
     /**
