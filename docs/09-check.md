@@ -1,7 +1,8 @@
 # 9. `sdlc check`: the change in front of you
 
 `sdlc check` needs no configuration, no account and no tracker. It works in any git repository,
-with or without the rest of the kit, and it writes nothing to your working tree or index.
+with or without the rest of the kit, and it writes nothing to your working tree or index (but for
+Vitest's own cache in the ignored `node_modules`: see [Which tests it can run](#which-tests-it-can-run)).
 
 It answers one question about the change you (or your agent) just made: **would its own tests
 notice if the change were missing?**
@@ -311,14 +312,17 @@ runs a small reporter of its own: a fixed text, written to a temporary folder ou
 that writes for each test its file, its name as the JUnit reporter writes it, its state and how
 many times Vitest ran it again (`result.retryCount`), to a file in that folder. It runs in Vitest's
 own process, which runs your configuration and tests already, so it can do nothing they cannot;
-what it writes is read as untrusted input (a regular file, at most 50 MB, strict JSON of its exact
-shape; nothing in it is used as a path). A test Vitest ran again is then read as Surefire's
+what it writes is read as untrusted input (a regular file, at most 50 MB, strict JSON in its shape;
+nothing in it is used as a path). A test Vitest ran again is then read as Surefire's
 reruns are. A test the JUnit report lists without a mark that Vitest did not run (after a
 `bail`) is read as skipped. Where a run does not say which tests passed at the first try (the
 reporter's file is missing or cannot be read, it does not name a test the JUnit report lists as
 passed, or a version of Vitest gives a test retries and does not count them), the file is judged by
 its failures alone: one line, could not be judged, with why, and every difference among its reports
-said beside it.
+said beside it. Vitest keeps a cache of its own (the results of earlier runs, by which it orders the
+test files) under `node_modules/.vite` of the folder it runs in, which for the copies is the
+repository's own `node_modules`: the check does not turn it off, so that folder, which git ignores,
+is written to, and the runs of every side share that cache. It decides only the order of the files.
 
 ## As a Stop hook for a coding agent
 
