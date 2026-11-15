@@ -421,9 +421,9 @@ Claude Code, in `.claude/settings.json`:
   running anything: a helper that catches mistakes and plain attempts early, in commands that run
   no test (`check-pr`, `--no-run`) and for files no runner owns. **It is not a guard.** A check
   that reads text cannot stop an author who sets out to hide a switch from it: a switch reached
-  through another name (`later('x', ...)` after `const later = it.skip`), a quote in a regular expression before a
-  comment written between a switch's words, a switch spread over more than three lines or one on
-  a line longer than 2,000 characters is not seen. The guard is the run: `sdlc check` reports
+  through another name (`later('x', ...)` after `const later = it.skip`), a quote in a regular
+  expression before a comment written between a switch's words, a switch spread over more than
+  three lines or one on a line longer than 2,000 characters is not seen. The guard is the run: `sdlc check` reports
   every test that ran before the change and does not run now, whatever the source says. A
   pipeline that must be sure runs `sdlc check`, not only `check-pr`. Where a runner ran the file,
   a test switched off is said twice, as a test that ran and does not run now under the test
@@ -465,8 +465,8 @@ Claude Code, in `.claude/settings.json`:
   - `Assumptions.abort` (also `Assumptions.<Void>abort` and the line that imports it statically)
     and `abort(` called alone, which may be any method named `abort`;
   - an assumption that never holds after a condition on its line (`if (x) assumeTrue(false)`);
-  - a call whose arguments end in none of its readings (it opens on one line and does not close
-    in the next two).
+  - a call whose arguments do not say what it is in any of its readings (it opens on one line,
+    and the next two lines do not complete the argument it turns on).
 - A call is judged where its arguments are. One whose arguments a line leaves open before they
   say what it is is judged with the next line, and then with the next two: `test.skip(`, then
   `false,` and `'supported');` is nothing, `it.skip(`, then `'later',` is sure. No line is reported
@@ -481,7 +481,7 @@ Claude Code, in `.claude/settings.json`:
   without a title (`fit(data)`) or a function declared `fit`; `this.skip(10)` (Mocha's takes no
   argument); a skip or a fixme whose first argument is a number (`it.skip(1)`, a stream's skip).
   White space of any kind a language allows may stand between a switch's words, and Unicode
-  escapes (`@Disabled`) are read as a compiler reads them. A switch written over two or three
+  escapes (`\u0040Disabled`) are read as a compiler reads them. A switch written over two or three
   added lines (`it`, then `.skip(` on the next; a block comment that closes on the next line; a
   Python line ending in `\`) is found too, at the level the lines together show.
 - Each added line of at most 2,000 characters is read two ways: its code (comments dropped, the
@@ -490,9 +490,9 @@ Claude Code, in `.claude/settings.json`:
   ways together: their code read across the line breaks, and the lines as written joined by a
   space. One line cannot tell its quotes for certain, so what a line shows as written is never
   hidden: a switch's words inside a string, a text block, a trailing comment or a block comment's
-  line are judged too, at the same two levels, and `check-pr` shows the line. A longer added line is not read: Integrity
-  says how many lines of the file were not (a note), `check-pr` warns. The lint's work grows with
-  the lines it is given and no faster, whatever they hold.
+  line are judged too, at the same two levels, and `check-pr` shows the line. A longer added line
+  is not read: Integrity says how many lines of the file were not (a note), `check-pr` warns. The
+  lint's work grows with the lines it is given and no faster, whatever they hold.
 - Not seen by the lint, as examples: a switch reached through another name (`const later =
   it.skip`, then `later('x', ...)`; a custom annotation that carries `@Disabled`; `@skip` imported
   from `unittest`); a switch of which the change wrote only a part (`.skip(` under an `it` that was
@@ -515,7 +515,9 @@ Claude Code, in `.claude/settings.json`:
   change removes, which are all of its lines in order: it is a problem when it is named like a
   test file, or its code calls `it`, `test` or `describe`, defines a test function or carries a
   JUnit test annotation (`@Test`, `@ParameterizedTest`, ...). That code is read as one text, so an
-  example inside a comment or a template string that runs over several lines is text, not code. A
+  example inside a comment, a template string or a string in three quotes (a Java text block, a
+  Python docstring) that runs over several lines is text, not code; one in three quotes that does
+  not close runs to the file's end. A
   note when only a comment or a string in it mentions one, or it is not a source file (a fixture
   that holds sample source); otherwise a note (a fixture or a helper). A test file deleted and added elsewhere with exactly the same lines is
   a note; so is a JVM test class moved to another package (only its package line differs). One
