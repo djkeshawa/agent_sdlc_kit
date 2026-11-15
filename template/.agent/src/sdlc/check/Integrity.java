@@ -1197,7 +1197,9 @@ public final class Integrity {
         }
     }
 
-    private static final Pattern TEST_CALL = Pattern.compile("\\b[xf]?(?:it|test|describe|context|suite)(?:" + DOT + "\\w+){0,8}\\s*(?:\\?\\.\\s*)?\\(|^\\s*(?:async\\s+)?def\\s+test|\\bfunc\\s+Test"
+    // its segments are taken possessively: fewer of them would leave the reading before a dot or a name, never before a "(",
+    // so giving one back finds nothing; a long chain (it.it.it...) is not tried again shorter from each place
+    private static final Pattern TEST_CALL = Pattern.compile("\\b[xf]?(?:it|test|describe|context|suite)(?:" + DOT + "\\w++){0,8}+\\s*(?:\\?\\.\\s*)?\\(|^\\s*(?:async\\s+)?def\\s+test|\\bfunc\\s+Test"
             + "|@\\s*(?:[\\w$]+\\s*\\.\\s*){0,12}(?:Test|ParameterizedTest|RepeatedTest|TestFactory|TestTemplate)\\b");
 
     /** Source files, whose code can declare tests; the lines of any other file (a .json, a .txt fixture) are data. */
@@ -1219,8 +1221,9 @@ public final class Integrity {
      */
     private static String declaresTests(String path, List<String> lines) {
         if (!SOURCE.matcher(path).matches()) return null;
-        for (String line : code(String.join("\n", lines)).split("\n", -1)) if (TEST_CALL.matcher(line).find()) return "code";
-        for (String line : lines) if (TEST_CALL.matcher(line).find()) return "text";
+        // each line's characters, as the pattern reads them, are counted (see work)
+        for (String line : code(String.join("\n", lines)).split("\n", -1)) if (TEST_CALL.matcher(new Counted(line)).find()) return "code";
+        for (String line : lines) if (TEST_CALL.matcher(new Counted(line)).find()) return "text";
         return null;
     }
 
@@ -1241,18 +1244,26 @@ public final class Integrity {
      * a helper).
      */
     private void deletedTestFiles() {
+        // each file the change adds is read once, by its lines and (a JVM source) by its body without its package and import
+        // lines: a deleted file finds its twin by a lookup, so many deleted and many added files cost their lines, not their product
+        Map<List<String>, String> byLines = new HashMap<>(), byPackage = new HashMap<>(), byImports = new HashMap<>();
+        boolean any = false;
+        for (String path : change.paths("D")) any |= anyTestFile(path);
+        if (!any) return;
+        for (String a : change.paths("A")) {
+            List<String> lines = whole.getOrDefault(a, List.of());
+            byLines.putIfAbsent(lines, a);
+            if (!JVM.matcher(a).matches()) continue;
+            byPackage.putIfAbsent(body(lines, false), a);
+            byImports.putIfAbsent(body(lines, true), a);
+        }
         for (String path : change.paths("D")) {
             if (!anyTestFile(path)) continue;
             List<String> was = wholeRemoved.getOrDefault(path, List.of());
-            String twin = change.paths("A").stream().filter(a -> was.equals(whole.getOrDefault(a, List.of()))).findFirst().orElse(null);
+            String twin = byLines.get(was);
             boolean jvm = JVM.matcher(path).matches();
-            // the deleted file's own lines are read once, not once for each file the change adds
-            List<String> unpackaged = twin != null || !jvm ? null : body(was, false);
-            String repackaged = unpackaged == null ? null : change.paths("A").stream().filter(a -> JVM.matcher(a).matches()
-                    && unpackaged.equals(body(whole.getOrDefault(a, List.of()), false))).findFirst().orElse(null);
-            List<String> unimported = unpackaged == null || repackaged != null ? null : body(was, true);
-            String reimported = unimported == null ? null : change.paths("A").stream().filter(a -> JVM.matcher(a).matches()
-                    && unimported.equals(body(whole.getOrDefault(a, List.of()), true))).findFirst().orElse(null);
+            String repackaged = twin != null || !jvm ? null : byPackage.get(body(was, false));
+            String reimported = twin != null || repackaged != null || !jvm ? null : byImports.get(body(was, true));
             String declared = declaresTests(path, was);
             if (twin != null) note("test file moved", path, "the same file is now at " + twin);
             else if (repackaged != null) note("test file moved", path, "the same file is now at " + repackaged + ", in another package");

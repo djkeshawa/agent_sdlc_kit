@@ -821,6 +821,7 @@ final class IntegrityTests {
         shapes.put("tests/big_helper.py", "rows = [\n" + rows + "]\n");
         shapes.put("web/__tests__/unclosed.ts", "/* x\n".repeat(200_000));
         shapes.put("web/__tests__/opened.ts", "\"\"\" x\n".repeat(200_000));
+        shapes.put("web/__tests__/chain.ts", "it.".repeat(1_000_000) + "\n" + "@a.".repeat(1_000_000) + "\n");
         for (java.util.Map.Entry<String, String> e : shapes.entrySet()) {
             write(repo, e.getKey(), e.getValue());
             git(repo, "add", "-A");
@@ -829,7 +830,7 @@ final class IntegrityTests {
             long before = Integrity.lintWork(), started = System.nanoTime();
             List<Finding> gone = scan(repo);
             long spent = Integrity.lintWork() - before, ms = (System.nanoTime() - started) / 1_000_000;
-            boolean ok = spent <= 6L * e.getValue().length() && ms < 10_000 && gone.stream().anyMatch(f -> f.path().equals(e.getKey()));
+            boolean ok = spent <= 100L * e.getValue().length() && ms < 10_000 && gone.stream().anyMatch(f -> f.path().equals(e.getKey()));
             if (!ok) System.out.println("    deleted " + e.getKey() + ": work " + spent + " for " + e.getValue().length() + " characters, " + ms + " ms, " + gone);
             check("integrity: deleting " + e.getKey() + " (" + e.getValue().length() / 1000 + " kB) is read in work linear in it, and soon", ok);
             git(repo, "reset", "-q", "--hard", "HEAD~1");
