@@ -452,8 +452,10 @@ Claude Code, in `.claude/settings.json`:
   - **a decorator or an annotation is the whole expression**: after it comes the end of the line,
     a comment, another annotation or decorator, or the declaration (`@(pytest.mark.skip if IS_CI
     else identity)` is a note; so is `"@Disabled"` in a string);
-  - and, for a declaration, an option or an assumption, **no condition stands before it on its
-    line** (`if (ci) it.skip('x', ...)` is a note).
+  - and, for a declaration, an option, an assumption or `pytestmark`, **no condition stands
+    before it on its line**, nor on the added line just before it when that line opens a block
+    under a condition (`if (ci) it.skip('x', ...)`, or `if (!db) {` and then `describe.skip(...)`,
+    is a note).
 - Sure, a problem ("test switched off", "test focused"; `check-pr` fails), on the lines added to
   any test file, each as just described:
   - `@Disabled`, `@Ignore` (also qualified, `@org.junit.jupiter.api.Disabled`), TestNG's
@@ -494,7 +496,8 @@ Claude Code, in `.claude/settings.json`:
     (`@(pytest.mark.skip if IS_CI else identity)`), kept in a variable or passed to a call
     (`skip_slow = pytest.mark.skip(...)`, `item.add_marker(pytest.mark.skip(...))`), or in a string;
   - a sure form after a condition on its line (`if (x) assumeTrue(false)`, `cond && it.skip('x',
-    ...)`);
+    ...)`), or on the line after an added line that opens a block under a condition (`if (!db) {`,
+    then `describe.skip('db', ...)`; `except ImportError:`, then `pytestmark = pytest.mark.skip`);
   - `Assumptions.abort` (also `Assumptions.<Void>abort` and the line that imports it statically)
     and `abort(` called alone, which may be any method named `abort`;
   - a call or a list whose arguments do not say what it is in any of its readings (it opens on
@@ -535,11 +538,14 @@ Claude Code, in `.claude/settings.json`:
   characters; a quote in a regular expression before a comment between a switch's words
   (`const r = /'/; it /* ' */ .skip(...)`, or `const r = /'\//; it //'` and `.skip(` on the next
   line); a pytest skip mark applied elsewhere through a name (`skip_slow = pytest.mark.skip(...)`
-  is a note where it is written; `@skip_slow` is not seen); a condition on another line around a
-  declaration (`if (ci)`, then `it.skip('x', ...)` on the next line); a test moved into a class or a `describe` block
+  is a note where it is written; `@skip_slow` is not seen); a test moved into a class or a `describe` block
   that is already switched off; an empty test. For a file a runner owns (Maven Surefire, Vitest),
   `sdlc check` reports how many tests that ran before the change do not run now, whatever the
   source says; for a file no runner owns, and in `check-pr`, which runs no test, nothing does.
+- A condition further from a switch than its own line and the added line before it is not seen:
+  a declaration inside an `if` block that opened two lines up, or on a line the change did not
+  add, is reported as sure. The lint reads lines; the run of the file says whether a test stopped
+  running.
 - A switch on an added line is reported as that line, whatever the change did with the test: a
   skipped test that is moved, given another title or edited on the line of its switch is
   reported as switched off. When overloads of a method change places, git shows one of them

@@ -760,6 +760,20 @@ final class IntegrityTests {
                 && Integrity.lint(List.of("@pytest.mark.skipif(False, IS_WINDOWS, reason='posix')")).equals(noted("@pytest.mark.skipif(False, IS_WINDOWS, reason='posix')"))
                 && Integrity.lint(List.of("@pytest.mark.skipif(*conditions, reason='x')")).sure().isEmpty()
                 && Integrity.lint(List.of("@pytest.mark.xfail(run=RUN_SLOW, reason='x')")).sure().isEmpty());
+        // a declaration, an option or an assumption after a condition on its line may not run: a note
+        check("integrity: a sure form after a condition on its line is a note",
+                Integrity.lint(List.of("if (isCI) it.skip('x', () => {})")).equals(noted("if (isCI) it.skip('x', () => {})"))
+                && Integrity.lint(List.of("ci ? test('x', { skip: true }, fn) : test('x', fn)")).sure().isEmpty()
+                && Integrity.lint(List.of("ci && it.skipIf(true)('x', fn)")).sure().isEmpty()
+                && Integrity.lint(List.of("    if (late) assumeTrue(false);")).equals(noted("if (late) assumeTrue(false);"))
+                && Integrity.lint(List.of("if sys.platform == 'win32': pytestmark = pytest.mark.skip")).sure().isEmpty());
+        check("integrity: so is one on the line after a line that opens a block under a condition; a block without one does not change it",
+                Integrity.lint(List.of("if (!process.env.DB) {", "  describe.skip('db', () => {")).equals(noted("if (!process.env.DB) { describe.skip('db', () => {"))
+                && Integrity.lint(List.of("except ImportError:", "    pytestmark = pytest.mark.skip(reason='needs numpy')"))
+                        .equals(noted("except ImportError: pytestmark = pytest.mark.skip(reason='needs numpy')"))
+                && Integrity.lint(List.of("describe('db', () => {", "  it.skip('x', () => {})")).sure().equals(List.of("it.skip('x', () => {})"))
+                && Integrity.lint(List.of("if (x) { run(); }", "it.skip('x', () => {})")).sure().size() == 1
+                && Integrity.lint(List.of("if (isWindows) {", "  @Disabled")).sure().equals(List.of("@Disabled")));
         // the property of the gate: no sure form stays sure when its literal is made part of more, nested or cut
         String[][] forms = {
             {"it.skip(§, () => {})", "'x'"}, {"describe.only(§, () => {})", "'x'"}, {"test.todo(§)", "'x'"}, {"test.fixme(§, async () => {})", "'x'"},
@@ -770,7 +784,7 @@ final class IntegrityTests {
             {"@pytest.mark.skipif(§, reason='x')", "True"}, {"@pytest.mark.skipif(condition=§, reason='x')", "True"}, {"@pytest.mark.skipif(False, §, reason='x')", "True"},
             {"@unittest.skipIf(§, 'x')", "True"}, {"@unittest.skipUnless(§, 'x')", "False"}, {"@pytest.mark.xfail(run=§)", "False"},
             {"@pytest.mark.xfail(§, run=False, reason='x')", "True"}, {"assumeTrue(§);", "false"}, {"Assume.assumeFalse(\"x\", §);", "true"},
-            {"@§", "pytest.mark.skip(reason='x')"}, {"@§", "pytest.mark.skipif"}, {"@§", "unittest.skip('x')"}, {"pytestmark = §", "pytest.mark.skip"},
+            {"@§", "Disabled(\"x\")"}, {"@§", "org.junit.Ignore"}, {"@§", "pytest.mark.skip(reason='x')"}, {"@§", "pytest.mark.skipif"}, {"@§", "unittest.skip('x')"}, {"pytestmark = §", "pytest.mark.skip"},
             {"    pytest.param(1, marks=§),", "pytest.mark.skip"}, {"pytestmark = [pytest.mark.slow, §]", "pytest.mark.skip"}};
         List<String> grown = List.of("§ || X", "§ && X", "§ if X else Y", "§ ? a : b", "§ === X", "(§ or X)", "f(§)", "§.with_args(x)");
         for (String[] form : forms) {
@@ -782,6 +796,7 @@ final class IntegrityTests {
                 variants.add(List.of(plain.substring(0, cut))); // the reading ends before the argument does
                 variants.add(List.of(plain.substring(0, cut), "  || X" + plain.substring(cut))); // and goes on, computed, on the next line
             }
+            if (!plain.startsWith("@") && !plain.contains("pytest")) variants.add(List.of("if (X) " + plain)); // a condition before it on its line
             if (plain.contains("{ ")) {
                 variants.add(List.of(plain.replaceFirst("\\{ ([^}]*) \\}", "{ meta: { $1 } }")));
                 variants.add(List.of(plain.replaceFirst("\\{ ([^}]*) \\}", "{ $1, ...opts }")));

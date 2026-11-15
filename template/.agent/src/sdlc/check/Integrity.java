@@ -435,27 +435,30 @@ public final class Integrity {
      *   @pytest.mark.skip, @unittest.skip (bare or        decorator: the whole decorator (also in
      *     called)                                           parentheses), arguments complete
      *   pytestmark = / marks= pytest.mark.skip, alone     markValue: the whole value or list element,
-     *     or in a list                                      the list complete
+     *     or in a list                                      the list complete; held
      *   pytest skipif: a whole True among its             decorator/markValue + markLevel: every
      *     conditions, or none (bare too)                    condition read, pytest's rule for condition=
      *   pytest xfail(run=False), no condition or a True   markLevel: run a whole False
      *   unittest skipIf(True), skipUnless(False)          markLevel: a whole literal, by place or keyword
      *   it.skip('x', ...), describe.only, test.todo,      registering + title: the call, its first
-     *     test.fixme, specify.skip, it.concurrent.skip      argument ended and a title; held: no
-     *                                                       condition before it
+     *     test.fixme, specify.skip, it.concurrent.skip      argument ended and a title; held
      *   it.skip.each(table)('x', ...), also `table`       registering: the table complete, then the
-     *                                                       call with a title
-     *   xit, xtest, xdescribe, xcontext, xspecify,        aliases + registering + title, as above
+     *                                                       call with a title; held
+     *   xit, xtest, xdescribe, xcontext, xspecify,        aliases + registering + title; held
      *     fdescribe, fit ('x', ...), also .each
      *   it.skipIf(true)('x'), describe.runIf(false)('x')  conditionalCall: arguments complete, a whole
-     *                                                       literal; then registering + title
+     *                                                       literal; then registering + title; held
      *   test('x', { skip: true }, fn), only:, todo:       options + optionObject: a top-level
      *                                                       property, a whole true, nothing after it
-     *                                                       that may change it, the whole argument
+     *                                                       that may change it, the whole argument;
+     *                                                       a title first; held
      *   it('x'); a test without a body                    PENDING: the whole line is the declaration
      *   assumeTrue(false), assumeFalse(true)              assumption: an argument that is a whole
-     *                                                       literal and ended; held: no condition
-     *                                                       before it
+     *                                                       literal and ended; held
+     *
+     * held: no condition before the form on its reading (Read.held), nor on the added line just
+     * before it when that line opens a block or a statement under a condition (opensCondition).
+     * Annotations and decorators take no condition, so they are not held.
      *
      * A note: everything else where it sees a switch's words, and where it would need more than
      * the added lines hold to know that it is a switch, or that no condition holds it. A skip
@@ -469,7 +472,9 @@ public final class Integrity {
      * is computed or that a spread after it may change; a mark or an annotation inside a larger
      * expression (@(pytest.mark.skip if IS_CI else identity), skip_slow = pytest.mark.skip(...),
      * "@Disabled" in a string); a sure form after a condition on its reading (if (x) it.skip('x',
-     * ...)); Assumptions.abort and abort( called alone; a call whose arguments end in none of its
+     * ...)), or on the line after an added line that opens a block under a condition (if (!db) {,
+     * then describe.skip('db', ...): see opensCondition; a condition further away is not seen);
+     * Assumptions.abort and abort( called alone; a call whose arguments end in none of its
      * readings. Nothing: the same forms with the literal that runs (skipif(False),
      * test.skip(false, ...), @Test(enabled = true), a skip option inside another property).
      *
@@ -498,9 +503,17 @@ public final class Integrity {
             String d = decoded(line);
             keys[i] = keys(d);
             level[i] = judged(readDecoded(d), keys[i], true);
-            if (level[i] == SURE) {
-                told[i] = true;
-                sure.add(line.trim());
+        }
+        for (int i = 0; i < n; i++) {
+            if (level[i] != SURE) continue;
+            told[i] = true;
+            // a line that opens a block or a statement under a condition (if (ci) {, except ImportError:) holds the sure form after
+            // it that a condition can hold (a declaration, an option, an assumption, pytestmark): the two lines together are a note
+            if (i > 0 && read[i - 1] && opensCondition(addedLines.get(i - 1)) && judged(addedLines, keys, i - 1, 2) == NOTE) {
+                level[i] = NOTE;
+                notes.putIfAbsent(i - 1, shown(addedLines, i - 1, 2));
+            } else {
+                sure.add(addedLines.get(i).trim());
             }
         }
         // a call a line leaves open is judged where its arguments end: with the next line, or the next two; a note when neither closes it
@@ -554,6 +567,14 @@ public final class Integrity {
         }
         for (int i = 0; i < n; i++) if (level[i] == NOTE && !told[i]) notes.putIfAbsent(i, addedLines.get(i).trim());
         return new Lint(sure, new ArrayList<>(notes.values()));
+    }
+
+    /** True when a line opens a block or a statement under a condition: its code holds a condition and ends with {, ) or :. */
+    private static boolean opensCondition(String line) {
+        String c = fold(code(decoded(line)));
+        if (c.isEmpty()) return false;
+        char last = c.charAt(c.length() - 1);
+        return (last == '{' || last == ')' || last == ':') && CONDITION.matcher(new Counted(c)).find();
     }
 
     /** True when the lines from i, width of them, are read and not yet said. */
@@ -971,12 +992,19 @@ public final class Integrity {
         return whole(literal.group(1), disabledIf ? "true" : "false", disabledIf ? "false" : "true");
     }
 
-    /** True when a Java annotation's expression ends at at: the reading ends, or another annotation, a declaration or a comment follows. */
+    /** Words that go on an expression, not a declaration that an annotation is on. */
+    private static final Set<String> GOES_ON_WORDS = Set.of("if", "else", "and", "or", "instanceof");
+
+    /**
+     * True when a Java annotation's expression ends at at: the reading ends, or another annotation,
+     * a declaration (a word, but one that goes on an expression: if, or, ...) or a comment follows.
+     */
     private static boolean javaEnds(CharSequence s, int at) {
         int i = blanks(s, at);
         if (i >= s.length()) return true;
         char c = s.charAt(i), next = i + 1 < s.length() ? s.charAt(i + 1) : ' ';
-        return c == '@' || Character.isJavaIdentifierStart(c) || c == '/' && (next == '/' || next == '*') || c == '*' && next == '/';
+        if (Character.isJavaIdentifierStart(c)) return !GOES_ON_WORDS.contains(s.subSequence(i, wordEnd(s, i)).toString());
+        return c == '@' || c == '/' && (next == '/' || next == '*') || c == '*' && next == '/';
     }
 
     /** What follows an expression: it ends, it goes on (it is part of more), or the reading ends where it may go on. */
@@ -1065,7 +1093,8 @@ public final class Integrity {
         }
         if (level == OPEN) return OPEN;
         int ends = pythonEnds(s, end, argument ? ARGUMENT : STATEMENT);
-        return ends == ENDS ? level : ends == CUT ? OPEN : NOTE;
+        if (ends != ENDS) return ends == CUT ? OPEN : NOTE;
+        return level == SURE && r.held(after) ? NOTE : level; // if X: pytestmark = ...
     }
 
     /**
