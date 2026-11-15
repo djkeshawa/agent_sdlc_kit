@@ -43,17 +43,25 @@ public final class Integrity {
     // ---------------- what counts as a test file (the one place that decides) ----------------
 
     private static final Pattern TEST_FOLDER = Pattern.compile(".*/(?:__tests__|tests?)/.*");
+    /** Read on a file's name alone (no "/" in it), so each alternative's [^/]* runs to the name's end once. */
     private static final Pattern TEST_NAME = Pattern.compile(
-            ".*/(?:[^/]*\\.(?:test|spec)\\.[^/]+|[^/]*(?:Test|Tests|IT)\\.(?:java|kt|groovy|scala)|test_[^/]*\\.py|[^/]*_test\\.(?:py|go))");
+            "[^/]*\\.(?:test|spec)\\.[^/]+|[^/]*(?:Test|Tests|IT)\\.(?:java|kt|groovy|scala)|test_[^/]*\\.py|[^/]*_test\\.(?:py|go)");
 
     /** A test file: under src/test, test, tests or __tests__, or named like one (FooTest.java, foo.test.ts, test_foo.py, foo_test.go). */
     static boolean isTestFile(String path) {
-        String p = "/" + path;
-        return TEST_FOLDER.matcher(p).matches() || TEST_NAME.matcher(p).matches();
+        return TEST_FOLDER.matcher("/" + path).matches() || testNamed(path);
     }
 
     static boolean testNamed(String path) {
-        return TEST_NAME.matcher("/" + path).matches();
+        return TEST_NAME.matcher(path.substring(path.lastIndexOf('/') + 1)).matches();
+    }
+
+    /**
+     * A test file as the scan knows one: by the built-in idea (see isTestFile), or by the
+     * repository's own test paths (paths.test). check-pr lints the same files as sdlc check.
+     */
+    public static boolean testFile(String path, List<String> testPaths) {
+        return isTestFile(path) || sdlc.util.Glob.any(testPaths, path);
     }
 
     private static boolean isJava(String path) {
@@ -71,8 +79,21 @@ public final class Integrity {
     private static final Pattern BUILD = Pattern.compile(
             "(?:.*/)?(?:pom\\.xml|build\\.gradle(?:\\.kts)?|settings\\.gradle(?:\\.kts)?|gradle\\.properties|tsconfig[^/]*\\.json|vitest\\.config\\.[^/]+|jest\\.config\\.[^/]+|Makefile|Dockerfile[^/]*)");
     private static final Pattern SCRIPT_FILE = Pattern.compile(".*\\.(?:sh|bash|ps1|cmd|bat)|(?:.*/)?\\.mvn/maven\\.config|(?:.*/)?vite\\.config\\.[^/]+");
-    private static final Pattern MIGRATION = Pattern.compile(
-            "(?:.*/)?(?:db/migration|migrations|alembic/versions|db/changelog)/.*|.*\\.sql|(?:.*/)?[^/]*changelog[^/]*\\.(?:xml|ya?ml|json)");
+    private static final Pattern MIGRATION = Pattern.compile("(?:.*/)?(?:db/migration|migrations|alembic/versions|db/changelog)/.*|.*\\.sql");
+    /** The extension of a changelog file (Liquibase): its name holds "changelog" before it. */
+    private static final Pattern CHANGELOG_EXTENSION = Pattern.compile("\\.(?:xml|ya?ml|json)$");
+
+    /**
+     * A database migration: in a migration folder, a .sql file, or a changelog file. The changelog
+     * is read by its name, not by a pattern: "[^/]*changelog[^/]*" would try each place in a long
+     * name for both of its parts.
+     */
+    private static boolean migration(String path) {
+        if (MIGRATION.matcher(path).matches()) return true;
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        Matcher ext = CHANGELOG_EXTENSION.matcher(name);
+        return ext.find() && name.substring(0, ext.start()).contains("changelog");
+    }
     private static final Pattern STEERING = Pattern.compile(
             "(?:.*/)?\\.gitattributes|(?:.*/)?CODEOWNERS|(?:.*/)?AGENTS\\.md|(?:.*/)?CLAUDE\\.md|\\.claude/.*|\\.codex/.*|\\.cursor/.*"
                     + "|\\.github/copilot-instructions\\.md|\\.github/instructions/.*|\\.agent/.*|\\.githooks/.*");
@@ -1404,7 +1425,8 @@ public final class Integrity {
 
     // ---------------- coverage ----------------
 
-    private static final Pattern MINIMUM = Pattern.compile("<minimum>\\s*([\\d.]+)\\s*%?\\s*</minimum>|\\bminimum\\s*=\\s*([\\d.]+)");
+    // possessive: the white space before and after an optional % is not split two ways (<minimum>1, many spaces, then no </minimum>)
+    private static final Pattern MINIMUM = Pattern.compile("<minimum>\\s*+([\\d.]++)\\s*+%?+\\s*+</minimum>|\\bminimum\\s*+=\\s*+([\\d.]++)");
     private static final Pattern SCRIPT_THRESHOLD = Pattern.compile("[\"']?\\b(lines|branches|functions|statements)[\"']?\\s*:\\s*(\\d+(?:\\.\\d+)?)");
 
     private final Change change;
@@ -1460,13 +1482,13 @@ public final class Integrity {
         s.deletedTestFiles();
         s.skipFlags();
         s.fewerAssertions();
-        s.byPath(PIPELINE, "pipeline changed");
+        s.byPath(path -> PIPELINE.matcher(path).matches(), "pipeline changed");
         s.buildConfiguration();
         s.dependencies();
         s.lockFiles();
-        s.byPath(MIGRATION, "database migration changed");
+        s.byPath(Integrity::migration, "database migration changed");
         s.coverage();
-        s.byPath(STEERING, "agent or review instructions changed");
+        s.byPath(path -> STEERING.matcher(path).matches(), "agent or review instructions changed");
         List<Finding> all = new ArrayList<>(s.out);
         all.sort(Comparator.comparing(Finding::level));
         return all;
@@ -1476,7 +1498,7 @@ public final class Integrity {
 
     /** The built-in idea of a test file, and the repository's own (paths.test). */
     private static boolean anyTestFile(String path) {
-        return isTestFile(path) || sdlc.util.Glob.any(sdlc.core.Ctx.cfg.list("paths.test"), path);
+        return testFile(path, sdlc.core.Ctx.cfg.list("paths.test"));
     }
 
     private void switchedOff() {
@@ -1524,6 +1546,11 @@ public final class Integrity {
      * is never the only reading of an added line (see reading).
      */
     static String code(String t) {
+        return code(t, null);
+    }
+
+    /** The code of t (see above); with map, map[k] is where the k-th character of the code stands in t. */
+    private static String code(String t, int[] map) {
         int n = t.length();
         work += n;
         StringBuilder out = new StringBuilder(n);
@@ -1535,21 +1562,21 @@ public final class Integrity {
         while (i < n) {
             char c = t.charAt(i);
             if (top > 0 && stack[top - 1] < 0) { // the text of a template string
-                if (lineBreak(c)) out.append('\n');
+                if (lineBreak(c)) put(out, map, '\n', i);
                 if (c == '\\' && i + 1 < n && !lineBreak(t.charAt(i + 1))) i++;
                 else if (c == '`') {
                     top--;
-                    out.append('`');
+                    put(out, map, '`', i);
                 } else if (c == '$' && i + 1 < n && t.charAt(i + 1) == '{') {
                     stack = push(stack, top++, 0);
-                    out.append(' ');
+                    put(out, map, ' ', i);
                     i++;
                 }
                 i++;
                 continue;
             }
             if (lineBreak(c)) {
-                out.append('\n');
+                put(out, map, '\n', i);
                 lineStart = true;
                 i++;
                 continue;
@@ -1564,7 +1591,7 @@ public final class Integrity {
                 }
                 if (k < n && t.charAt(k) == '*') {
                     int end = lineEnd(t, k), close = closing(t, k, end);
-                    out.append(' ');
+                    put(out, map, ' ', k);
                     i = close < 0 ? end : close + 2;
                     continue;
                 }
@@ -1574,29 +1601,35 @@ public final class Integrity {
             if (c == '/' && next == '/') {
                 i = lineEnd(t, i);
             } else if (c == '/' && next == '*') {
-                i = blockComment(t, i + 2, out);
+                i = blockComment(t, i + 2, out, map);
             } else if (c == '\\' && lineBreak(next)) {
                 i++;
             } else if ((c == '"' || c == '\'') && next == c && i + 2 < n && t.charAt(i + 2) == c) {
-                i = tripleString(t, i, out);
+                i = tripleString(t, i, out, map);
             } else if (c == '"' || c == '\'') {
-                i = string(t, i, out);
+                i = string(t, i, out, map);
             } else if (c == '`') {
                 stack = push(stack, top++, -1);
-                out.append('`');
+                put(out, map, '`', i);
                 i++;
             } else if (top > 0 && c == '}' && stack[top - 1] == 0) {
                 top--; // the end of a ${...}: back in the template's text
-                out.append(' ');
+                put(out, map, ' ', i);
                 i++;
             } else {
                 if (top > 0 && c == '{') stack[top - 1]++;
                 else if (top > 0 && c == '}') stack[top - 1]--;
-                out.append(c);
+                put(out, map, c, i);
                 i++;
             }
         }
         return out.toString();
+    }
+
+    /** Appends c, which stands for the character of the source at at (map: see code). The code is never longer than its source. */
+    private static void put(StringBuilder out, int[] map, char c, int at) {
+        if (map != null) map[out.length()] = at;
+        out.append(c);
     }
 
     private static int[] push(int[] stack, int at, int value) {
@@ -1627,31 +1660,32 @@ public final class Integrity {
     }
 
     /** A block comment whose inside starts at from: a space for it, its line breaks kept; the index after its end, or the text's end. */
-    private static int blockComment(String t, int from, StringBuilder out) {
-        out.append(' ');
+    private static int blockComment(String t, int from, StringBuilder out, int[] map) {
+        put(out, map, ' ', from - 2);
         for (int i = from; i < t.length(); i++) {
             work++;
             char c = t.charAt(i);
             if (c == '*' && i + 1 < t.length() && t.charAt(i + 1) == '/') return i + 2;
-            if (lineBreak(c)) out.append('\n');
+            if (lineBreak(c)) put(out, map, '\n', i);
         }
         return t.length();
     }
 
     /** A ' or " string that starts at from: emptied when it closes on its line, else the rest of the line as written. The index after it. */
-    private static int string(String t, int from, StringBuilder out) {
+    private static int string(String t, int from, StringBuilder out, int[] map) {
         char quote = t.charAt(from);
         int i = from + 1;
         while (i < t.length() && !lineBreak(t.charAt(i))) {
             work++;
             char c = t.charAt(i);
             if (c == quote) {
-                out.append(quote).append(quote);
+                put(out, map, quote, from);
+                put(out, map, quote, i);
                 return i + 1;
             }
             i += c == '\\' && i + 1 < t.length() && !lineBreak(t.charAt(i + 1)) ? 2 : 1;
         }
-        out.append(t, from, i);
+        for (int k = from; k < i; k++) put(out, map, t.charAt(k), k);
         return i;
     }
 
@@ -1660,15 +1694,16 @@ public final class Integrity {
      * to two quotes, its line breaks kept, to the same three quotes or to the text's end. The
      * index after it.
      */
-    private static int tripleString(String t, int from, StringBuilder out) {
+    private static int tripleString(String t, int from, StringBuilder out, int[] map) {
         char quote = t.charAt(from);
-        out.append(quote).append(quote);
+        put(out, map, quote, from);
+        put(out, map, quote, from + 1);
         int i = from + 3;
         while (i < t.length()) {
             work++;
             char c = t.charAt(i);
             if (c == quote && i + 2 < t.length() && t.charAt(i + 1) == quote && t.charAt(i + 2) == quote) return i + 3;
-            if (lineBreak(c)) out.append('\n');
+            if (lineBreak(c)) put(out, map, '\n', i);
             i += c == '\\' && i + 1 < t.length() && !lineBreak(t.charAt(i + 1)) ? 2 : 1;
         }
         return i;
@@ -1714,8 +1749,12 @@ public final class Integrity {
 
     /** Source files, whose code can declare tests; the lines of any other file (a .json, a .txt fixture) are data. */
     private static final Pattern SOURCE = Pattern.compile(".*\\.(?:java|kt|kts|groovy|scala|[cm]?[jt]sx?|vue|svelte|py|go|rb|cs|php|rs|swift)");
-    private static final Pattern PACKAGE_LINE = Pattern.compile("\\s*package\\s+[\\w.]+\\s*;?\\s*");
-    private static final Pattern IMPORT_LINE = Pattern.compile("\\s*import\\s+(?:static\\s+)?[\\w.]+(?:\\s*\\.\\s*\\*)?\\s*;?\\s*");
+    // A package or import line, read whole (matches) on a line of at most LONGEST characters. Every repetition is possessive:
+    // what follows each one cannot start with what it takes (white space before a name, a name before ";", ";" before white
+    // space), so giving back a character never finds a match, and the white space around ";" is not split two ways.
+    private static final Pattern PACKAGE_LINE = Pattern.compile("\\s*+package\\s++[\\w.]++\\s*+;?+\\s*+");
+    // a name's dot is part of the name unless ".*" follows it (import a.b.*): the lookahead reads the white space after one dot
+    private static final Pattern IMPORT_LINE = Pattern.compile("\\s*+import\\s++(?:static\\s++)?+(?:\\w|\\.(?!\\s*+\\*))++(?:\\s*+\\.\\s*+\\*)?+\\s*+;?+\\s*+");
     private static final Pattern JVM = Pattern.compile(".*\\.(?:java|kt|groovy|scala)");
 
     /**
@@ -1727,19 +1766,31 @@ public final class Integrity {
      * (see code), carrying a comment or a string that runs over several lines from line to line:
      * an example in such a comment or template string declares nothing. Where that reading may
      * go wrong (a quote it cannot tell), what it hides is still "text": a note, not a problem. A
-     * file that is not source (see SOURCE) declares nothing. Which tests it held is not read.
+     * line longer than LONGEST is not read for a test call: when no line that was read declares
+     * one, "unread" (a note, not a problem). A file that is not source (see SOURCE) declares
+     * nothing. Which tests it held is not read.
      */
     private static String declaresTests(String path, List<String> lines) {
         if (!SOURCE.matcher(path).matches()) return null;
+        boolean unread = false;
         // each line's characters, as the pattern reads them, are counted (see work)
-        for (String line : code(String.join("\n", lines)).split("\n", -1)) if (TEST_CALL.matcher(new Counted(line)).find()) return "code";
-        for (String line : lines) if (TEST_CALL.matcher(new Counted(line)).find()) return "text";
+        for (String line : code(String.join("\n", lines), null).split("\n", -1)) {
+            if (line.length() > LONGEST) unread = true;
+            else if (TEST_CALL.matcher(new Counted(line)).find()) return "code";
+        }
+        if (unread) return "unread";
+        for (String line : lines) if (line.length() <= LONGEST && TEST_CALL.matcher(new Counted(line)).find()) return "text";
         return null;
     }
 
-    /** The lines that are not package lines (and, with imports, not import lines either). */
+    /**
+     * The lines that are not package lines (and, with imports, not import lines either). A line
+     * longer than LONGEST is not read as either: it stays in the body, so two files are the same
+     * but for their package and imports only when such lines are equal as written.
+     */
     private static List<String> body(List<String> lines, boolean imports) {
-        return lines.stream().filter(l -> !PACKAGE_LINE.matcher(l).matches() && !(imports && IMPORT_LINE.matcher(l).matches())).toList();
+        return lines.stream().filter(l -> l.length() > LONGEST || !PACKAGE_LINE.matcher(new Counted(l)).matches()
+                && !(imports && IMPORT_LINE.matcher(new Counted(l)).matches())).toList();
     }
 
     /**
@@ -1779,6 +1830,7 @@ public final class Integrity {
             else if (repackaged != null) note("test file moved", path, "the same file is now at " + repackaged + ", in another package");
             else if (reimported != null) note("test file moved and its imports changed", path, "the same tests are now at " + reimported + ", with other imports: its run judges it");
             else if (testNamed(path) || "code".equals(declared)) problem("test file deleted", path, "the file is gone");
+            else if ("unread".equals(declared)) note("test support file deleted", path, "a line of it is longer than " + LONGEST + " characters and was not read; no line that was read declares a test");
             else if ("text".equals(declared)) note("test support file deleted", path, "only a comment or a string in it mentions a test; no line of its code declares one");
             else note("test support file deleted", path, "it declares no test cases that a simple reading can find");
         }
@@ -1953,8 +2005,8 @@ public final class Integrity {
         }
     }
 
-    private void byPath(Pattern kind, String what) {
-        for (Change.File f : change.files) if (kind.matcher(f.path()).matches()) note(what, f.path(), word(f.status()));
+    private void byPath(Predicate<String> kind, String what) {
+        for (Change.File f : change.files) if (kind.test(f.path())) note(what, f.path(), word(f.status()));
     }
 
     private void buildConfiguration() {
@@ -2057,11 +2109,15 @@ public final class Integrity {
         return isJava(path) ? JAVA_ASSERT : SCRIPT_ASSERT;
     }
 
+    /** The matches of p on the lines, each line read in pieces of at most LONGEST characters (a call cut by a piece's end is not counted). */
     private static int count(Pattern p, List<String> lines) {
         int n = 0;
         for (String line : lines) {
-            Matcher m = p.matcher(line);
-            while (m.find()) n++;
+            Matcher m = p.matcher(new Counted(line));
+            for (int at = 0; at < line.length(); at += LONGEST) {
+                m.region(at, Math.min(line.length(), at + LONGEST));
+                while (m.find()) n++;
+            }
         }
         return n;
     }
@@ -2124,7 +2180,7 @@ public final class Integrity {
     private static List<Double> numbers(Pattern p, List<String> lines) {
         List<Double> out = new ArrayList<>();
         for (String line : lines) {
-            Matcher m = p.matcher(line);
+            Matcher m = p.matcher(new Counted(line));
             while (m.find()) {
                 Double d = number(m.group(1) != null ? m.group(1) : m.group(2));
                 if (d != null) out.add(d);
@@ -2136,7 +2192,7 @@ public final class Integrity {
     private static Map<String, Double> keyed(List<String> lines) {
         Map<String, Double> out = new LinkedHashMap<>();
         for (String line : lines) {
-            Matcher m = SCRIPT_THRESHOLD.matcher(line);
+            Matcher m = SCRIPT_THRESHOLD.matcher(new Counted(line));
             while (m.find()) {
                 Double d = number(m.group(2));
                 if (d != null) out.putIfAbsent(m.group(1), d);

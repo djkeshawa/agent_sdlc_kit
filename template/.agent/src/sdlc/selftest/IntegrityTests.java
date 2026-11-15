@@ -122,6 +122,7 @@ final class IntegrityTests {
             notes(repo);
             callers(repo);
             deletedCost(repo);
+            movedCost(repo);
         } finally {
             Trusted.env = System::getenv;
             Ctx.root = savedRoot;
@@ -1022,6 +1023,67 @@ final class IntegrityTests {
             check("integrity: deleting " + e.getKey() + " (" + e.getValue().length() / 1000 + " kB) is read in work linear in it, and soon", ok);
             git(repo, "reset", "-q", "--hard", "HEAD~1");
         }
+    }
+
+    /**
+     * Audit round 6, finding 1: the readers of removed and added lines (a package or import line,
+     * the move matching, the test calls, the assumption counts, a pom's minimums) read lines of at
+     * most Integrity.LONGEST characters, and their patterns walk such a line once. Through sdlc
+     * check --no-run, on a file deleted and on the same file moved to another package: the audit's
+     * shape at 400,000 spaces (one line, longer than the bound), the same for an import line, and
+     * three shapes within the bound, 2 MB each, aimed at the patterns that were rewritten.
+     */
+    private static void movedCost(Path repo) throws IOException {
+        String rest = "\nimport org.junit.jupiter.api.Test;\n\nclass SpaceTest {\n    @Test\n    void adds() {}\n}\n";
+        StringBuilder packages = new StringBuilder(), imports = new StringBuilder(), minimums = new StringBuilder("<project>\n");
+        for (int i = 0; i < 1000; i++) packages.append("package demo").append(" ".repeat(1980)).append("; // c\n");
+        for (int i = 0; i < 1000; i++) imports.append("import static demo.Calc.").append(" ".repeat(1970)).append("x\n");
+        for (int i = 0; i < 900; i++) minimums.append("<minimum>0.8").append(" ".repeat(1980)).append("x\n");
+        minimums.append("</project>\n");
+        record Shape(String name, String path, String text, String moved, String movedText, String deleted, String afterMove) {}
+        String longPackage = "package demo" + " ".repeat(400_000) + "; // comment\n";
+        String longImport = "import demo.Calc" + " ".repeat(400_000) + "; // comment\n";
+        List<Shape> shapes = List.of(
+                new Shape("a package line of 400,000 spaces", "src/test/java/demo/SpaceTest.java", longPackage + rest,
+                        "src/test/java/demo/moved/SpaceTest.java", "package demo.moved;\n" + rest, "test file deleted", "test file deleted"),
+                new Shape("an import line of 400,000 spaces", "src/test/java/demo/SpaceTest.java", "package demo;\n" + longImport + rest,
+                        "src/test/java/demo/moved/SpaceTest.java", "package demo.moved;\n" + longImport + rest, "test file deleted", "test file moved"),
+                new Shape("1,000 package lines of 1,980 spaces", "src/test/java/demo/SpaceTest.java", packages + rest,
+                        "src/test/java/demo/moved/SpaceTest.java", "package demo.moved;\n" + packages + rest, "test file deleted", "test file moved"),
+                new Shape("1,000 import lines of 1,970 spaces", "src/test/java/demo/SpaceTest.java", "package demo;\n" + imports + rest,
+                        "src/test/java/demo/moved/SpaceTest.java", "package demo.moved;\n" + rest, "test file deleted", "test file deleted"),
+                new Shape("900 minimum lines of 1,980 spaces in a pom", "sub/pom.xml", minimums.toString(), "other/pom.xml", minimums.toString(), "build configuration changed",
+                        "build configuration changed"));
+        for (Shape s : shapes) {
+            write(repo, s.path(), s.text());
+            git(repo, "add", "-A");
+            git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a file of long lines");
+            Files.delete(repo.resolve(s.path()));
+            for (boolean move : List.of(false, true)) {
+                if (move) write(repo, s.moved(), s.movedText());
+                long before = Integrity.lintWork(), started = System.nanoTime();
+                Said said = checkWith(Map.of("no-run", "true"));
+                long spent = Integrity.lintWork() - before, ms = (System.nanoTime() - started) / 1_000_000;
+                String expected = move ? s.afterMove() : s.deleted();
+                boolean ok = ms < 3000 && spent <= 100L * (s.text().length() + (move ? s.movedText().length() : 0)) && said.out().contains(expected + ": " + s.path());
+                if (!ok || System.getenv("SDLC_COST") != null) System.out.println("    " + (move ? "moved " : "deleted ") + s.name() + ": " + ms + " ms, work " + spent + (ok ? "" : "\n" + said.out()));
+                check("integrity, through sdlc check --no-run: " + (move ? "moving" : "deleting") + " a file of " + s.name() + " is read in work linear in it, and soon (" + expected + ")", ok);
+            }
+            reset(repo);
+            git(repo, "reset", "-q", "--hard", "HEAD~1");
+        }
+        // a deleted file beside the tests whose only long line is not read: a note that says so, never a problem from that line
+        write(repo, "tests/helpers.py", "def helper():\n    return 1\nDATA = [" + "1, ".repeat(1000) + "]\n");
+        write(repo, "tests/cases.py", "DATA = '" + "x".repeat(3000) + "'\n\ndef test_real():\n    assert True\n");
+        git(repo, "add", "-A");
+        git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "helpers with a long line");
+        Files.delete(repo.resolve("tests/helpers.py"));
+        Files.delete(repo.resolve("tests/cases.py"));
+        List<Finding> gone = scan(repo);
+        check("integrity: a deleted helper with a line too long to read is a note that says the line was not read; a test call on another line is still a test file deleted",
+                only(gone, Level.NOTE, "test support file deleted", "tests/helpers.py", "longer than 2000 characters and was not read")
+                && only(gone, Level.PROBLEM, "test file deleted", "tests/cases.py", "the file is gone"));
+        git(repo, "reset", "-q", "--hard", "HEAD~1");
     }
 
     private static List<Finding> scan(Path repo) {
