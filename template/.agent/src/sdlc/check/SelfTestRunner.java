@@ -37,6 +37,7 @@ import sdlc.check.JUnitXml.Status;
  *   error-retried       threw every time the build ran it (error, then rerunError), as a set-up that fails does
  *   compile-later WORD  as needs WORD; where prod.txt holds the word, no file of the run compiles from the second run in that checkout on
  *   timeout-later WORD  as needs WORD; where prod.txt holds the word, the whole file gives no result from the second run in that checkout on
+ *   error-varies WORD   passes where prod.txt holds the word; else throws, IllegalStateException in the first, third, ... run in that checkout and UnsupportedOperationException in the others
  * A name is reported as a script's string would give it: \' is a quote. A name with %i in it is
  * reported twice, with 1 and with 2 in its place (it.each, a parameterized method). A line
  * without ": " is not a case: it stands for the test's body. A name is reported as it is written,
@@ -160,6 +161,7 @@ final class SelfTestRunner implements Runner {
                         case "flaky" -> has || call > 1 ? Status.PASSED : Status.FAILED; // without the word: fails only the first time
                         case "needs", "compile-later", "timeout-later" -> has ? Status.PASSED : Status.FAILED;
                         case "error-unless" -> has ? Status.PASSED : Status.ERRORED;
+                        case "error-varies" -> has ? Status.PASSED : Status.ERRORED;
                         case "compile-needs" -> Status.PASSED; // it compiled, so the word is there
                         case "leans-on" -> how.length > 1 && (Files.isRegularFile(checkout.resolve(how[1])) || Files.isRegularFile(checkout.resolve(".built").resolve(how[1])))
                                 ? Status.PASSED : Status.FAILED;
@@ -173,7 +175,8 @@ final class SelfTestRunner implements Runner {
                     }
                     boolean retried = how[0].endsWith("-retried");
                     for (String one : shown.contains("%i") ? List.of(shown.replace("%i", "1"), shown.replace("%i", "2")) : List.of(shown)) {
-                        cases.add(new JUnitXml.Case(suite, one, s, s == Status.ERRORED ? "java.lang.IllegalStateException" : s == Status.FAILED ? "AssertionError" : "",
+                        String thrown = how[0].equals("error-varies") && call % 2 == 0 ? "java.lang.UnsupportedOperationException" : "java.lang.IllegalStateException";
+                        cases.add(new JUnitXml.Case(suite, one, s, s == Status.ERRORED ? thrown : s == Status.FAILED ? "AssertionError" : "",
                                 s == Status.FAILED ? "expected something else" : "", retried));
                     }
                 }

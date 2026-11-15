@@ -1660,6 +1660,15 @@ final class CheckTests {
             write(repo, e.getKey(), was);
         }
 
+        // a test the change adds throws before the change in every run, another exception in each (a sensitive test beside it makes the repeat): the
+        // results do not differ, the reasons do. Could not be judged, with both, never left unsaid
+        write(repo, "tests/varied.t", "guard: needs fixed\nlater: error-varies fixed\n");
+        String varied = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("every difference: a test that throws another exception before the change in each run could not be judged, with each reason",
+                varied.contains("      tests/varied.t  [self test]\n        later: before the change it threw IllegalStateException, not an assertion; in another run, before the "
+                        + "change it threw UnsupportedOperationException, not an assertion\n") && varied.contains("\n        guard\n") && code == 0);
+        Files.delete(repo.resolve("tests/varied.t"));
+
         // CR4-2: the same cases in another order are the same answer. Two tests skipped under new names beside one that ran, listed in the second run
         // after the change in the other order: could not be judged, as in one run, and nothing from run to run
         write(repo, "checks/fresh.t", "a: pass\np: skip\nq: skip\n");

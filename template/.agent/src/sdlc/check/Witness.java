@@ -438,6 +438,9 @@ final class Witness {
      * did not compile or load in any run after the change (see brokenAfter). Else a verdict of a test is said
      * only where every combination says the same; a test that failed before and passed after in
      * the first runs is sensitive only where every combination says so, and unstable otherwise;
+     * a verdict that every combination gives for reasons in other words (the exception thrown
+     * before the change differs from run to run) is said with each reason, as the results alone
+     * do not differ and no other line would say it;
      * and of any other test that the combinations do not agree on, no verdict is said here: its
      * difference from run to run is then answered by a rule of its file or by reconcile.
      *
@@ -500,6 +503,11 @@ final class Witness {
                     if (first == Mark.FRESH) freshEvery.add(k);
                     if (first == Mark.FRESH || first instanceof Verdict v && (v.kind() == Kind.EXISTING_PASSES_ON_BOTH || v.kind() == Kind.PASSES_ON_BOTH)) passing.add(k);
                     if (first instanceof Verdict v) mine.add(v.with(c));
+                } else if (first instanceof Verdict v0 && all.stream().allMatch(x -> x instanceof Verdict v && v.kind() == v0.kind() && v.tests() == v0.tests() && v.newCode() == v0.newCode())) {
+                    // the same verdict in every combination, for reasons put in other words (another exception thrown before the change in another run),
+                    // which the reports' results alone do not show to differ: said, with each reason
+                    String why = String.join("; in another run, ", all.stream().map(x -> ((Verdict) x).detail()).distinct().toList());
+                    mine.add(new Verdict(f, v0.name(), v0.kind(), why, by, v0.tests(), v0.newCode(), c));
                 }
             }
             passingIn.put(f, passing);
