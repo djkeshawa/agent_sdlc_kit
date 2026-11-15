@@ -338,6 +338,23 @@ final class Witness {
         for (String f : files) if (before.get(f) != null && before.get(f).broken()) alone.add(f);
         if (alone.size() < 2 || alone.size() > MAX_ALONE) alone.clear();
         for (String f : alone) before.put(f, runAlone(change, runner, files, f, base, timeout));
+        // A file run alone before the change ran beside the other changed test files as the base has them, and its run after the change
+        // beside them as the change has them: the two sides differ in those files too, not only in the change of the code. So each such
+        // file is run alone after the change as well, and a test that passes after the change only beside the other changed test files is
+        // not compared with its run before (see read): what it did there may come from them. One more run for each file run alone.
+        Map<String, Set<String>> lonely = new LinkedHashMap<>(); // per file run alone: the identities that pass after the change with the others, and not alone
+        for (String f : alone) {
+            FileRun a = after.get(f);
+            if (!gave(a)) continue;
+            FileRun solo = runAlone(change, runner, files, f, head, timeout);
+            for (JUnitXml.Case c : a.cases()) {
+                if (out(c) == Out.PASSED && (status(solo, key(c)) != Out.PASSED || solo.retriesUnknown() != null)) lonely.computeIfAbsent(f, k -> new LinkedHashSet<>()).add(key(c));
+            }
+        }
+        if (!alone.isEmpty()) {
+            restore(change, runner, head, files);
+            restore(change, runner, base, files);
+        }
         seen.saw(Side.AFTER, files, after);
         seen.saw(Side.BEFORE, files, before);
         // The first reading. What the first runs say decides which files and tests are run again, and which old tests the fourth run asks
@@ -364,7 +381,7 @@ final class Witness {
             FileRun o = edited.contains(f) ? seen.of(Side.OLD, f).get(0) : null;
             // a file whose runs do not say which passes were at the first try is judged by its failures alone (see blind): nothing to run again for
             if (blind(seen, f) != null) continue;
-            Map<String, Object> r = read(f, edited.contains(f), o, b, a, shared, shown(gave(o) ? o.cases() : List.of(), a.cases()), by);
+            Map<String, Object> r = read(f, edited.contains(f), o, b, a, shared, shown(gave(o) ? o.cases() : List.of(), a.cases()), lonely.getOrDefault(f, Set.of()), by);
             for (Map.Entry<String, Object> x : r.entrySet()) if (x.getValue() instanceof Verdict v && v.kind() == Kind.SENSITIVE) candidates.computeIfAbsent(f, k -> new LinkedHashSet<>()).add(x.getKey());
             if (edited.contains(f) && gave(o)) {
                 Names n = names(o.cases(), a.cases());
@@ -374,23 +391,6 @@ final class Witness {
                 // fewer tests run than passed as it was, in the first runs: run again, and as it was on the code after the change (see lost)
                 if (passes(o.cases()) > ran(a.cases())) short1.add(f);
             }
-        }
-        // A test that was run alone before the change may have failed there for want of another changed test file,
-        // not for want of the change. It is run alone after the change too, and must pass there as well.
-        Set<String> notAlone = new LinkedHashSet<>(); // file and identity: a test that passes after the change only beside the other changed test files
-        for (String f : new ArrayList<>(candidates.keySet())) {
-            if (!alone.contains(f)) continue;
-            FileRun solo = runAlone(change, runner, files, f, head, timeout);
-            for (String k : new ArrayList<>(candidates.get(f))) {
-                if (status(solo, k) == Out.PASSED) continue;
-                candidates.get(f).remove(k);
-                notAlone.add(f + "\n" + k);
-            }
-            if (candidates.get(f).isEmpty()) candidates.remove(f);
-        }
-        if (!alone.isEmpty()) {
-            restore(change, runner, head, files);
-            restore(change, runner, base, files);
         }
         List<String> sensitive = new ArrayList<>(candidates.keySet());
         // files whose skips may say a test is switched off, whose counts say tests that ran do not run now or tests are gone, or whose counts say
@@ -432,7 +432,7 @@ final class Witness {
         named.keySet().removeAll(blinded);
         skipsIn.keySet().removeAll(blinded);
         switched.removeAll(blinded);
-        return decide(files, edited, ended, candidates, notAlone, blinded, named, skipsIn, sharedIn, switched, fourth, seen, by);
+        return decide(files, edited, ended, candidates, lonely, blinded, named, skipsIn, sharedIn, switched, fourth, seen, by);
     }
 
     /**
@@ -491,14 +491,14 @@ final class Witness {
      * skips and its own lines first, then the rules of the edited files, then the sensitive tests,
      * and last what no rule answered for (see reconcile).
      */
-    private static List<Verdict> decide(List<String> files, Set<String> edited, Map<String, Verdict> ended, Map<String, Set<String>> candidates, Set<String> notAlone,
+    private static List<Verdict> decide(List<String> files, Set<String> edited, Map<String, Verdict> ended, Map<String, Set<String>> candidates, Map<String, Set<String>> lonely,
             Set<String> blinded, Map<String, Names> named, Map<String, Skips> skipsIn, Map<String, String> sharedIn, List<String> switched, Fourth fourth, Seen seen, String by) {
         List<Verdict> out = new ArrayList<>();
         Map<String, Map<String, String>> shownIn = new LinkedHashMap<>();
         Map<String, Set<String>> passingIn = new LinkedHashMap<>(); // per file: the cases that pass on both sides in every combination (see broken)
         Map<String, List<Verdict>> newIn = new LinkedHashMap<>(); // per edited file: what its counts say of its new tests, in every combination (see newTests)
         Map<String, Ledger> ledgers = new LinkedHashMap<>();
-        List<Verdict> lone = new ArrayList<>(), last = new ArrayList<>(); // tests that pass after the change only beside other files; the first runs' sensitive tests
+        List<Verdict> last = new ArrayList<>(); // the first runs' sensitive tests
         for (String f : files) {
             if (ended.containsKey(f)) {
                 out.add(ended.get(f));
@@ -514,12 +514,13 @@ final class Witness {
                 out.addAll(blindly(f, blind(seen, f), afters, sh, by));
                 continue;
             }
+            Set<String> lone = lonely.getOrDefault(f, Set.of());
             List<Map<String, Object>> reads = new ArrayList<>();
             List<Count> counts = new ArrayList<>();
             for (FileRun o : olds) {
                 for (FileRun b : befores) {
                     for (FileRun a : afters) {
-                        Map<String, Object> r = gave(a) ? read(f, ed, o, b, a, sharedIn.get(f), sh, by) : Map.of();
+                        Map<String, Object> r = gave(a) ? read(f, ed, o, b, a, sharedIn.get(f), sh, lone, by) : Map.of();
                         reads.add(r);
                         if (ed) counts.add(gave(o) && gave(a) ? count(f, names(o.cases(), a.cases()), r, a, by) : null);
                     }
@@ -538,9 +539,6 @@ final class Witness {
                 Verdict fails = failsAfter(f, k, afters, sh, by);
                 if (fails != null) {
                     (candidate ? last : mine).add(fails.with(c));
-                } else if (candidate && notAlone.contains(f + "\n" + k)) {
-                    lone.add(new Verdict(f, shown(sh, k), Kind.UNKNOWN, "after the change it passes only together with the other changed test files, so its failure before the change may "
-                            + "come from them", by, c));
                 } else if (candidate) {
                     if (all.stream().allMatch(x -> x instanceof Verdict v && v.kind() == Kind.SENSITIVE)) last.add(new Verdict(f, shown(sh, k), Kind.SENSITIVE, "", by, c));
                     else if (afters.stream().anyMatch(r -> status(r, k) != Out.PASSED)) last.add(new Verdict(f, shown(sh, k), Kind.UNSTABLE, "passed after the change in one run and not in another", by, c));
@@ -573,7 +571,6 @@ final class Witness {
             // line answers for a difference: with no report as it was the ledger holds none between the sides, and an empty file has no case to differ
             else if (a.cases().isEmpty() && (o == null || o.cases().isEmpty())) out.add(new Verdict(f, "", Kind.UNKNOWN, "the file ran after the change and reports no tests", by, Cover.NONE));
         }
-        out.addAll(lone);
         Set<String> unsteady = new LinkedHashSet<>(), recounted = new LinkedHashSet<>(); // files whose skips, and whose counts of gone and fresh cases, said another thing in a repeat run
         for (String f : switched) {
             // the whole decision is made again from the complete reports of each run, on both sides: each report as it was against each after the change
@@ -653,8 +650,14 @@ final class Witness {
      * change (a): a verdict, or a Mark. o is the run of the file as it was (null for a file the
      * change adds), b the run before the change. This is the reading of one run on each side:
      * what is said is what every combination says (see decide).
+     *
+     * lone: the identities that pass after the change beside the other changed test files and not
+     * alone (see judge), of a file that could be run before the change only alone. Its run
+     * before the change differs from its run after it in those files too, so what it did before
+     * is not compared with what it does after: could not be judged, never sensitive, never a test
+     * that passes on both sides, and never counted as one (see count, broken).
      */
-    private static Map<String, Object> read(String f, boolean edited, FileRun o, FileRun b, FileRun a, String shared, Map<String, String> sh, String by) {
+    private static Map<String, Object> read(String f, boolean edited, FileRun o, FileRun b, FileRun a, String shared, Map<String, String> sh, Set<String> lone, String by) {
         Map<String, Object> out = new LinkedHashMap<>();
         Names n = edited && gave(o) ? names(o.cases(), a.cases()) : null;
         Set<String> fresh = new LinkedHashSet<>();
@@ -693,6 +696,8 @@ final class Witness {
             if (!gave(b)) v = b != null && b.broken() ? Verdict.beforeFailed(f, name, "before the change the file " + b.problem(), by)
                     : new Verdict(f, name, Kind.UNKNOWN, "before the change the file " + (b == null ? "gave no result" : b.problem()), by, Cover.NONE);
             else if (p == null) v = Verdict.beforeFailed(f, name, "was not found before the change", by);
+            else if (lone.contains(k)) v = new Verdict(f, name, Kind.UNKNOWN, "after the change it passes only together with the other changed test files, and before the change "
+                    + "the file could be run only without them (as the base has them), so what it did there may come from them, not from the change", by, Cover.NONE);
             else if (out(p) == Out.PASSED && shared != null) v = new Verdict(f, name, Kind.UNKNOWN, "passes before and after, but " + shared, by, Cover.NONE);
             else if (out(p) == Out.PASSED && edited && !gave(o)) v = new Verdict(f, name, Kind.UNKNOWN, "passes before and after, but run as it was before the change, the file "
                     + (o == null ? "gave no result" : o.problem()) + ", so it cannot be told whether this test is new", by, Cover.NONE);
@@ -757,10 +762,13 @@ final class Witness {
      * per file, the old tests that passed in every run of the file as it was and failed or threw
      * here in every run, of all the runs seen (see Seen); wavering: those that failed or threw
      * here in the first run and did not do both in every run. unclear: per file, the old tests of
-     * which the first run gave no clean result, passed or failed (see untold).
+     * which the first run gave no clean result, passed or failed (see untold). companions: per
+     * file, the old tests that failed or threw in the first run beside the other edited files as
+     * they were and did not when their file alone went back, with what they did then (see fourth).
      */
-    private record Fourth(Map<String, FileRun> first, Map<String, Set<String>> broke, Map<String, Set<String>> wavering, Map<String, List<String>> unclear) {
-        static final Fourth NONE = new Fourth(Map.of(), Map.of(), Map.of(), Map.of());
+    private record Fourth(Map<String, FileRun> first, Map<String, Set<String>> broke, Map<String, Set<String>> wavering, Map<String, List<String>> unclear,
+            Map<String, Map<String, String>> companions) {
+        static final Fourth NONE = new Fourth(Map.of(), Map.of(), Map.of(), Map.of(), Map.of());
 
         /** "passed before the change; as the test was, on the code after the change x fails: why", of those keys that broke. */
         String said(String file, Collection<String> keys, Map<String, String> shown) {
@@ -864,19 +872,42 @@ final class Witness {
                 first.put(f, FileRun.failed("could not be set up (" + e.getMessage() + ")"));
                 unclear.put(f, new ArrayList<>(wanted.get(f)));
             }
-            return new Fourth(first, Map.of(), Map.of(), unclear);
+            return new Fourth(first, Map.of(), Map.of(), unclear, Map.of());
         }
         Map<String, FileRun> ran = run(runner, mixed.dir, files, timeout);
         seen.saw(Side.OLD_TESTS, files, ran);
         for (String f : files) first.put(f, ran.get(f));
         Map<String, Set<String>> failing = new LinkedHashMap<>(), broke = new LinkedHashMap<>(), wavering = new LinkedHashMap<>();
         Map<String, List<String>> unclear = new LinkedHashMap<>();
+        Map<String, Map<String, String>> companions = new LinkedHashMap<>();
         for (String f : files) {
             // each old test asked about passes here, fails or throws here, or is told of (untold): no result, not reported, reported twice, skipped, run again
             for (String k : wanted.get(f)) {
                 Out s = status(first.get(f), k);
                 if (failed(s)) failing.computeIfAbsent(f, x -> new LinkedHashSet<>()).add(k);
                 else if (s != Out.PASSED) unclear.computeIfAbsent(f, x -> new ArrayList<>()).add(k);
+            }
+        }
+        // The old files of this runner went back together, so an old test ran here beside the other edited files as they were: an old
+        // helper of another test file against the new code. Where the change of that file is the change's own answer to the new code, a
+        // failure here comes from putting it back, not from the change. So where more than one file went back, a file with an old test that
+        // fails here and is not reported or is skipped after the change (the only kind that can be said to be taken out of the way, see
+        // broken) is run once more alone: the tree after the change with only this file as it was. An old test that does not fail there too
+        // is never said to be broken: could not be judged (companions), or unstable where its runs here disagree. One run more for each
+        // such file, only where more than one file went back.
+        Map<String, Map<String, String>> clean = new LinkedHashMap<>(); // per file: the old tests that did not fail alone, with what they did
+        if (files.size() > 1) {
+            for (String f : failing.keySet()) {
+                FileRun now = seen.of(Side.AFTER, f).get(0);
+                List<String> gone = failing.get(f).stream().filter(k -> !gave(now) || notRun(now, k)).toList();
+                if (gone.isEmpty()) continue;
+                FileRun solo = oldAlone(change, runner, files, f, mixed, timeout);
+                for (String k : gone) {
+                    Out s = status(solo, k);
+                    if (failed(s)) continue;
+                    clean.computeIfAbsent(f, x -> new LinkedHashMap<>()).put(k, !gave(solo) ? "gives no result (" + solo.problem() + ")" : s == null ? "gives no clean result"
+                            : s == Out.SKIPPED ? "is skipped" : s == Out.RETRIED ? "passes only when run again" : "passes");
+                }
             }
         }
         List<String> again = new ArrayList<>(failing.keySet());
@@ -895,10 +926,35 @@ final class Witness {
         for (String f : again) {
             for (String k : failing.get(f)) {
                 boolean every = seen.of(Side.OLD, f).stream().allMatch(r -> status(r, k) == Out.PASSED) && seen.of(Side.OLD_TESTS, f).stream().allMatch(r -> failed(status(r, k)));
-                (every ? broke : wavering).computeIfAbsent(f, x -> new LinkedHashSet<>()).add(k);
+                String alone = clean.getOrDefault(f, Map.of()).get(k);
+                if (every && alone != null) companions.computeIfAbsent(f, x -> new LinkedHashMap<>()).put(k, alone);
+                else (every ? broke : wavering).computeIfAbsent(f, x -> new LinkedHashSet<>()).add(k);
             }
         }
-        return new Fourth(first, broke, wavering, unclear);
+        return new Fourth(first, broke, wavering, unclear, companions);
+    }
+
+    /**
+     * Runs one edited test file as it was in the fourth checkout with every other file put back as
+     * the change has it, then lays all of them back as they were for the runs that follow.
+     */
+    private static FileRun oldAlone(Change change, Runner runner, List<String> files, String file, Scratch mixed, int timeout) {
+        List<String> others = files.stream().filter(x -> !x.equals(file)).toList();
+        try {
+            mixed.write(change.head, others);
+            runner.forgetBuilt(mixed.dir, files);
+            FileRun run = run(runner, mixed.dir, List.of(file), timeout).get(file);
+            return run == null ? FileRun.failed("gave no result") : run;
+        } catch (java.io.IOException e) {
+            return FileRun.failed("could not be set up alone (" + e.getMessage() + ")");
+        } finally {
+            try {
+                mixed.write(change.base, files);
+                runner.forgetBuilt(mixed.dir, files);
+            } catch (java.io.IOException e) {
+                throw new sdlc.core.UsageException("cannot prepare the checkout for a repeat run: " + e.getMessage());
+            }
+        }
     }
 
     private static boolean failed(Out s) {
@@ -1629,6 +1685,13 @@ final class Witness {
             // whatever became of it: a run that did not say what the others said is said, gone, skipped or running
             out.add(new Verdict(f, shown(n.shown(), k), Kind.UNSTABLE, WAVERED, by, Cover.of(List.of(k), Side.OLD, Side.OLD_TESTS)));
             judged.add(f + "\n" + k);
+        }
+        for (Map.Entry<String, String> c : fourth.companions().getOrDefault(f, Map.of()).entrySet()) {
+            // it failed only beside the other edited files as they were (see fourth): what the change of those files did is part of the change
+            out.add(new Verdict(f, shown(n.shown(), c.getKey()), Kind.UNKNOWN, "passed before the change; as the test was, on the code after the change, it fails beside the other "
+                    + "edited test files as they were, and " + c.getValue() + " beside them as the change has them, so its failure there may come from the change of those files, which is "
+                    + "part of the change: whether the change broke it is not known", by, Cover.of(List.of(c.getKey()), read)));
+            judged.add(f + "\n" + c.getKey());
         }
         long b = out1.size(), m = rewrites.size();
         Cover gone = Cover.of(out1, read);

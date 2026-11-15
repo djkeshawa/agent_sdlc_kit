@@ -328,6 +328,8 @@ final class CheckTests {
         write(repo, "checks/code.t", CODE);
         write(repo, "checks/guarded.t", GUARDED);
         write(repo, "checks/r4.t", R4);
+        write(repo, "checks/pa.t", PA);
+        write(repo, "checks/pb.t", PB);
         write(repo, ".gitignore", "ignored/\n");
         git(repo, "init", "-q", "-b", "main");
         commit(repo, "base");
@@ -744,7 +746,7 @@ final class CheckTests {
         unlisted(repo);
         lost(repo);
         everyDifference(repo);
-        retries(repo);
+        retriesAndCompanions(repo);
 
         // a test that went to another changed file: each file is judged by its own counts, and a title is not read to pair them
         write(repo, "checks/judged.t", JUDGED.replace("goes too: pass\n", ""));
@@ -1851,10 +1853,17 @@ final class CheckTests {
     /** A test file of the base with two tests; on the code of the fix the second passes only when the runner runs it again. */
     private static final String R4 = "a: pass\nb: retried-with fixed\n";
 
+    /** A test file of the base whose guard compares the code with what a helper in another test file (pb.t) expects. */
+    private static final String PA = "guard: agrees checks/pb.t two\nother: pass\n";
+
+    /** That other test file of the base: its helper does not expect "two". */
+    private static final String PB = "steady: pass\n";
+
     /**
-     * The fifth audit: retries a runner does not report (CR5-1).
+     * The fifth audit: retries a runner does not report (CR5-1), and a file run alone before the
+     * change whose companions changed (CR5-2).
      */
-    private static void retries(Path repo) throws IOException {
+    private static void retriesAndCompanions(Path repo) throws IOException {
         // CR5-1: the guard replaced by a vacuous test beside a sensitive one. Its old version fails at the first try on the code of the fix and passes
         // when run again: not a clean pass. The fourth run's own line says the old guard could not be judged
         write(repo, "checks/guarded.t", "guard: pass\nnew feature: needs fixed\n");
@@ -1894,6 +1903,39 @@ final class CheckTests {
                 && !lostSaid(blindEdited) && code == 0);
         write(repo, "checks/r4.t", R4);
 
+        // CR5-2: tests that compare the code with a helper in another changed test file, while a new test file stops the others from compiling
+        // before the change, so each is run alone there, beside the other changed test files as the base has them
+        write(repo, "prod.txt", "v1\nfixed\ntwo\n");
+        write(repo, "checks/pc.t", "new api: compile-needs two\n");
+        // a new test that passes before the change alone, beside the old helper, and after beside the new: not a test that passes on both sides
+        write(repo, "checks/pb.t", PB + "new case: needs two\n");
+        write(repo, "checks/pd.t", "check: agrees checks/pb.t two\n");
+        String isolated = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("isolation: a new test that passes on both sides only beside the old helper before and the new after is not said to pass on both sides",
+                isolated.contains("      checks/pd.t  [self test]\n        check: after the change it passes only together with the other changed test files, and before the change the "
+                        + "file could be run only without them (as the base has them), so what it did there may come from them, not from the change\n")
+                && !isolated.contains("so it does not test the change") && isolated.contains("        new case\n") && code == 0);
+        Files.delete(repo.resolve("checks/pd.t"));
+        // the fifth audit's shape: the guard only renamed, the helper and the code change together, the helper's file gains a sensitive test. The
+        // renamed guard is not a test that passes on both sides, and the old guard, which fails on the change only beside the old helper, is not accused
+        write(repo, "checks/pa.t", PA.replace("guard:", "renamed guard:"));
+        String renamed = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("isolation: a guard only renamed, beside a helper changed with the code, is not accused",
+                !renamed.contains("taken out") && renamed.contains("        renamed guard: after the change it passes only together with the other changed test files")
+                && renamed.contains("        guard: passed before the change; as the test was, on the code after the change, it fails beside the other edited test files as they were, "
+                        + "and passes beside them as the change has them") && code == 0);
+        Files.delete(repo.resolve("checks/pc.t"));
+        // the fourth run alone: the guard deleted beside the helper's change. It fails as it was on the change only beside the old helper: it is not said
+        // to be broken and taken out of the way, and it is a test that ran and does not run now
+        write(repo, "checks/pa.t", "other: pass\n");
+        String deleted = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("fourth run: an old test that fails on the change only beside the other edited test files as they were is not said to be broken, and its deletion is still said",
+                !deleted.contains("taken out") && deleted.contains(L1 + "      checks/pa.t  [self test]\n")
+                && deleted.contains("        guard: passed before the change; as the test was, on the code after the change, it fails beside the other edited test files as they were, "
+                        + "and passes beside them as the change has them, so its failure there may come from the change of those files, which is part of the change: whether the change "
+                        + "broke it is not known\n") && code == 1);
+        write(repo, "checks/pa.t", PA);
+        write(repo, "checks/pb.t", PB);
         write(repo, "prod.txt", "v1\nfixed\n");
     }
 

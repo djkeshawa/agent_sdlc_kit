@@ -40,6 +40,8 @@ import sdlc.check.JUnitXml.Status;
  *   error-varies WORD   passes where prod.txt holds the word; else throws, IllegalStateException in the first, third, ... run in that checkout and UnsupportedOperationException in the others
  *   retried-with WORD   passes; where prod.txt holds the word, only when the runner ran it again (vitest's retry: a test that fails at the first try on that code)
  *   retried-without WORD  passes; where prod.txt lacks the word, only when the runner ran it again
+ *   agrees FILE WORD    passes where prod.txt and the checkout's FILE both hold the word or both lack it, else fails by assertion: a test that
+ *                       compares the code with what a helper in another test file expects
  * A line "retries not said" (no ": ") makes the file's runs not say which passes were at the first try,
  * as a version of vitest that does not count retries.
  * A name is reported as a script's string would give it: \' is a quote. A name with %i in it is
@@ -167,6 +169,8 @@ final class SelfTestRunner implements Runner {
                         case "error-unless" -> has ? Status.PASSED : Status.ERRORED;
                         case "error-varies" -> has ? Status.PASSED : Status.ERRORED;
                         case "compile-needs" -> Status.PASSED; // it compiled, so the word is there
+                        case "agrees" -> how.length > 2 && prod.contains(how[2]) == (Files.isRegularFile(checkout.resolve(how[1])) && Files.readString(checkout.resolve(how[1])).contains(how[2]))
+                                ? Status.PASSED : Status.FAILED;
                         case "leans-on" -> how.length > 1 && (Files.isRegularFile(checkout.resolve(how[1])) || Files.isRegularFile(checkout.resolve(".built").resolve(how[1])))
                                 ? Status.PASSED : Status.FAILED;
                         default -> Status.ERRORED;
