@@ -1134,7 +1134,7 @@ final class IntegrityTests {
      * Audit round 5, finding 7: the lint's two levels through the callers of the scan, not the scan
      * alone: sdlc check, with and without its run, the stop hook and --since. What the lint is sure
      * of fails (check, the stop hook); a note is said and never fails; --since reports problems
-     * only and never fails.
+     * and notes alike, as the check does, and never fails.
      */
     private static void callers(Path repo) throws IOException {
         String sureLine = "it.skip('later', () => {})", noteLines = "test.skip('webkit'\n  === browserName, 'webkit only');\n";
@@ -1161,8 +1161,8 @@ final class IntegrityTests {
         git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a switch and a note");
         try {
             Said since = checkWith(Map.of("since", "1d", "max", "1", "no-run", "true"));
-            check("integrity, through sdlc check --since: the commit's sure switch is a problem in the report, the note is not, and the report never fails",
-                    since.code() == 0 && since.out().contains("    " + sure) && since.out().contains("1 integrity problem") && !since.out().contains("webkit"));
+            check("integrity, through sdlc check --since: the commit's sure switch is a problem in the report, the note a note, not counted, and the report never fails",
+                    since.code() == 0 && since.out().contains("    " + sure + "\n") && since.out().contains("    " + note + "\n") && since.out().contains("1 integrity problem"));
         } finally {
             git(repo, "reset", "-q", "--hard", "HEAD~1");
         }

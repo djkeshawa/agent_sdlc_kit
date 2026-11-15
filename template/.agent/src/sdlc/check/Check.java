@@ -182,7 +182,9 @@ public final class Check {
 
     /**
      * --since 30d: the same check, replayed over each commit of the recent history, one line or two
-     * per commit and a summary. A report on the past: it never fails.
+     * per commit and a summary: per commit the counts, the lines of the verdicts about a file that
+     * fail a change (and of a moved test file, which is counted nowhere), and the text check's
+     * problems and notes. A report on the past: it never fails.
      */
     private static int since(Map<String, String> opt, int runs, int timeout) {
         String window = window(opt.get("since"));
@@ -224,6 +226,7 @@ public final class Check {
                     if (v.kind() == Kind.PASSES_ON_BOTH) out.println("        does not test the change: " + which);
                     else if (v.kind() == Kind.NOT_RUN_NOW) out.println("        ran before, do not run after: " + which);
                     else if (v.kind() == Kind.OLD_FAILS_AFTER) out.println("        passed before, fails as it was after, taken out: " + which);
+                    else if (v.kind() == Kind.MOVED) out.println("        moved, not counted: " + which);
                 }
                 for (Kind k : List.of(Kind.PASSES_ON_BOTH, Kind.NOT_RUN_NOW, Kind.OLD_FAILS_AFTER)) if (w.atLeast(k)) least.add(k);
                 sensitive += w.count(Kind.SENSITIVE);
@@ -233,10 +236,11 @@ public final class Check {
                 notRun += w.count(Kind.NOT_RUN_NOW);
                 takenAway += w.count(Kind.OLD_FAILS_AFTER);
             }
+            // the notes too, as the check of a change prints them: a note says what the text check could not settle (a moved file's imports), and is not counted
             for (Finding x : findings) {
-                if (x.level() != Finding.Level.PROBLEM) continue;
-                out.println("    PROBLEM  " + x.kind() + ": " + x.path() + (x.detail().isBlank() ? "" : "  " + x.detail().strip()));
-                problems++;
+                boolean problem = x.level() == Finding.Level.PROBLEM;
+                out.println("    " + (problem ? "PROBLEM  " : "note     ") + x.kind() + ": " + x.path() + (x.detail().isBlank() ? "" : "  " + x.detail().strip()));
+                if (problem) problems++;
             }
         }
         int n = Math.min(commits.size(), max);

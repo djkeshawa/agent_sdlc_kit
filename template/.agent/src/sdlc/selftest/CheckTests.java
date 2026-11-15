@@ -748,7 +748,17 @@ final class CheckTests {
         write(repo, "checks/broken.t", latest.replace("fragile: fails-with latest", "fragile anew: pass").replace("steady: fails-with latest", "steady anew: pass")
                 .replace("wobbly: fails-with latest", "wobbly anew: needs latest"));
         commit(repo, "three tests broken, one rewritten and two taken out of the way");
+        Files.delete(repo.resolve("tests/jvm/a/CalcTest.java"));
+        write(repo, "tests/jvm/b/CalcTest.java", CALC.replace("package a;", "package b;").replace("import real.Calc;", "import real.Calc;\nimport real.Extra;"));
+        commit(repo, "a test class moved, its imports changed");
         String history = report(Map.of("selftest-runner", "true", "runs", "1", "since", "1d"));
+        check("check: --since says of a commit that moves a test file that it moved, and the text check's note of its imports",
+                history.contains("a test class moved, its imports changed\n    tests: only tests that were already there, passing on both sides\n"
+                        + "        moved, not counted: tests/jvm/b/CalcTest.java  moved from tests/jvm/a/CalcTest.java (its lines are the same but for its package and import lines)")
+                && history.contains(". Its imports changed: an import may change what a test tests while it passes, which no run shows\n"
+                        + "    note     test file moved and its imports changed: tests/jvm/a/CalcTest.java  the same tests are now at tests/jvm/b/CalcTest.java, with other imports: "
+                        + "its run judges it\n")
+                && history.contains("\n  0 integrity problems\n"));
         check("check: --since counts each verdict of a file by the tests it proves, not by its lines",
                 history.contains("two new tests that prove nothing\n    tests: at least 2 new, pass on both sides\n")
                 && history.contains("two tests switched off and two removed\n    tests: at least 4 ran before, do not run after\n")
@@ -773,7 +783,7 @@ final class CheckTests {
                 && history.contains("ran before, do not run after: checks/named.t  the file as it was passed 8 of its tests, and after the change it runs 7: at least 1 test that ran "
                         + "before the change does not run now (no longer reported: goes)"));
         check("check: --since wants a time span", Asserts.throwsUsage(() -> Check.run(Map.of("since", "true"))));
-        git(repo, "reset", "-q", "--hard", "HEAD~11");
+        git(repo, "reset", "-q", "--hard", "HEAD~12");
         write(repo, "prod.txt", "v1\nfixed\nmore\n");
         branch = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: commits on the branch and uncommitted edits are one change", branch.contains("2 files changed against main") && branch.contains("1 fails before the change and passes after it"));

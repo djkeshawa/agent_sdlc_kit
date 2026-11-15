@@ -328,7 +328,7 @@ uncommitted changes are checked, and the report says so.
 | `--runs N` | Runs per side for a test that looks sensitive, and as it was and after the change for an edited file whose skips or counts say something (default 3) |
 | `--timeout S` | Seconds one test run may take (default 900) |
 | `--no-run` | Read the diff only; run no tests |
-| `--since 30d` | Replay the check over each recent commit of the branch (`12h`, `2w`, `3m` or a date). `--max N` sets how many (default 20). A report on the past: it never fails |
+| `--since 30d` | Replay the check over each recent commit of the branch (`12h`, `2w`, `3m` or a date). `--max N` sets how many (default 20). Per commit: the counts, the line of each verdict about a file that fails a change, the line of a moved test file, and the text check's problems and notes. A report on the past: it never fails |
 | `--stop-hook` | For an agent's Stop hook; see below |
 
 Exit code: 0 when nothing is wrong, 1 when a changed test fails, a new test passes on both sides,
