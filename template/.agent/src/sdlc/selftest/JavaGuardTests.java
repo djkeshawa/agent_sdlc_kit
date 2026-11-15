@@ -198,6 +198,21 @@ final class JavaGuardTests {
         expect("git config filter", shell("git config filter.x.clean ./x.sh"), Decision.Kind.DENY);
         expect("git -c pager cat ok", shell("git -c core.pager=cat log -1"), Decision.Kind.ALLOW);
         expect("git config read program key ok", shell("git config --get core.pager"), Decision.Kind.ALLOW);
+        // what follows "--" is the key and its value, never an option: this sets core.hooksPath to the text "--get"
+        expect("git config value that looks like a read option", shell("git config -- core.hooksPath --get"), Decision.Kind.DENY);
+        expect("git config value that looks like a list option", shell("git config -- core.hooksPath -l"), Decision.Kind.DENY);
+        expect("git config program key after --", shell("git config -- core.pager ./x.sh"), Decision.Kind.DENY);
+        expect("git config read after -- ok", shell("git config --get -- core.hooksPath"), Decision.Kind.ALLOW);
+        expect("git config read of one key ok", shell("git config core.hooksPath"), Decision.Kind.ALLOW);
+        // a settings file of the command's choosing may be a file the guard protects
+        expect("git config into a chosen file", shell("git config --file .agent/new-protected probe.value yes"), Decision.Kind.DENY);
+        expect("git config into a chosen file, short", shell("git config -f .git/sdlc/mandate-approvals.json probe.value yes"), Decision.Kind.DENY);
+        expect("git config into a chosen file, shortened option", shell("git config --fil x.cfg probe.value yes"), Decision.Kind.DENY);
+        expect("git config read of a chosen file ok", shell("git config --file x.cfg --get probe.value"), Decision.Kind.ALLOW);
+        // the files of the index written under a folder of the command's choosing: the approval record in the git folder
+        expect("git checkout-index with a prefix", shell("git checkout-index -f --prefix=.git/sdlc/ -- mandate-approvals.json"), Decision.Kind.DENY);
+        expect("git checkout-index with a shortened prefix", shell("git checkout-index --pre=out/ -a"), Decision.Kind.DENY);
+        expect("git checkout-index to temporary files", shell("git checkout-index --temp -- a.txt"), Decision.Kind.DENY);
         expect("GIT_SSH_COMMAND", shell("GIT_SSH_COMMAND=./x.sh git fetch"), Decision.Kind.DENY);
         expect("GIT_EDITOR=true ok", shell("GIT_EDITOR=true git rebase --continue"), Decision.Kind.ALLOW);
         expect("GIT_PAGER=cat ok", shell("GIT_PAGER=cat git log -1"), Decision.Kind.ALLOW);

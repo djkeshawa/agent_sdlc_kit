@@ -2174,21 +2174,20 @@ public final class Integrity {
         for (How how : How.values()) {
             // each added file not yet taken is read once, by its lines as this way compares them: a deleted file finds its twin by a lookup, so
             // many deleted and many added files cost their lines, not their product
-            Map<List<String>, java.util.ArrayDeque<String>> by = new HashMap<>();
+            // found by its lines and its extension together: a file of another kind is no twin, and is not walked past either
+            Map<List<Object>, java.util.ArrayDeque<String>> by = new HashMap<>();
             for (String a : change.paths("A")) {
                 // the other half of a move is a test file too: a test file renamed to a path that is no test file (sum.test.ts to
                 // sum.txt) has not moved, its tests are gone
                 if (taken.contains(a) || !anyTestFile(a) || how != How.SAME && !JVM.matcher(a).matches()) continue;
-                by.computeIfAbsent(compared(added.getOrDefault(a, List.of()), how), k -> new java.util.ArrayDeque<>()).add(a);
+                by.computeIfAbsent(List.of(extension(a), compared(added.getOrDefault(a, List.of()), how)), k -> new java.util.ArrayDeque<>()).add(a);
             }
             for (String d : gone) {
                 if (out.containsKey(d) || how != How.SAME && !JVM.matcher(d).matches()) continue;
-                java.util.ArrayDeque<String> twins = by.get(compared(removed.getOrDefault(d, List.of()), how));
-                if (twins == null) continue;
-                // and a file of the same kind: the same extension (a.test.ts under tests/ to a.test.txt under tests/ is no move)
-                String a = twins.stream().filter(t -> extension(t).equals(extension(d))).findFirst().orElse(null);
-                if (a == null) continue;
-                twins.remove(a);
+                // a file of the same kind: the same extension (a.test.ts under tests/ to a.test.txt under tests/ is no move)
+                java.util.ArrayDeque<String> twins = by.get(List.of(extension(d), compared(removed.getOrDefault(d, List.of()), how)));
+                if (twins == null || twins.isEmpty()) continue;
+                String a = twins.poll();
                 taken.add(a);
                 out.put(d, new Move(d, a, how));
             }
