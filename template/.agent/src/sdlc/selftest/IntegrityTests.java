@@ -301,6 +301,22 @@ final class IntegrityTests {
                 only(tiers, Level.NOTE, "test file moved", "src/test/java/demo/CalcTest.java", "the same file is now at src/test/java/demo/a/CalcTest.java") && problems(tiers) == 0
                 && !tiers.toString().contains("in another package"));
         reset(repo);
+        // an added file taken in one pass is not the twin of another deleted file in a later one: one added class, two deleted classes, the
+        // first the same but for its package line, the second the same but for its package and import lines
+        String otherImport = CALC_TEST.replace("package demo;", "package demo.other;").replace("import org.junit.jupiter.api.Test;", "import org.junit.jupiter.api.Test;\nimport demo.Old;");
+        write(repo, "src/test/java/demo/other/CalcTest.java", otherImport);
+        git(repo, "add", "-A");
+        git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a twin");
+        Files.delete(repo.resolve("src/test/java/demo/CalcTest.java"));
+        Files.delete(repo.resolve("src/test/java/demo/other/CalcTest.java"));
+        write(repo, "src/test/java/demo/calc/CalcTest.java", CALC_TEST.replace("package demo;", "package demo.calc;"));
+        List<Finding> once = scan(repo);
+        check("integrity: one added class is the move of one deleted class only, across the passes: the other deleted class is a test file deleted",
+                only(once, Level.NOTE, "test file moved", "src/test/java/demo/CalcTest.java", "src/test/java/demo/calc/CalcTest.java, in another package")
+                && only(once, Level.PROBLEM, "test file deleted", "src/test/java/demo/other/CalcTest.java", "the file is gone") && count(once, "test file moved") == 1
+                && count(once, "test file moved and its imports changed") == 0);
+        git(repo, "reset", "-q", "--hard", "HEAD~1");
+        reset(repo);
 
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("void subtracts()", "void minus()"));
         check("integrity: a Java test renamed is not read from the source: nothing is said (its run judges it)", scan(repo).isEmpty());

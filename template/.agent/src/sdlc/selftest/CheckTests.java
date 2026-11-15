@@ -841,6 +841,22 @@ final class CheckTests {
                 && unrelated.contains("PROBLEM  test file deleted: tests/jvm/a/CalcTest.java  the file is gone"));
         Files.delete(repo.resolve("tests/jvm/b/OtherTest.java"));
         write(repo, "tests/jvm/a/CalcTest.java", CALC);
+        // one added class and two deleted ones it is the twin of in two passes (the same but for its package line; the same but for its package and
+        // import lines): it is the move of the first, and the second is a test file deleted
+        write(repo, "tests/jvm/c/CalcTest.java", CALC.replace("package a;", "package c;").replace("import real.Calc;", "import lite.Calc;"));
+        git(repo, "add", "tests/jvm/c/CalcTest.java");
+        git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a twin");
+        Files.delete(repo.resolve("tests/jvm/a/CalcTest.java"));
+        Files.delete(repo.resolve("tests/jvm/c/CalcTest.java"));
+        write(repo, "tests/jvm/b/CalcTest.java", CALC.replace("package a;", "package b;"));
+        String twinned = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("moves: one added class is the move of one deleted class only: the other, its twin in a later pass, is a test file deleted, exit 1",
+                code == 1 && twinned.contains("PROBLEM  test file deleted: tests/jvm/c/CalcTest.java  the file is gone")
+                && twinned.contains("moved from tests/jvm/a/CalcTest.java (its lines are the same but for its package line)") && !twinned.contains("moved from tests/jvm/c/")
+                && twinned.contains("note     test file moved: tests/jvm/a/CalcTest.java  the same file is now at tests/jvm/b/CalcTest.java, in another package"));
+        Files.delete(repo.resolve("tests/jvm/b/CalcTest.java"));
+        git(repo, "reset", "-q", "HEAD~1"); // the twin is gone from the base again; the working tree keeps the rest of the change
+        write(repo, "tests/jvm/a/CalcTest.java", CALC);
 
         // a script test file moved to another folder, its lines the same: its suite is its path, so every name changed
         Files.delete(repo.resolve("tests/a/move.test.t"));
