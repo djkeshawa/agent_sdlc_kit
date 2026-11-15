@@ -101,18 +101,25 @@ do not run now need no list of the tests after the change: each test that passed
 the first try, ran, and a test hidden in a skipped case or an empty report does not run. They are
 not said where the file as it was reported a test that failed or threw (a choice: that file did
 not pass), nor where the file as it was runs no more tests on the code after the change than the
-file does now (the change of the code may have taken them). Other counts are taken only from
+file does now, in any run of it there that gave a usable report (the change of the code may have
+taken them). Other counts are taken only from
 reports that list every test they rest on: a test that failed or threw may stand for a fault
 outside the tests, a skipped case for any number of tests (an ignored class, a disabled factory),
 a report with no test at all for a class stopped in its set-up, and a case the build ran again
-(Surefire's `rerunFailingTestsCount`) for a set-up that failed and was run again. So new tests are
+(Surefire's `rerunFailingTestsCount`; Vitest's `retry`, as Vitest itself counts it) for a set-up
+that failed and was run again. So new tests are
 counted only where the report as it was holds no failure and no case the build ran again,
 reports a test and skips each case as often under its name as the other, and old tests taken out
 of the way only where no report after the change holds a failure. A case that failed every time
 the build ran it failed; one that passed only when run again is not counted as a test that ran,
 and is not one result. What only such a report would prove is `unknown`, and so is an old test the
 run of its file as it was, on the code after the change, could not judge (it did not compile,
-load or report it). Every verdict is made from every run the check made, each run as it was with
+load or report it), or that fails there only beside the other edited test files as they were
+(its file alone, on the code after the change, does not fail). A test of a file that had to be run
+alone before the change, that passes after it only beside the other changed test files, is
+`unknown` too, and so is every pass of a file whose runs do not say which tests passed at the first
+try (a version of Vitest that does not count retries): that file is judged by its failures alone.
+Every verdict is made from every run the check made, each run as it was with
 each run before and after the change, and a verdict of a test stands only where they all agree.
 Every difference among a file's reports, between the file as it was and after the change and
 from run to run, is answered by some line of the check; one no rule answered for is printed as
