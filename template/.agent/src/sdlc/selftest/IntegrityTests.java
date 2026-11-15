@@ -115,6 +115,7 @@ final class IntegrityTests {
             tests(repo);
             build(repo);
             notes(repo);
+            deletedCost(repo);
         } finally {
             Trusted.env = System::getenv;
             Ctx.root = savedRoot;
@@ -199,6 +200,10 @@ final class IntegrityTests {
         write(repo, "web/__tests__/example.ts", "/*\nit('example')\n*/\nexport const value = 1;\n");
         write(repo, "web/__tests__/doc.ts", "export const doc = `\nit('example', () => {})\n`;\n");
         write(repo, "web/__tests__/real.ts", "/* the cases */\nconst s = `x`;\ndescribe('real', () => {\n  it('a', () => {})\n})\n");
+        write(repo, "src/test/java/demo/Samples.java", "package demo;\n\nclass Samples {\n    static final String EXAMPLE = \"\"\"\n        @Test void example() {}\n        \"\"\";\n}\n");
+        write(repo, "src/test/java/demo/Checked.java", "package demo;\n\nclass Checked {\n    static final String EXAMPLE = \"\"\"\n        text\n        \"\"\";\n    @Test void real() {}\n}\n");
+        write(repo, "tests/helpers.py", "EXAMPLE = '''\ndef test_example():\n    assert True\n'''\n\n\ndef helper():\n    \"\"\"A helper.\n\n    def test_doc(): ...\n    \"\"\"\n    return 1\n");
+        write(repo, "tests/checks.py", "\"\"\"Shared checks.\"\"\"\n\n\ndef test_real():\n    assert True\n");
         git(repo, "add", "-A");
         git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "script files in a test folder");
         Files.delete(repo.resolve("web/__tests__/cases.ts"));
@@ -209,7 +214,18 @@ final class IntegrityTests {
         Files.delete(repo.resolve("web/__tests__/example.ts"));
         Files.delete(repo.resolve("web/__tests__/doc.ts"));
         Files.delete(repo.resolve("web/__tests__/real.ts"));
+        Files.delete(repo.resolve("src/test/java/demo/Samples.java"));
+        Files.delete(repo.resolve("src/test/java/demo/Checked.java"));
+        Files.delete(repo.resolve("tests/helpers.py"));
+        Files.delete(repo.resolve("tests/checks.py"));
         List<Finding> goneScripts = scan(repo);
+        // audit round 4, finding 5: a Java text block or a Python string in three quotes is text over its lines; a test after one is code
+        check("integrity: a deleted helper whose example stands in a Java text block or a Python string in three quotes is a note",
+                only(goneScripts, Level.NOTE, "test support file deleted", "src/test/java/demo/Samples.java", "only a comment or a string in it mentions a test")
+                && only(goneScripts, Level.NOTE, "test support file deleted", "tests/helpers.py", "only a comment or a string in it mentions a test"));
+        check("integrity: a test declared after a text block or a docstring that closes is a test file deleted",
+                only(goneScripts, Level.PROBLEM, "test file deleted", "src/test/java/demo/Checked.java", "the file is gone")
+                && only(goneScripts, Level.PROBLEM, "test file deleted", "tests/checks.py", "the file is gone"));
         check("integrity: a deleted helper whose example stands in a comment or a template string over several lines is a note; real tests after them are found",
                 only(goneScripts, Level.NOTE, "test support file deleted", "web/__tests__/example.ts", "only a comment or a string in it mentions a test")
                 && only(goneScripts, Level.NOTE, "test support file deleted", "web/__tests__/doc.ts", "only a comment or a string in it mentions a test")
@@ -735,6 +751,34 @@ final class IntegrityTests {
         check("integrity: files that steer agents and reviews are notes", only(steer, Level.NOTE, "agent or review instructions changed", "CLAUDE.md", "added")
                 && only(steer, Level.NOTE, "agent or review instructions changed", ".github/CODEOWNERS", "added") && problems(steer) == 0);
         reset(repo);
+    }
+
+    /**
+     * Audit round 4, finding 8: a deleted test file is read by all its lines in one pass. Shapes
+     * that made the reading search the rest of the file again for each line are read in work
+     * linear in the file (counted, see Integrity.lintWork), and soon.
+     */
+    private static void deletedCost(Path repo) throws IOException {
+        StringBuilder rows = new StringBuilder();
+        while (rows.length() < 5_000_000) rows.append("    *rows,\n");
+        java.util.Map<String, String> shapes = new java.util.LinkedHashMap<>();
+        shapes.put("tests/stars.py", "*a\n".repeat(200_000));
+        shapes.put("tests/big_helper.py", "rows = [\n" + rows + "]\n");
+        shapes.put("web/__tests__/unclosed.ts", "/* x\n".repeat(200_000));
+        shapes.put("web/__tests__/opened.ts", "\"\"\" x\n".repeat(200_000));
+        for (java.util.Map.Entry<String, String> e : shapes.entrySet()) {
+            write(repo, e.getKey(), e.getValue());
+            git(repo, "add", "-A");
+            git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a large helper");
+            Files.delete(repo.resolve(e.getKey()));
+            long before = Integrity.lintWork(), started = System.nanoTime();
+            List<Finding> gone = scan(repo);
+            long spent = Integrity.lintWork() - before, ms = (System.nanoTime() - started) / 1_000_000;
+            boolean ok = spent <= 6L * e.getValue().length() && ms < 10_000 && gone.stream().anyMatch(f -> f.path().equals(e.getKey()));
+            if (!ok) System.out.println("    deleted " + e.getKey() + ": work " + spent + " for " + e.getValue().length() + " characters, " + ms + " ms, " + gone);
+            check("integrity: deleting " + e.getKey() + " (" + e.getValue().length() / 1000 + " kB) is read in work linear in it, and soon", ok);
+            git(repo, "reset", "-q", "--hard", "HEAD~1");
+        }
     }
 
     private static List<Finding> scan(Path repo) {

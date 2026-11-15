@@ -843,11 +843,16 @@ public final class Integrity {
      * line: comments are dropped (a block comment becomes a space, so "@", a block comment and
      * "Disabled" read as "@ Disabled"), the inside of each string is emptied, and what a template
      * string computes (${...}) stays code. A ' or " string ends with its line: one that does not
-     * close there keeps the rest of the line as written. At the start of a line, a # begins a
+     * close there keeps the rest of the line as written. A string in three quotes (a Java text
+     * block, Python's ''' and """) runs to the same three quotes, over lines, and is emptied; one
+     * that does not close runs to the text's end: what the reading cannot place is text, not
+     * code. At the start of a line, a # begins a
      * comment (Python, a shell) and a * is the middle of a block comment (a doc comment whose
      * start the text does not hold), to the comment's end on that line or the line's end. A
      * backslash that ends a line (a Python line continued) is dropped. Line breaks (also U+2028,
-     * U+2029) are kept.
+     * U+2029) are kept. Each character is looked at a bounded number of times: no search goes
+     * past the end it is given (the line's, for the end of a block comment begun on it), so the
+     * work is linear in the text, however long (see work).
      * Reading text cannot tell every quote for certain (a quote in a regular expression), so this
      * is never the only reading of an added line (see reading).
      */
@@ -891,7 +896,7 @@ public final class Integrity {
                     continue;
                 }
                 if (k < n && t.charAt(k) == '*') {
-                    int end = lineEnd(t, k), close = indexOf(t, "*/", k, end);
+                    int end = lineEnd(t, k), close = closing(t, k, end);
                     out.append(' ');
                     i = close < 0 ? end : close + 2;
                     continue;
@@ -905,6 +910,8 @@ public final class Integrity {
                 i = blockComment(t, i + 2, out);
             } else if (c == '\\' && lineBreak(next)) {
                 i++;
+            } else if ((c == '"' || c == '\'') && next == c && i + 2 < n && t.charAt(i + 2) == c) {
+                i = tripleString(t, i, out);
             } else if (c == '"' || c == '\'') {
                 i = string(t, i, out);
             } else if (c == '`') {
@@ -939,18 +946,24 @@ public final class Integrity {
     private static int lineEnd(String t, int from) {
         int i = from;
         while (i < t.length() && !lineBreak(t.charAt(i))) i++;
+        work += i - from;
         return i;
     }
 
-    private static int indexOf(String t, String what, int from, int to) {
-        int at = t.indexOf(what, from);
-        return at >= 0 && at + what.length() <= to ? at : -1;
+    /** The index of the first star-slash that ends at or before to, looking from from forward and no further than to; -1 when none. */
+    private static int closing(String t, int from, int to) {
+        for (int i = from; i + 1 < to; i++) {
+            work++;
+            if (t.charAt(i) == '*' && t.charAt(i + 1) == '/') return i;
+        }
+        return -1;
     }
 
     /** A block comment whose inside starts at from: a space for it, its line breaks kept; the index after its end, or the text's end. */
     private static int blockComment(String t, int from, StringBuilder out) {
         out.append(' ');
         for (int i = from; i < t.length(); i++) {
+            work++;
             char c = t.charAt(i);
             if (c == '*' && i + 1 < t.length() && t.charAt(i + 1) == '/') return i + 2;
             if (lineBreak(c)) out.append('\n');
@@ -963,6 +976,7 @@ public final class Integrity {
         char quote = t.charAt(from);
         int i = from + 1;
         while (i < t.length() && !lineBreak(t.charAt(i))) {
+            work++;
             char c = t.charAt(i);
             if (c == quote) {
                 out.append(quote).append(quote);
@@ -971,6 +985,25 @@ public final class Integrity {
             i += c == '\\' && i + 1 < t.length() && !lineBreak(t.charAt(i + 1)) ? 2 : 1;
         }
         out.append(t, from, i);
+        return i;
+    }
+
+    /**
+     * A string in three quotes that starts at from (a Java text block, Python's ''' or """): emptied
+     * to two quotes, its line breaks kept, to the same three quotes or to the text's end. The
+     * index after it.
+     */
+    private static int tripleString(String t, int from, StringBuilder out) {
+        char quote = t.charAt(from);
+        out.append(quote).append(quote);
+        int i = from + 3;
+        while (i < t.length()) {
+            work++;
+            char c = t.charAt(i);
+            if (c == quote && i + 2 < t.length() && t.charAt(i + 1) == quote && t.charAt(i + 2) == quote) return i + 3;
+            if (lineBreak(c)) out.append('\n');
+            i += c == '\\' && i + 1 < t.length() && !lineBreak(t.charAt(i + 1)) ? 2 : 1;
+        }
         return i;
     }
 
@@ -1056,10 +1089,13 @@ public final class Integrity {
             List<String> was = wholeRemoved.getOrDefault(path, List.of());
             String twin = change.paths("A").stream().filter(a -> was.equals(whole.getOrDefault(a, List.of()))).findFirst().orElse(null);
             boolean jvm = JVM.matcher(path).matches();
-            String repackaged = twin != null || !jvm ? null : change.paths("A").stream().filter(a -> JVM.matcher(a).matches()
-                    && body(was, false).equals(body(whole.getOrDefault(a, List.of()), false))).findFirst().orElse(null);
-            String reimported = twin != null || repackaged != null || !jvm ? null : change.paths("A").stream().filter(a -> JVM.matcher(a).matches()
-                    && body(was, true).equals(body(whole.getOrDefault(a, List.of()), true))).findFirst().orElse(null);
+            // the deleted file's own lines are read once, not once for each file the change adds
+            List<String> unpackaged = twin != null || !jvm ? null : body(was, false);
+            String repackaged = unpackaged == null ? null : change.paths("A").stream().filter(a -> JVM.matcher(a).matches()
+                    && unpackaged.equals(body(whole.getOrDefault(a, List.of()), false))).findFirst().orElse(null);
+            List<String> unimported = unpackaged == null || repackaged != null ? null : body(was, true);
+            String reimported = unimported == null ? null : change.paths("A").stream().filter(a -> JVM.matcher(a).matches()
+                    && unimported.equals(body(whole.getOrDefault(a, List.of()), true))).findFirst().orElse(null);
             String declared = declaresTests(path, was);
             if (twin != null) note("test file moved", path, "the same file is now at " + twin);
             else if (repackaged != null) note("test file moved", path, "the same file is now at " + repackaged + ", in another package");
@@ -1176,8 +1212,9 @@ public final class Integrity {
     private void madeToPass(String path, String line) {
         for (String command : commandsMadeToPass(line)) {
             if (!runsTests(command)) continue;
-            String shown = line.trim().replaceAll("\\s+", " ");
-            problem("test failures ignored by the build", path, "a failing test command still counts as success: " + shown);
+            // one finding for the line, however many of its commands are made to pass: the line is shown once
+            problem("test failures ignored by the build", path, "a failing test command still counts as success: " + line.trim().replaceAll("\\s+", " "));
+            return;
         }
     }
 
