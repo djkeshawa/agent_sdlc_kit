@@ -134,11 +134,13 @@ limits of
 
 A test file the change only moved (deleted, and added elsewhere with the same lines, or for a
 JVM class the same but for its `package` and `import` lines: see
-[Moved test files](09-check.md#moved-test-files)) holds the tests it had: none of them is new,
-and none is removed. Its detail line says it moved and from where; it counts toward none of the
-numbers of the line. Its run as it was, at its old path, is compared with it by how many of its
-tests run, so a move after which fewer tests run, or a test fails, is `violated` as for any file;
-a pure move is not. A test file moved and edited on the way is a deleted file and an added one,
+[Moved test files](09-check.md#moved-test-files)) has the lines it had. Its detail line says it
+moved and from where; it counts toward none of the numbers of the line. Its run as it was, at its
+old path, is compared with it by counts, as its names changed with the move: where it reports as
+many tests as it had, none of them is new and none is removed; a move after which fewer tests run,
+or a test fails, or after which it reports more tests than it had so that new tests pass on both
+sides by count (a source of rows, in the code or in what it imports, gave it more), is `violated`
+as for any file; a pure move is not. A test file moved and edited on the way is a deleted file and an added one,
 whose tests are new.
 
 The command fails (exit code 1) for `OUTSIDE` or a `violated` line. `AMENDED` and `unknown` do

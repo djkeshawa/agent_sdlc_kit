@@ -61,7 +61,7 @@ Three parts:
 | Different results from run to run | Unstable. Not counted as sensitive. A test that passed only when the build ran it again (Surefire's `rerunFailingTestsCount`, Vitest's `retry`) is unstable. A test file whose runs say different things about how many tests that ran do not run now, or which tests are new or switched off, is unstable too, and so is an old test the change breaks that is gone or skipped in one run after the change and runs in another, or that fails as it was on the change in one run and not in another, and so is any test a run reported otherwise than another where no rule judged it (see below) |
 | Skipped | A test skipped in a file the change adds, or in a file none of whose tests ran before the change. Listed |
 | Already in the file, passes on both | A test of a name the file reported before the change, passing on both sides in every run. Not counted. The same for a test skipped under the same name before and after the change, in every run |
-| Test file moved | A test file the change deleted and added elsewhere, moved by the rule of the text check (see [Moved test files](#moved-test-files)), and run before the change by the runner that runs it now. Its tests are the tests it had: none is new, and one that passes on both sides is not counted. Said of the file, "moved from" the path it had, with how its lines are the same. Not counted |
+| Test file moved | A test file the change deleted and added elsewhere, moved by the rule of the text check (see [Moved test files](#moved-test-files)), and run before the change by the runner that runs it now. Its lines are the lines it had; whether it has tests it did not have, its counts say. Said of the file, "moved from" the path it had, with how its lines are the same, and that it reports as many tests as it had where every run says so. Not counted |
 
 ### Moved test files
 
@@ -84,12 +84,13 @@ runs before and after the change run it at its new path, as any added file. What
 
 | What | How |
 | --- | --- |
-| New tests | None: its lines are the lines it had, so the change wrote no test in it. A test that passes on both sides is a test it had, not counted |
+| New tests | By the counts, as for an edited file, with the number of tests the file reported as it was (T) and after the change in place of the names it no longer has and the names it did not have: its lines are the lines it had, but a source of rows (in the code, or in what it imports) can give it more. Where it reports as many as it had or fewer, none is new by count, and a test that passes on both sides is a test it had, not counted. Where it reports more, at least (more - T) - X new tests pass on both sides, X being its tests after the change that do not pass on both sides: said of the file and failing the check, as for any new test that passes on both sides; where that is 0, or the report as it was may not list every test (a failure, a case run again, a skipped case, no case: see below), whether a new test passes on both sides could not be judged. The names do not say which tests are new, as they changed with the move |
 | A failure after the change | Fails, as for any file |
 | Fails before, passes after | Sensitive, as for any file: the runs before and after the change both run it at its new path, so its tests are named alike there |
 | Tests that ran before the change do not run now | By the counts, as for an edited file: the file as it was passed R0 tests, after the change it runs R1; fewer is said and fails. An import the move changed can switch tests off. There is no fourth run (the old file has the same lines), so the line says that whether the move or the change of the code took them is not known. Where the file as it was gave no result, this could not be judged; where it reported a failure, fewer tests running could not be judged, as for an edited file |
 | Skipped | Listed, as in a file the change adds |
-| By names, between the file as it was and after the change | Nothing: the names a runner reports change with the path or the package (a Vitest suite is the file's path, a JUnit class name holds its package), so they are never compared across the move. Every difference of names between its run as it was and its runs after the change is answered by its "moved" line, not said as could not be judged; what differs from run to run is still said |
+| Cases gone that did not pass | Where it reports fewer tests than it had and as many run as passed as it was, the cases gone were skipped, failed or passed only when run again as it was: could not be judged, as for an edited file |
+| By names, between the file as it was and after the change | Nothing: the names a runner reports change with the path or the package (a Vitest suite is the file's path, a JUnit class name holds its package), so they are never compared across the move. Its "moved" line answers for the differences of names the move makes, and for nothing else: where the file reports as many tests as it had, every name it no longer reports and every name it did not report; where it reports more, only the names it no longer reports (the new ones are the count's); where fewer, only the names it did not report. An outcome that differs under a name both sides report, and what differs from run to run, is said by its own line or as could not be judged |
 
 Limits of this: a file moved and edited on the way, a test changed or one line more, is no move:
 the deleted file and the added one are judged as such (the deletion is a problem where the file
@@ -98,7 +99,9 @@ make a move: a spec moved to another folder with its relative import adjusted
 (`'./prod.js'` to `'../prod.js'`) is a deleted file and an added one. Where a JVM file's imports
 changed, its run judges how many of its tests run and whether they pass; an import that makes a
 test test less while it still passes (a stub in place of the class it tested) is not seen by any
-run, and the moved file's line says so. A move is a test file that becomes a
+run, and the moved file's line says so. Its tests are compared with the file as it was by counts
+only: where it reports as many tests as it had, a test that an import or a source of rows replaced
+by another that passes on both sides is not seen. A move is a test file that becomes a
 test file of the same kind: a test file renamed to a path that is no test file, or to another
 extension (`sum.test.ts` to `sum.txt`), has not moved, and its deletion is a problem. A test file
 moved to where no runner of the check runs it, while a runner ran it where it was, fails the check:

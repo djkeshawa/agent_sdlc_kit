@@ -29,6 +29,8 @@ import sdlc.check.JUnitXml.Status;
  *   breaks-once WORD    where it holds the word, fails in the first run in that checkout and passes in later ones; else passes
  *   skip-later          not reported in the first run in that checkout; skipped in later ones
  *   pass-with WORD      passes where prod.txt holds the word; where it lacks it, the case does not exist (a row an enum of the code gives)
+ *   needs-with WORD NAME  as needs WORD where the file sees NAME (in prod.txt or an import); where it does not, the case does not exist (a
+ *                       row a source the file imports gives)
  *   pass-later          not reported in the first run in that checkout; passes in later ones (a source that gives another number of rows each time)
  *   pass-without WORD   passes where prod.txt lacks the word; where it holds it, the case does not exist (a row the code no longer gives once it has the word)
  *   gone-later WORD     where it holds the word, passes in the first run in that checkout and is not reported in later ones; else passes
@@ -186,6 +188,7 @@ final class SelfTestRunner implements Runner {
                     if (how[0].equals("skip-later") && call == 1) continue; // a case a provider gives only from the second run on
                     if (how[0].equals("pass-later") && call == 1) continue;
                     if (how[0].equals("pass-with") && !has) continue; // a row the code gives only where it holds the word
+                    if (how[0].equals("needs-with") && !(how.length > 2 && sees.contains(how[2]))) continue; // a row a source of the imports gives
                     if (how[0].equals("pass-without") && has) continue; // a row the code no longer gives where it holds the word
                     if (how[0].equals("gone-later") && has && call > 1) continue;
                     if (how[0].equals("tears-down-with") && !has) continue;
@@ -202,7 +205,7 @@ final class SelfTestRunner implements Runner {
                         case "fails-with" -> has ? Status.FAILED : Status.PASSED;
                         case "breaks-once" -> has && call == 1 ? Status.FAILED : Status.PASSED;
                         case "flaky" -> has || call > 1 ? Status.PASSED : Status.FAILED; // without the word: fails only the first time
-                        case "needs", "compile-later", "timeout-later" -> has ? Status.PASSED : Status.FAILED;
+                        case "needs", "needs-with", "compile-later", "timeout-later" -> has ? Status.PASSED : Status.FAILED;
                         case "error-unless" -> has ? Status.PASSED : Status.ERRORED;
                         case "error-varies" -> has ? Status.PASSED : Status.ERRORED;
                         case "compile-needs" -> Status.PASSED; // it compiled, so the word is there

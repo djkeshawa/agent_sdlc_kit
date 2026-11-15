@@ -26,7 +26,8 @@ import sdlc.check.Runner.FileRun;
  *   old tests  the file as it was, on the code after the change (see fourth)
  *
  * A test file the change only moved (see MOVED) is an added file whose old run is the deleted
- * file, at the path it had; it has no fourth run, and its tests are not new.
+ * file, at the path it had; it has no fourth run, and which of its tests are new its counts
+ * decide, as its names changed with the move.
  *
  * A test that fails before and passes after is sensitive to the change; one that passes on both
  * sides does not test it. Which tests are new, how many that ran do not run now, and which are
@@ -59,7 +60,7 @@ final class Witness {
          * adds, said of each such test by name; of an edited file, said of the file (name ""): at
          * least so many new tests pass on both sides, whatever their names, where the report of
          * the file as it was lists every test, in every combination of the runs made (see
-         * newTests).
+         * newTests); of a moved file, said of the file by its counts alone (see grown).
          */
         PASSES_ON_BOTH,
         /** A test whose name the file reported before the change, that passes on both sides in every run: not counted against the change. */
@@ -96,9 +97,11 @@ final class Witness {
         /**
          * Said of a file (name ""): a test file the change adds is a test file it deleted, moved by
          * the one rule of the text check (see Integrity.moves), and run before the change by the
-         * runner that runs it now. Its tests are the tests it had: none is new. The names its runs
-         * report change with its path or its package, so the file as it was is compared with it by
-         * counts only (see moved). Not counted against the change.
+         * runner that runs it now. Its lines are the lines it had. The names its runs report change
+         * with its path or its package, so the file as it was is compared with it by counts only:
+         * whether it has new tests (see grown), runs fewer (see lost) or lost cases (see shrunk).
+         * This line answers for the differences of names the move makes, and for nothing else (see
+         * moved). Not counted against the change.
          */
         MOVED
     }
@@ -447,6 +450,7 @@ final class Witness {
         Set<String> short1 = new LinkedHashSet<>(); // edited files whose first run after the change runs fewer tests than passed in the first run as it was (see lost)
         Set<String> counted = new LinkedHashSet<>(); // edited files whose first runs say by the counts that new tests pass on both sides (see newTests)
         List<String> movedShort = new ArrayList<>(); // moved files whose first run after the change runs fewer tests than passed in their first run as they were (see lost)
+        List<String> movedGrew = new ArrayList<>(); // moved files whose first runs say by the counts that new tests pass on both sides (see grown)
         for (String f : files) {
             FileRun a = after.get(f), b = before.get(f);
             if (!gave(a)) {
@@ -463,10 +467,13 @@ final class Witness {
             FileRun o = edited.contains(f) || mv ? seen.of(Side.OLD, f).get(0) : null;
             // a file whose runs do not say which passes were at the first try is judged by its failures alone (see blind): nothing to run again for
             if (blind(seen, f) != null) continue;
-            Map<String, Object> r = read(f, edited.contains(f), mv, o, b, a, shared, shown(gave(o) && !mv ? o.cases() : List.of(), a.cases()), lonely.getOrDefault(f, Set.of()), by);
+            Map<String, String> sh = shown(gave(o) && !mv ? o.cases() : List.of(), a.cases());
+            Map<String, Object> r = read(f, edited.contains(f), mv, o, b, a, shared, sh, lonely.getOrDefault(f, Set.of()), by);
             for (Map.Entry<String, Object> x : r.entrySet()) if (x.getValue() instanceof Verdict v && v.kind() == Kind.SENSITIVE) candidates.computeIfAbsent(f, k -> new LinkedHashSet<>()).add(x.getKey());
             // fewer tests run than passed as it was, in the first runs: run again as it was and after the change, as the count must hold in every run (see lost)
             if (mv && gave(o) && passes(o.cases()) > ran(a.cases())) movedShort.add(f);
+            // more tests than it had, so many that new ones pass on both sides by the counts: run again as it was and after the change, as that must hold in every run
+            if (mv && gave(o) && count(f, movedNames(o.cases(), a.cases(), sh), r, a, by).least() > 0) movedGrew.add(f);
             if (edited.contains(f) && gave(o)) {
                 Names n = names(o.cases(), a.cases());
                 named.put(f, n);
@@ -488,8 +495,10 @@ final class Witness {
         Set<String> again = new LinkedHashSet<>(sensitive);
         again.addAll(switched);
         again.addAll(movedShort);
-        List<String> rerunOld = new ArrayList<>(switched); // the files run again as they were: those whose skips or counts are made again, and the moved ones that ran fewer
-        rerunOld.addAll(movedShort);
+        again.addAll(movedGrew);
+        List<String> rerunOld = new ArrayList<>(switched); // the files run again as they were: those whose skips or counts are made again, and the moved ones whose counts say something
+        for (String f : movedShort) if (!rerunOld.contains(f)) rerunOld.add(f);
+        for (String f : movedGrew) if (!rerunOld.contains(f)) rerunOld.add(f);
         for (int i = 1; i < runs && !again.isEmpty(); i++) {
             seen.saw(Side.AFTER, again, run(runner, head.dir, new ArrayList<>(again), timeout));
             if (!sensitive.isEmpty()) {
@@ -558,25 +567,159 @@ final class Witness {
     }
 
     /**
-     * The line of a moved file (see MOVED). Its tests are the tests it had, as its lines are: none
-     * is new, and the rule of new tests does not apply to it. Each of its tests is judged by its
-     * runs before and after the change, which run the file as it is now on both sides and so name
-     * its tests alike there: a failure after the change, a test that fails before and passes after
-     * (sensitive), a test that passes on both sides (a test it had, not counted), a skipped test
-     * (listed). The names its runs report change with its path or its package (a Vitest suite is
-     * the file's path, a JUnit class name holds its package), so its run as it was, at the path it
-     * had, is never compared with its runs after the change by name: only by how many of its tests
-     * ran (see lost), which no name decides. Its other rules by name (the skips, the names gone,
-     * the old tests the change broke) are not said of it. So this line answers for every
-     * difference between the file as it was and after the change (see Ledger), each of which is a
-     * difference of names that the move alone makes; what differs from run to run is still said.
+     * The line of a moved file (see MOVED). Each of its tests is judged by its runs before and
+     * after the change, which run the file as it is now on both sides and so name its tests alike
+     * there: a failure after the change, a test that fails before and passes after (sensitive), a
+     * skipped test (listed). The names its runs report change with its path or its package (a
+     * Vitest suite is the file's path, a JUnit class name holds its package), so its run as it
+     * was, at the path it had, is never compared with its runs after the change by name: only by
+     * counts, which no name decides. Its lines are the lines it had, but what it runs need not be
+     * (a source of rows in the code, or an import, can give it more cases or fewer), so the counts
+     * say whether it has tests it did not have (see grown), and whether tests that ran do not run
+     * now (see lost) or cases it had are gone (see shrunk). Its other rules by name (the skips, the
+     * names gone, the old tests the change broke) are not said of it.
+     *
+     * So this line answers for the differences of names that the move alone makes, and for
+     * nothing else (see moveCover): a name the file as it was reports and no run after the change
+     * reports, and the other way round, only where the counts pair them off. Where the file
+     * reports more cases after the change than as it was, in a run as it was and a run after it,
+     * the names it did not have are not the move's: they are the count's to answer for, or
+     * reconcile's; where it reports fewer, the names it no longer has. A difference of outcomes
+     * under a name both sides report is never the move's, nor is what differs from run to run.
+     * Where every run as it was and every run after the change report as many cases, it says so.
      * Where its imports changed, an import may make a test test less while it passes, which no run
      * shows: the line says so.
      */
-    private static Verdict moved(String f, Integrity.Move m, String by) {
+    private static Verdict moved(String f, Integrity.Move m, Seen seen, String by) {
         String imports = m.how() == Integrity.How.IMPORTS ? ". Its imports changed: an import may change what a test tests while it passes, which no run shows" : "";
-        return new Verdict(f, "", Kind.MOVED, "moved from " + m.from() + " (" + m.how().words + "): its tests are the tests it had, none of them new. Their names changed with the "
-                + "move, so the file as it was is compared with it by how many of its tests run, not by their names" + imports, by, new Cover(Set.of(Cover.ALL), Map.of()));
+        List<FileRun> olds = seen.of(Side.OLD, f).stream().filter(Witness::gave).toList(), afters = seen.of(Side.AFTER, f).stream().filter(Witness::gave).toList();
+        boolean same = !olds.isEmpty() && !afters.isEmpty() && olds.stream().allMatch(o -> afters.stream().allMatch(a -> a.cases().size() == o.cases().size()));
+        return new Verdict(f, "", Kind.MOVED, "moved from " + m.from() + " (" + m.how().words + "). Its tests are named after its path or its package, so the file as it was is "
+                + "compared with it by how many tests it reports and runs, not by their names" + (same ? ": it reports as many tests as it had" : "") + imports, by,
+                moveCover(seen, f));
+    }
+
+    /**
+     * What a moved file's line answers for (see moved): of the names that runs as it was report and
+     * no run after the change reports (gone), and the other way round (fresh), those the counts pair
+     * off: the gone ones where no run after the change reports fewer cases than a run as it was,
+     * the fresh ones where none reports more.
+     */
+    private static Cover moveCover(Seen seen, String f) {
+        List<FileRun> olds = seen.of(Side.OLD, f).stream().filter(Witness::gave).toList(), afters = seen.of(Side.AFTER, f).stream().filter(Witness::gave).toList();
+        boolean grew = false, shrank = false;
+        for (FileRun o : olds) for (FileRun a : afters) {
+            grew |= a.cases().size() > o.cases().size();
+            shrank |= a.cases().size() < o.cases().size();
+        }
+        Set<String> keys = new java.util.TreeSet<>();
+        if (!shrank) keys.addAll(onlyIn(olds, afters));
+        if (!grew) keys.addAll(onlyIn(afters, olds));
+        return Cover.change(keys);
+    }
+
+    /** The identities that some of these reports have and none of those others has. */
+    private static Set<String> onlyIn(List<FileRun> these, List<FileRun> others) {
+        Set<String> out = new java.util.TreeSet<>(), there = new LinkedHashSet<>();
+        for (FileRun r : others) for (JUnitXml.Case c : r.cases()) there.add(key(c));
+        for (FileRun r : these) for (JUnitXml.Case c : r.cases()) if (!there.contains(key(c))) out.add(key(c));
+        return out;
+    }
+
+    /**
+     * A moved file's old run and a run after the change as the counts of new tests read them (see
+     * count): every case as it was is a case gone (G is how many it had) and every case after the
+     * change a case fresh (F is how many it has), as no name is compared across the move; no case
+     * is matched, flipped or skipped as before. Whether the report as it was lists every test is
+     * read by its cases' identities (see listing): a case it skips that the run after the change
+     * does not skip as often under that identity, which across a move is each of them, may stand
+     * for any number of tests.
+     */
+    private static Names movedNames(List<JUnitXml.Case> old, List<JUnitXml.Case> now, Map<String, String> shown) {
+        return new Names(old, now, List.of(), 0, List.of(), ran(old), old.size() - ran(old), ran(now), now.size() - ran(now), shown, listing(byKey(old), byKey(now), shown));
+    }
+
+    /**
+     * What the counts say of a moved file's new tests: the rule of new tests of an edited file (see
+     * newTests), with G and F the sizes of its reports (see movedNames). Its lines are the lines it
+     * had, but a source of rows, in the code or in what it imports, can give it cases it did not
+     * have, which then pass on both sides: the report as it was lists T tests where it lists every
+     * test, after the change it reports more, and of all its cases after the change X do not pass
+     * on both sides; at least (more - T) - X new tests pass on both sides, in every combination of
+     * runs. Said of the file, never of a name. N > 0 in every combination: the fewest, with the
+     * counts and the cases that pass on both sides. N > 0 in some only: unstable. N = 0 in every
+     * one where some report more cases after the change than as it was: could not be judged, with
+     * the counts and why (the new tests may be among the X, or the report as it was may not list
+     * every test). No combination reports more: none of its tests is new by count, and each case
+     * that passes on both sides in every combination is a test it had (empty here; see decide).
+     * Each line answers for the names the file did not have (each one's change from not reported to
+     * reported): the move does not then answer for them (see moveCover).
+     */
+    private static List<Verdict> grown(String f, List<Count> counts, String by) {
+        if (counts.stream().allMatch(c -> c == null || c.passBoth().isEmpty() || growth(c) <= 0)) return List.of();
+        Set<String> fresh = new java.util.TreeSet<>();
+        for (Count c : counts) if (c != null) for (JUnitXml.Case x : c.n().fresh()) fresh.add(key(x));
+        Cover cover = Cover.change(fresh);
+        long min = counts.stream().mapToLong(c -> c == null ? 0 : c.least()).min().orElse(0), max = counts.stream().mapToLong(c -> c == null ? 0 : c.least()).max().orElse(0);
+        if (min > 0) {
+            Count at = counts.stream().filter(c -> c.least() == min).findFirst().orElseThrow();
+            return List.of(new Verdict(f, "", Kind.PASSES_ON_BOTH, movedCounts(at) + (max > min ? " (of every run, the one that gives the fewest)" : "") + ": at least " + min
+                    + (min == 1 ? " new test passes" : " new tests pass") + " before and after" + passing(at, min == 1), by, (int) min, cover));
+        }
+        if (max > 0) {
+            Count at = counts.stream().filter(c -> c != null && c.least() > 0).findFirst().orElseThrow();
+            return List.of(new Verdict(f, "", Kind.UNSTABLE, movedCounts(at) + ": at least " + at.least() + (at.least() == 1 ? " new test passes" : " new tests pass")
+                    + " before and after, but what the file reports, after the change or as it was, is not the same in every run", by, (int) at.least(),
+                    Cover.of(fresh, Side.OLD, Side.BEFORE, Side.AFTER)));
+        }
+        Count at = counts.stream().filter(c -> c != null && growth(c) > 0 && !c.passBoth().isEmpty()).findFirst().orElseThrow();
+        long more = growth(at), other = at.other();
+        String why = at.n().listing().old() != null ? "a test the file had that its report as it was did not list may be among them: " + at.n().listing().old()
+                : "the new " + (more == 1 ? "test" : "tests") + " may be among the " + other + " that do not pass on both sides";
+        return List.of(new Verdict(f, "", Kind.UNKNOWN, movedCounts(at) + ". So it has " + more + (more == 1 ? " test" : " tests") + " more than it had, and whether a new test "
+                + "passes before and after is not known: " + why + passing(at, more == 1), by, (int) more, cover));
+    }
+
+    /** How many more cases a moved file reports after the change than as it was, in one combination (see grown). */
+    private static long growth(Count c) {
+        return c.n().fresh().size() - c.n().gone().size();
+    }
+
+    /** "the file reports 3 tests where it reported 2 as it was, at the path it had, and 1 of its tests does not pass on both sides". */
+    private static String movedCounts(Count c) {
+        long other = c.other();
+        return "the file reports " + tests(c.n().fresh().size()) + " where it reported " + c.n().gone().size() + " as it was, at the path it had"
+                + (other > 0 ? ", and " + other + " of its tests " + (other == 1 ? "does" : "do") + " not pass on both sides" : "");
+    }
+
+    /** ". 2 pass before and after (a, b); its names changed with the move, so they do not say which test is new". */
+    private static String passing(Count c, boolean one) {
+        long p = c.passBoth().size();
+        return ". " + p + (p == 1 ? " passes" : " pass") + " before and after (" + shortList(shown(c.n().shown(), c.passBoth())) + "); its names changed with the move, so they "
+                + "do not say which " + (one ? "test is" : "tests are") + " new";
+    }
+
+    /**
+     * What is said of a moved file that reports fewer cases after the change than as it was, in a
+     * run as it was and a run after it, where the rule of lost said nothing of it: as many tests run
+     * now as passed as it was in every run, so the cases gone did not pass as it was (skipped
+     * cases, which may stand for any number of tests or none, cases of a failure, or cases that
+     * passed only when run again). Could not be judged, as for an edited file whose report lost
+     * cases that did not pass (see gone). It answers for the names the file no longer reports (the
+     * move does not then answer for them: see moveCover).
+     */
+    private static List<Verdict> shrunk(String f, Seen seen, String by) {
+        List<FileRun> olds = seen.of(Side.OLD, f).stream().filter(Witness::gave).toList(), afters = seen.of(Side.AFTER, f).stream().filter(Witness::gave).toList();
+        for (FileRun o : olds) {
+            for (FileRun a : afters) {
+                long had = o.cases().size(), has = a.cases().size();
+                if (has >= had) continue;
+                return List.of(new Verdict(f, "", Kind.UNKNOWN, "the file reports " + tests(has) + " where it reported " + had + " as it was, at the path it had. As many tests run as "
+                        + "passed as it was (" + ran(a.cases()) + " where " + passed(o.cases()) + " passed), so no test that ran is lost by count: whether tests that did not pass as it "
+                        + "was (skipped, failed, or passed only when run again) were removed is not known", by, (int) (had - has), Cover.change(onlyIn(olds, afters))));
+            }
+        }
+        return List.of();
     }
 
     /**
@@ -612,13 +755,13 @@ final class Witness {
         List<String> counting = new ArrayList<>(); // moved files that ran after the change and are not judged by their failures alone: the rule of lost counts them (see moved)
         for (String f : files) {
             boolean mv = moved.containsKey(f);
-            if (mv) out.add(moved(f, moved.get(f), by));
+            if (mv) out.add(moved(f, moved.get(f), seen, by));
             if (ended.containsKey(f)) {
                 out.add(ended.get(f));
                 continue;
             }
             boolean ed = edited.contains(f);
-            List<FileRun> olds = ed ? seen.of(Side.OLD, f) : java.util.Collections.singletonList(null), befores = seen.of(Side.BEFORE, f), afters = seen.of(Side.AFTER, f);
+            List<FileRun> olds = ed || mv ? seen.of(Side.OLD, f) : java.util.Collections.singletonList(null), befores = seen.of(Side.BEFORE, f), afters = seen.of(Side.AFTER, f);
             Map<String, String> sh = shownAll(seen, f, !mv);
             shownIn.put(f, sh);
             Ledger ledger = ledger(f, ed || mv, seen, sh);
@@ -636,6 +779,7 @@ final class Witness {
                         Map<String, Object> r = gave(a) ? read(f, ed, mv, o, b, a, sharedIn.get(f), sh, lone, by) : Map.of();
                         reads.add(r);
                         if (ed) counts.add(gave(o) && gave(a) ? count(f, names(o.cases(), a.cases()), r, a, by) : null);
+                        else if (mv) counts.add(gave(o) && gave(a) ? count(f, movedNames(o.cases(), a.cases(), sh), r, a, by) : null);
                     }
                 }
             }
@@ -669,6 +813,11 @@ final class Witness {
                 }
             }
             passingIn.put(f, passing);
+            // a moved file: what its counts say of new tests (see grown); where no combination reports more cases than as it was, none of its
+            // tests is new by count, and each that passes on both sides in every combination is a test it had
+            List<Verdict> grew = mv ? grown(f, counts, by) : List.of();
+            if (mv && !muted("new tests")) newIn.put(f, grew);
+            if (mv && grew.isEmpty()) for (String k : freshEvery) mine.add(new Verdict(f, shown(sh, k), Kind.EXISTING_PASSES_ON_BOTH, "", by, Cover.of(List.of(k), Side.BEFORE, Side.AFTER)));
             if (!muted("per test")) out.addAll(mine);
             // code that does not compile or load in a repeat run after the change is the change's own failure, as in the first run (see ended)
             Verdict unbuilt = brokenAfter(f, afters, by);
@@ -680,7 +829,7 @@ final class Witness {
             FileRun o = ed || mv ? seen.of(Side.OLD, f).get(0) : null, a = afters.get(0);
             if (mv && gave(o)) counting.add(f);
             if (mv && !gave(o)) out.add(new Verdict(f, "", Kind.UNKNOWN, "run as it was before the change, at " + moved.get(f).from() + ", the file " + (o == null ? "gave no result"
-                    : o.problem()) + ", so it cannot be told whether tests that ran before the change do not run now", by, Cover.NONE));
+                    : o.problem()) + ", so it cannot be told whether tests that ran before the change do not run now, nor whether it has tests it did not have", by, Cover.NONE));
             else if (ed && !gave(o)) out.add(new Verdict(f, "", Kind.UNKNOWN, "run as it was before the change, the file " + (o == null ? "gave no result" : o.problem())
                     + ", so it cannot be told which of its tests are new, were switched off or were removed", by, Cover.NONE));
             // a file that ran and has no test, and had none: nothing to judge, and it is said so (a file that had tests has lost them: see lost). Neither
@@ -727,7 +876,14 @@ final class Witness {
             lostRows.addAll(l);
         }
         // a moved file, by the counts alone: its names changed with the move (see moved)
-        for (String f : counting) if (!muted("lost")) lostRows.addAll(lost(f, null, seen, fourth, 0, 0, new LinkedHashSet<>(), moved.get(f), by));
+        for (String f : counting) {
+            // a row that does not fail the check answers for the names the file no longer reports too, as the counts it speaks of are theirs (see moveCover)
+            Set<String> gone = onlyIn(seen.of(Side.OLD, f).stream().filter(Witness::gave).toList(), seen.of(Side.AFTER, f).stream().filter(Witness::gave).toList());
+            List<Verdict> l = muted("lost") ? List.of() : lost(f, null, seen, fourth, 0, 0, new LinkedHashSet<>(), moved.get(f), by).stream()
+                    .map(v -> v.cover() == Cover.FILE ? v : v.with(v.cover().and(Cover.change(gone)))).toList();
+            // fewer cases than as it was where the rule of lost says nothing: cases that did not pass as it was are gone (see shrunk)
+            lostRows.addAll(l.isEmpty() && !muted("lost") && !muted("gone") ? shrunk(f, seen, by) : l);
+        }
         for (List<Verdict> v : newIn.values()) out.addAll(v);
         out.addAll(lostRows);
         if (!muted("gone")) out.addAll(gone(named, spoke, rowed, said, judged, recounted, seen, by));
@@ -775,9 +931,10 @@ final class Witness {
      * is not compared with what it does after: could not be judged, never sensitive, never a test
      * that passes on both sides, and never counted as one (see count, broken).
      *
-     * moved: a moved file (see MOVED), whose run as it was is not read here, as its names are not
-     * those it has now: none of its tests is new, so one that passes on both sides is a test it
-     * had, and a skipped one is listed, as in a file the change adds.
+     * moved: a moved file (see MOVED), whose run as it was is read here only for whether it gave a
+     * report, as its names are not those it has now: a skipped test is listed, as in a file the
+     * change adds, and one that passes on both sides is FRESH: whether it is new, its counts decide
+     * (see grown), as no name can.
      */
     private static Map<String, Object> read(String f, boolean edited, boolean moved, FileRun o, FileRun b, FileRun a, String shared, Map<String, String> sh, Set<String> lone, String by) {
         Map<String, Object> out = new LinkedHashMap<>();
@@ -821,9 +978,9 @@ final class Witness {
             else if (lone.contains(k)) v = new Verdict(f, name, Kind.UNKNOWN, "after the change it passes only together with the other changed test files, and before the change "
                     + "the file could be run only without them (as the base has them), so what it did there may come from them, not from the change", by, Cover.NONE);
             else if (out(p) == Out.PASSED && shared != null) v = new Verdict(f, name, Kind.UNKNOWN, "passes before and after, but " + shared, by, Cover.NONE);
-            else if (out(p) == Out.PASSED && edited && !gave(o)) v = new Verdict(f, name, Kind.UNKNOWN, "passes before and after, but run as it was before the change, the file "
+            else if (out(p) == Out.PASSED && (edited || moved) && !gave(o)) v = new Verdict(f, name, Kind.UNKNOWN, "passes before and after, but run as it was before the change, the file "
                     + (o == null ? "gave no result" : o.problem()) + ", so it cannot be told whether this test is new", by, Cover.NONE);
-            else if (out(p) == Out.PASSED && moved) v = new Verdict(f, name, Kind.EXISTING_PASSES_ON_BOTH, "", by, Cover.NONE);
+            else if (out(p) == Out.PASSED && moved) v = Mark.FRESH; // whether it is new, the counts decide (see grown)
             else if (out(p) == Out.PASSED) v = n == null ? new Verdict(f, name, Kind.PASSES_ON_BOTH, "", by, Cover.NONE)
                     : fresh.contains(k) ? Mark.FRESH : new Verdict(f, name, Kind.EXISTING_PASSES_ON_BOTH, "", by, Cover.NONE);
             else if (out(p) == Out.SKIPPED) v = new Verdict(f, name, Kind.UNKNOWN, "was skipped before the change", by, Cover.NONE);

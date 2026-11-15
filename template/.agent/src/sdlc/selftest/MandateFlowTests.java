@@ -312,7 +312,7 @@ final class MandateFlowTests {
         Files.delete(repo.resolve("tests/fx.t"));
         write(repo, "tests/fx.t", "old shape: pass\n");
 
-        // a test file only moved: its tests are neither new nor removed, so the line of the change's own tests is not violated for it
+        // a test file only moved, as many tests as it had: none of them is new or removed, so the line of the change's own tests is not violated for it
         write(repo, "tests/mv/a.t", "stays: pass\n");
         commit(repo, "a test file to move");
         write(repo, "docs/mandates/move.json", """
@@ -329,11 +329,25 @@ final class MandateFlowTests {
         String movedOnly = report(Map.of("mandate", "move", "selftest-runner", "true", "runs", "1"));
         check("mandate: a test file only moved is said, and counts neither as new tests nor as tests that do not run now: the line is unknown (no sensitive test), not violated",
                 movedOnly.contains("unknown   the change's own tests: 0 fail before it and pass after it   [from the change's own test run]")
-                && movedOnly.contains("              tests/mv/b/a.t: moved from tests/mv/a.t (its lines are the same): its tests are the tests it had")
+                && movedOnly.contains("              tests/mv/b/a.t: moved from tests/mv/a.t (its lines are the same). Its tests are named after its path or its package, so the file "
+                        + "as it was is compared with it by how many tests it reports and runs, not by their names: it reports as many tests as it had\n")
                 && !movedOnly.contains("violated  the change's own tests"));
         Files.delete(repo.resolve("tests/mv/b/a.t"));
-        Files.delete(repo.resolve("docs/mandates/move.json"));
         write(repo, "tests/mv/a.t", "stays: pass\n");
+        // a test file moved whose new import gives it a row more, passing on both sides: a new test that does not test the change, as in any file
+        String rows = "package a;\n\nimport real.Calc;\n\nadds: pass\nmore: pass-with real.Rows\n";
+        write(repo, "tests/jvm/mv/a/RowsTest.java", rows);
+        commit(repo, "a test class to move");
+        Files.delete(repo.resolve("tests/jvm/mv/a/RowsTest.java"));
+        write(repo, "tests/jvm/mv/b/RowsTest.java", rows.replace("package a;", "package b;").replace("import real.Calc;", "import real.Rows;"));
+        String movedMore = report(Map.of("mandate", "move", "selftest-runner", "true", "runs", "1"));
+        check("mandate: a test file moved that reports more tests than it had, the new one passing on both sides, is violated as for any new test that does",
+                movedMore.contains("violated  the change's own tests: 0 fail before it and pass after it; at least 1 new test passes on both sides   [from the change's own test run]")
+                && movedMore.contains("              tests/jvm/mv/b/RowsTest.java: the file reports 2 tests where it reported 1 as it was, at the path it had: at least 1 new test passes")
+                && code == 1);
+        Files.delete(repo.resolve("tests/jvm/mv/b/RowsTest.java"));
+        write(repo, "tests/jvm/mv/a/RowsTest.java", rows);
+        Files.delete(repo.resolve("docs/mandates/move.json"));
 
         // a link in the base that the change turns into a folder: what the link leads to is never touched
         Path elsewhere = Files.createTempDirectory("sdlc-elsewhere").toRealPath();
