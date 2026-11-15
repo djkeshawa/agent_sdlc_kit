@@ -319,7 +319,8 @@ final class IntegrityTests {
         write(repo, "src/app.test.ts", "it('a', () => { expect(1).toBe(1) })\nconst s = `${fn(\"}\", it.skip('b', () => {}))}`\n");
         check("integrity: a closing brace inside a string does not end the ${...}", count(scan(repo), "test switched off") == 1);
         write(repo, "src/app.test.ts", "it('a', () => { expect(1).toBe(1) })\nconst s = `${\"it.skip(\"}`\n");
-        check("integrity: the text it.skip( inside a string inside ${...} is reported: the lint errs on the safe side", count(scan(repo), "test switched off") == 1);
+        check("integrity: the text it.skip( inside a string inside ${...}, a call whose arguments never end, is a note: the lint errs on the safe side without blocking",
+                count(scan(repo), "test switched off") == 0 && only(scan(repo), Level.NOTE, "may switch a test off", "src/app.test.ts", "the run of the file judges it: const s = `${\"it.skip(\"}`"));
         write(repo, "src/app.test.ts", "it('old name', () => {\n  expect(1 + 1).toBe(2)\n})\n");
         git(repo, "add", "-A");
         git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a script test");
@@ -384,17 +385,18 @@ final class IntegrityTests {
         }
         git(repo, "reset", "-q", "--hard", "HEAD~1");
         // Java test files are linted by the lines the change adds, as every other test file is
-        check("integrity: the lint finds @Disabled, @Ignore and an assumption that never holds on added Java lines",
-                Integrity.lintedSwitches(List.of("  @Disabled(\"flaky\")", "  @org.junit.Ignore", "    assumeTrue(false, \"later\");", "    Assume.assumeTrue(\"later\", false);",
-                        "  @ org.junit.jupiter.api . Disabled", "    assumeFalse(true);", "    Assumptions.abort(\"later\");"))
-                        .equals(List.of("@Disabled(\"flaky\")", "@org.junit.Ignore", "assumeTrue(false, \"later\");", "Assume.assumeTrue(\"later\", false);",
-                                "@ org.junit.jupiter.api . Disabled", "assumeFalse(true);", "Assumptions.abort(\"later\");")));
+        Integrity.Lint jvm = Integrity.lint(List.of("  @Disabled(\"flaky\")", "  @org.junit.Ignore", "    assumeTrue(false, \"later\");", "    Assume.assumeTrue(\"later\", false);",
+                "  @ org.junit.jupiter.api . Disabled", "    assumeFalse(true);", "    Assumptions.abort(\"later\");"));
+        check("integrity: the lint is sure of @Disabled, @Ignore and an assumption that never holds on added Java lines; Assumptions.abort is a note",
+                jvm.sure().equals(List.of("@Disabled(\"flaky\")", "@org.junit.Ignore", "assumeTrue(false, \"later\");", "Assume.assumeTrue(\"later\", false);",
+                        "@ org.junit.jupiter.api . Disabled", "assumeFalse(true);"))
+                && jvm.notes().equals(List.of("Assumptions.abort(\"later\");")));
         check("integrity: an annotation written over two added lines is found, joined",
                 Integrity.lintedSwitches(List.of("  @", "  Disabled", "  @Test void later() {}")).equals(List.of("@ Disabled")));
-        check("integrity: an abort with type arguments, imported, or called alone is found; another object's abort is not",
-                Integrity.lintedSwitches(List.of("    Assumptions.<Void>abort(\"later\");", "    Assumptions . <Void> abort(\"later\");", "import static org.junit.jupiter.api.Assumptions.abort;",
-                        "    abort(\"later\");", "    Assumptions.abort<Unit>(\"later\")", "    controller.abort();", "    new AbortController().abort();")).size() == 5
-                && !Integrity.lintedSwitch("    controller.abort();") && Integrity.lintedSwitch("    Assumptions.<Void>abort(\"later\");"));
+        Integrity.Lint aborts = Integrity.lint(List.of("    Assumptions.<Void>abort(\"later\");", "    Assumptions . <Void> abort(\"later\");",
+                "import static org.junit.jupiter.api.Assumptions.abort;", "    abort(\"later\");", "    Assumptions.abort<Unit>(\"later\")", "    controller.abort();", "    new AbortController().abort();"));
+        check("integrity: an abort with type arguments, imported, or called alone is a note (a condition may hold it); another object's abort is nothing",
+                aborts.sure().isEmpty() && aborts.notes().size() == 5 && !Integrity.lintedNote("    controller.abort();") && Integrity.lintedNote("    Assumptions.<Void>abort(\"later\");"));
         // L1-2: a line cannot tell its quotes for certain; what it shows as written is never hidden by the masking
         check("integrity: a quote inside a regular expression does not hide a switch on the same line",
                 Integrity.lintedSwitch("const r = /'/; it.skip('a', () => { expect(false).toBe(true); }); const x = 'ok';")
@@ -406,7 +408,8 @@ final class IntegrityTests {
                 && Integrity.lintedSwitch("@/* a */Disabled"));
         check("integrity: lines wholly comments are not read as written; others are",
                 !Integrity.lintedSwitch("  // @Disabled until PAY-12") && !Integrity.lintedSwitch("# @pytest.mark.skip(reason=\"x\")")
-                && Integrity.lintedSwitch("  * @Disabled until PAY-12") && Integrity.lintedSwitch("assertTrue(ok); // it.skip later"));
+                && Integrity.lintedSwitch("  * @Disabled until PAY-12") && Integrity.lintedNote("assertTrue(ok); // it.skip later")
+                && !Integrity.lintedSwitch("assertTrue(ok); // it.skip later"));
         check("integrity: a switch over two lines, with a quote in a regular expression on one and a comment between its words on the other, is found",
                 Integrity.lintedSwitches(List.of("const r = /'/; it", "/**/.skip('a', () => {})")).equals(List.of("const r = /'/; it /**/.skip('a', () => {})")));
         // the lint reads a line two ways only (audit round 3, the step back): a block comment between a switch's words on a line
@@ -419,11 +422,11 @@ final class IntegrityTests {
         check("integrity: what the lint does not see is not seen: a regular expression's quote before a comment between a switch's words",
                 Integrity.lintedSwitches(List.of("const r = /'\\//; it //'", ".skip('a', () => {})")).isEmpty());
         // the honest user's forms (audit, findings 8 and 2)
-        check("integrity: a declared abort, and another object's abort however spaced, is not a switch; abort called alone is",
-                !Integrity.lintedSwitch("function abort() { return 1; }") && !Integrity.lintedSwitch("    @Override public void abort() {}")
-                && !Integrity.lintedSwitch("    controller . abort();") && !Integrity.lintedSwitch("    signal?.abort();") && !Integrity.lintedSwitch("  abort() { this.done = true; }")
-                && !Integrity.lintedSwitch("    def abort(self):") && !Integrity.lintedSwitch("    this.#abort();")
-                && Integrity.lintedSwitch("    abort(\"later\");") && Integrity.lintedSwitch("    if (late) abort();") && Integrity.lintedSwitch("    return abort(\"later\");"));
+        check("integrity: a declared abort, and another object's abort however spaced, is nothing; abort called alone is a note, never sure",
+                Integrity.lint(List.of("function abort() { return 1; }", "    @Override public void abort() {}", "    controller . abort();", "    signal?.abort();",
+                        "  abort() { this.done = true; }", "    def abort(self):", "    this.#abort();")).equals(new Integrity.Lint(List.of(), List.of()))
+                && Integrity.lintedNote("    abort(\"later\");") && Integrity.lintedNote("    if (late) abort();") && Integrity.lintedNote("    return abort(\"later\");")
+                && !Integrity.lintedSwitch("    abort(\"later\");"));
         check("integrity: an assumption with a plain false and a computed message is a switch; one whose condition is computed is not",
                 Integrity.lintedSwitch("    Assumptions.assumeTrue(false, () -> \"later\");") && Integrity.lintedSwitch("    Assume.assumeTrue(String.format(\"later %s\", reason), false);")
                 && Integrity.lintedSwitch("    assumeFalse(true, () -> String.valueOf(x));") && !Integrity.lintedSwitch("    assumeTrue(x == false);")
@@ -447,6 +450,7 @@ final class IntegrityTests {
                 Integrity.lintedSwitches(List.of("    Assume.assumeThat(false, is(false));", "    assumeTrue(ready(false));", "    @DisplayName(\"x\")")).isEmpty());
         honestUsers();
         usualSpellings();
+        sureOrNoted();
         bounded();
         // L1-1: an unconditional assumption put beside a conditional one is a line the change adds
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("        assertEquals(0, 1 - 1);", "        if (Boolean.getBoolean(\"skip.integration\")) assumeTrue(false);\n        assertEquals(0, 1 - 1);"));
@@ -556,27 +560,29 @@ final class IntegrityTests {
         List<String> hits = conditional.stream().filter(Integrity::lintedSwitch).toList();
         if (!hits.isEmpty()) System.out.println("    conditional skips reported: " + hits);
         check("integrity: a conditional skip (skipif, skipUnless, Playwright's test.skip(condition, ...), @DisabledOnOs, @DisabledIf...) is not a switch", hits.isEmpty());
-        check("integrity: a conditional skip with a plain true for its condition is a switch",
+        check("integrity: a decorator or an annotation whose condition is a plain true is a switch, sure",
                 Integrity.lintedSwitch("@pytest.mark.skipif(True, reason=\"later\")") && Integrity.lintedSwitch("@unittest.skipIf(True, \"later\")")
-                && Integrity.lintedSwitch("@unittest.skipUnless(False, \"later\")") && Integrity.lintedSwitch("test.skip(true, 'later');")
-                && Integrity.lintedSwitch("test.fixme(true)") && Integrity.lintedSwitch("@DisabledIf(\"true\")") && Integrity.lintedSwitch("@EnabledIf(\"false\")"));
-        check("integrity: a skip whose title is computed is a declaration, a switch",
-                Integrity.lintedSwitch("it.skip(name, () => {})") && Integrity.lintedSwitch("describe.skip(suite.title, function () {")
-                && Integrity.lintedSwitch("test.skip(`x ${n}`, async () => {})"));
+                && Integrity.lintedSwitch("@unittest.skipUnless(False, \"later\")") && Integrity.lintedSwitch("@DisabledIf(\"true\")") && Integrity.lintedSwitch("@EnabledIf(\"false\")"));
+        check("integrity: Playwright's test.skip(true, ...) and test.fixme(true) skip from where they stand, which a condition around them may hold: a note",
+                Integrity.lintedNote("test.skip(true, 'later');") && Integrity.lintedNote("test.fixme(true)") && !Integrity.lintedSwitch("test.skip(true, 'later');"));
+        check("integrity: a skip whose title is a string, or a string joined to more, is a declaration, sure; one whose first argument is computed is a note",
+                Integrity.lintedSwitch("test.skip(`x ${n}`, async () => {})") && Integrity.lintedSwitch("it.skip('adds ' + n, () => {})")
+                && Integrity.lintedNote("it.skip(name, () => {})") && Integrity.lintedNote("describe.skip(suite.title, function () {")
+                && !Integrity.lintedSwitch("it.skip(name, () => {})"));
         // a method named abort is declared, not called
         check("integrity: a method declared with the name abort, with a return type, modifiers or generics, is not a switch",
                 !Integrity.lintedSwitch("  abort(): void {}") && !Integrity.lintedSwitch("  abort(reason?: string): Promise<void> {")
                 && !Integrity.lintedSwitch("  public abort(): void {}") && !Integrity.lintedSwitch("  abort<T>(value: T): T {")
                 && !Integrity.lintedSwitch("  abort(): void;") && !Integrity.lintedSwitch("  async abort() {") && !Integrity.lintedSwitch("  fun abort(): Unit {}"));
-        check("integrity: abort called alone is a switch, also as a branch of a ternary",
-                Integrity.lintedSwitch("    abort();") && Integrity.lintedSwitch("    late ? abort() : run();"));
+        check("integrity: abort called alone is a note, also as a branch of a ternary",
+                Integrity.lintedNote("    abort();") && Integrity.lintedNote("    late ? abort() : run();") && !Integrity.lintedSwitch("    abort();"));
         // names that hold the words of a switch
         check("integrity: another object's fit, a function declared fit, and words that hold a switch's letters are not switches",
                 Integrity.lintedSwitches(List.of("    model.fit(X_train, y_train)", "    def fit(self, X, y):", "    fitAddon.fit();", "    const skipped = rows.filter(r => r.only);",
                         "    expect(benefit).toBe(1);", "    const opts = { skip: 10, take: 5 };", "    it('paginates', async () => { await repo.find({ skip: true }) })",
                         "    result = fit(data)", "  next() { this.skip(10); }")).isEmpty());
-        // a skip from inside a test under a condition, on its line or the added line above it
-        check("integrity: a skip from inside a test under a condition is not a switch",
+        // a skip from inside a test, a condition on its line, on the line above it or further: a note, never sure
+        check("integrity: a skip from inside a test under a condition is not sure",
                 Integrity.lintedSwitches(List.of("    if not has_gpu: pytest.skip(\"needs a GPU\")", "    if testing.Short() { t.Skip(\"short mode\") }",
                         "    if (!process.env.DB) this.skip();", "    self.skipTest('x') if broken else None")).isEmpty()
                 && Integrity.lintedSwitches(List.of("    if not has_gpu:", "        pytest.skip(\"needs a GPU\")")).isEmpty()
@@ -584,9 +590,9 @@ final class IntegrityTests {
                 && Integrity.lintedSwitches(List.of("    except ImportError:", "        raise unittest.SkipTest(\"needs numpy\")")).isEmpty()
                 && Integrity.lintedSwitches(List.of("  if (browserName === 'webkit') {", "    test.skip();")).isEmpty()
                 && !Integrity.lintedSwitch("  if (!process.env.CI) test.skip(true, 'local only');"));
-        check("integrity: a switch chosen by a condition is not a switch; one kept for later use is",
-                !Integrity.lintedSwitch("const describeIf = process.env.DB ? describe : describe.skip;") && !Integrity.lintedSwitch("(isCI ? it.skip : it)('x', () => {});")
-                && Integrity.lintedSwitch("const later = it.skip;") && Integrity.lintedSwitch("test.skip(true, 'later');"));
+        check("integrity: a switch chosen by a condition, or kept for later use, is a note",
+                Integrity.lintedNote("const describeIf = process.env.DB ? describe : describe.skip;") && Integrity.lintedNote("(isCI ? it.skip : it)('x', () => {});")
+                && Integrity.lintedNote("const later = it.skip;") && !Integrity.lintedSwitch("const later = it.skip;"));
     }
 
     /** Audit round 3, finding 4: the usual spellings, each beside an honest neighbour. */
@@ -607,18 +613,17 @@ final class IntegrityTests {
                 !Integrity.lintedSwitch("skip_slow = pytest.mark.skip(reason=\"need --runslow\")") && !Integrity.lintedSwitch("@pytest.mark.xfail(reason=\"bug 12\")")
                 && !Integrity.lintedSwitch("@pytest.mark.xfail(sys.platform == \"win32\", run=False, reason=\"x\")")
                 && !Integrity.lintedSwitch("@pytest.mark.xfail(run=False, condition=sys.platform == \"win32\")") && !Integrity.lintedSwitch("pytestmark = pytest.mark.slow"));
-        check("integrity: Go's t.Skipf, and the skips from inside a test as statements of their own, are switches where unconditional",
-                Integrity.lintedSwitch("\tt.Skipf(\"later: %s\", reason)") && Integrity.lintedSwitch("\tt.SkipNow()") && Integrity.lintedSwitch("    pytest.skip(\"later\")")
-                && Integrity.lintedSwitch("        self.skipTest(\"later\")") && Integrity.lintedSwitch("        raise unittest.SkipTest(\"later\")")
-                && Integrity.lintedSwitch("    this.skip();") && Integrity.lintedSwitch("  it('x', function () { this.skip(); });")
-                && Integrity.lintedSwitch("def test_later(): pytest.skip(\"later\")") && Integrity.lintedSwitch("  test.skip();"));
+        List<String> body = List.of("\tt.Skipf(\"later: %s\", reason)", "\tt.SkipNow()", "    pytest.skip(\"later\")", "        self.skipTest(\"later\")",
+                "        raise unittest.SkipTest(\"later\")", "    this.skip();", "  it('x', function () { this.skip(); });", "def test_later(): pytest.skip(\"later\")", "  test.skip();");
+        check("integrity: Go's t.Skipf, and the skips from inside a test as statements of their own, are notes: a condition on another line may hold them",
+                body.stream().allMatch(Integrity::lintedNote) && body.stream().noneMatch(Integrity::lintedSwitch));
         check("integrity: the same words that are not such a statement are not",
                 !Integrity.lintedSwitch("    # pytest.skip(\"later\")") && !Integrity.lintedSwitch("    doc = 'pytest.skip(x)'") && !Integrity.lintedSwitch("    s = mocker.skip(1)")
                 && !Integrity.lintedSwitch("    result = pytest.importorskip(\"numpy\")"));
-        check("integrity: Mocha's specify, TestNG's enabled = false, Vitest's skipIf(true) and runIf(false), and Jasmine's pending() are switches",
+        check("integrity: Mocha's specify, TestNG's enabled = false, Vitest's skipIf(true) and runIf(false) are switches; Jasmine's pending() is a note",
                 Integrity.lintedSwitch("specify.skip('x', () => {})") && Integrity.lintedSwitch("xspecify('x', () => {})") && Integrity.lintedSwitch("  @Test(enabled = false)")
                 && Integrity.lintedSwitch("  @Test(description = \"x\", enabled = false)") && Integrity.lintedSwitch("it.skipIf(true)('x', () => {})")
-                && Integrity.lintedSwitch("describe.runIf(false)('x', () => {})") && Integrity.lintedSwitch("    pending('later');"));
+                && Integrity.lintedSwitch("describe.runIf(false)('x', () => {})") && Integrity.lintedNote("    pending('later');"));
         check("integrity: their honest neighbours are not",
                 !Integrity.lintedSwitch("  @Test(enabled = true)") && !Integrity.lintedSwitch("  @Test(expected = IllegalStateException.class)") && !Integrity.lintedSwitch("it.skipIf(isWindows)('x', () => {})")
                 && !Integrity.lintedSwitch("describe.runIf(process.env.DB)('x', () => {})") && !Integrity.lintedSwitch("    const p = pending(order);")
@@ -626,6 +631,56 @@ final class IntegrityTests {
         check("integrity: a pending test, its whole declaration on one line, is a switch; a test with a body is not",
                 Integrity.lintedSwitch("it('pending test');") && Integrity.lintedSwitch("  test(\"later\")") && !Integrity.lintedSwitch("it('works', () => {});")
                 && !Integrity.lintedSwitch("it('works', async () => {") && !Integrity.lintedSwitch("  it(name);"));
+    }
+
+    private static final Integrity.Lint NOTHING = new Integrity.Lint(List.of(), List.of());
+
+    /**
+     * Audit round 4, the step back: the lint blocks only what it read shows for sure, and says the
+     * rest as a note. Each shape of the audit beside its honest neighbour.
+     */
+    private static void sureOrNoted() {
+        // finding 1: a call written over lines is judged where its arguments are, never from its opening line
+        check("integrity: a Playwright condition over three lines (test.skip(, false, 'supported')) is nothing: the opening line is not judged alone",
+                Integrity.lint(List.of("test.skip(", "  false,", "  'supported');")).equals(NOTHING)
+                && Integrity.lint(List.of("  test.fixme(", "    false,", "    'supported',", "  );")).equals(NOTHING));
+        Integrity.Lint computed = Integrity.lint(List.of("test.skip(", "  browserName === 'webkit',", "  'not on Safari');"));
+        check("integrity: over lines, a computed condition is a note; a title, a plain True and an assumption that never holds are sure",
+                computed.sure().isEmpty() && computed.notes().equals(List.of("test.skip( browserName === 'webkit',"))
+                && Integrity.lint(List.of("it.skip(", "  'later',", "  () => {")).sure().equals(List.of("it.skip( 'later',"))
+                && Integrity.lint(List.of("@pytest.mark.skipif(", "    True,", "    reason='later')")).sure().size() == 1
+                && Integrity.lint(List.of("    assumeTrue(", "        false, \"later\");")).sure().size() == 1);
+        check("integrity: a call whose arguments end in none of its readings is a note; one that closes as no switch is nothing",
+                Integrity.lint(List.of("test.skip(", "  (", "    browserName", "  ) === 'webkit', 'x')")).equals(new Integrity.Lint(List.of(), List.of("test.skip(")))
+                && Integrity.lint(List.of("    assumeTrue(", "        System.getenv(\"X\") != null,", "        \"needs X\");")).equals(NOTHING));
+        // finding 2: a statement between the condition and the skip, or only the skip's message edited under an unchanged condition
+        check("integrity: a skip from inside a test with a statement between it and its condition is a note, not a problem",
+                Integrity.lint(List.of("    if (!ready) {", "      log.info('not ready');", "      this.skip();", "    }")).equals(new Integrity.Lint(List.of(), List.of("this.skip();")))
+                && Integrity.lint(List.of("        pytest.skip(\"needs a GPU, see #12\")")).equals(new Integrity.Lint(List.of(), List.of("pytest.skip(\"needs a GPU, see #12\")"))));
+        // finding 3: a condition and a computed reason
+        check("integrity: test.skip(false, reason) is nothing; test.fixme(isMobile, ISSUE_REASON) is a note",
+                Integrity.lint(List.of("test.skip(false, reason);", "test.fixme(false, issueReason());")).equals(NOTHING)
+                && Integrity.lint(List.of("test.fixme(isMobile, ISSUE_REASON);")).equals(new Integrity.Lint(List.of(), List.of("test.fixme(isMobile, ISSUE_REASON);"))));
+        // finding 4: abort declared over lines, or another object's abort over lines
+        check("integrity: a method named abort declared over three lines is nothing; another object's abort over two lines is not sure",
+                Integrity.lint(List.of("  abort(", "    reason?: string,", "  ): void {}")).equals(NOTHING)
+                && Integrity.lint(List.of("    controller.", "      abort();")).sure().isEmpty());
+        // finding 6: Python's conditions by keyword
+        List<String> keyword = List.of("@pytest.mark.skipif(reason=\"later\", condition=True)", "@unittest.skipIf(condition=True, reason=\"later\")",
+                "@unittest.skipUnless(condition=False, reason=\"later\")", "@pytest.mark.skipif(reason=\"later\")", "@pytest.mark.xfail(reason=\"x\", condition=True, run=False)");
+        check("integrity: a plain condition by keyword, in any place, and pytest's skipif with no condition, are sure",
+                Integrity.lint(keyword).sure().size() == keyword.size());
+        check("integrity: their honest neighbours, a computed condition by keyword, are nothing",
+                Integrity.lint(List.of("@pytest.mark.skipif(reason=\"posix\", condition=sys.platform == \"win32\")", "@unittest.skipIf(condition=IS_WINDOWS, reason=\"posix\")",
+                        "@unittest.skipUnless(condition=HAS_GPU, reason=\"gpu\")", "@pytest.mark.skipif(True if X else False, reason=\"x\")")).equals(NOTHING)
+                && Integrity.lint(List.of("@pytest.mark.xfail(run=False,", "    condition=sys.platform == \"win32\")")).equals(NOTHING));
+        // what was sure stays sure: the usual spellings, one per line
+        List<String> sure = List.of("@Disabled", "@org.junit.Ignore", "@Test(enabled = false)", "@DisabledIf(\"true\")", "@pytest.mark.skip(reason=\"x\")",
+                "@unittest.skip(\"x\")", "it.skip('x', () => {})", "describe.only('x', () => {})", "xit('x', () => {})", "test.todo('x')", "it.skip.each([[1]])('x', (a) => {})",
+                "test('x', { skip: true }, () => {})", "it.skipIf(true)('x', () => {})", "assumeTrue(false);", "assumeFalse(true, \"x\");", "it('pending');");
+        List<String> missed = sure.stream().filter(l -> !Integrity.lintedSwitch(l)).toList();
+        if (!missed.isEmpty()) System.out.println("    not sure: " + missed);
+        check("integrity: the forms the lint is sure of are problems", missed.isEmpty());
     }
 
     /**

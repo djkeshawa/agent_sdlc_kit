@@ -254,9 +254,12 @@ final class TrustTests {
         write(repo, "src/main/java/A.java", "class A { int f; }\n");
         commit(repo, "feat(PROJ-18): switch Java tests off");
         Ctx.init(repo);
+        Checks.Result offJava = Checks.prPolicy(null, false);
         check("trust: a Java test switched off on an added line fails, by the line",
-                Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No switch that turns a test off or focuses one was found") && f.contains("OffTest.java: @Disabled(\"later\")")
-                        && f.contains("OffTest.java: @Test void sooner() { assumeTrue(false); }") && f.contains("OffTest.java: @Test void never() { Assumptions.<Void>abort(")));
+                offJava.fails().stream().anyMatch(f -> f.contains("No switch that turns a test off or focuses one was found") && f.contains("OffTest.java: @Disabled(\"later\")")
+                        && f.contains("OffTest.java: @Test void sooner() { assumeTrue(false); }") && !f.contains("Assumptions.<Void>abort(")));
+        check("trust: Assumptions.abort, which a condition on another line may hold, is a warning, not a failure",
+                offJava.warns().stream().anyMatch(w -> w.contains("OffTest.java: may switch a test off") && w.contains("Assumptions.<Void>abort(\"later\")")));
 
         // text that looks like a skipped test, inside a text block over several lines: the lint reads lines, so it fails (on the safe side)
         git(repo, "switch", "-q", "-c", "feature/PROJ-16-example", "origin/main");
@@ -278,6 +281,24 @@ final class TrustTests {
         check("trust: a conditional skip is not a switch, and a line too long for the lint is a warning, not a failure",
                 conditional.passes().stream().anyMatch(p -> p.startsWith("No switch that turns a test off or focuses one was found on the added test lines (a text check; a test run is the proof)"))
                 && conditional.warns().stream().anyMatch(w -> w.contains("browser.spec.ts: 1 added line(s) longer than 2000 characters were not read for switches")));
+        check("trust: a Playwright skip with a computed condition is said as a warning, with its line",
+                conditional.warns().stream().anyMatch(w -> w.contains("browser.spec.ts: may switch a test off") && w.contains("sdlc check shows whether a test stopped running")
+                        && w.contains("test.skip(browserName === 'webkit', 'not on Safari');")));
+
+        // audit round 4: what the lint cannot know to be unconditional does not fail the pull request; a call over lines is judged whole
+        git(repo, "switch", "-q", "-c", "feature/PROJ-20-honest", "origin/main");
+        write(repo, "src/test/java/ready.spec.ts", "test.skip(\n  false,\n  'supported');\ntest('a', async function () {\n  if (!ready) {\n    log.info('not ready');\n    this.skip();\n  }\n});\n"
+                + "test.fixme(isMobile, ISSUE_REASON);\n");
+        write(repo, "src/test/java/test_marks.py", "@pytest.mark.skipif(reason=\"later\", condition=True)\ndef test_later():\n    pass\n");
+        write(repo, "src/main/java/A.java", "class A { int h; }\n");
+        commit(repo, "feat(PROJ-20): conditional skips");
+        Ctx.init(repo);
+        Checks.Result honest = Checks.prPolicy(null, false);
+        check("trust: a skip under a condition with a statement between, and a computed condition, are warnings; a plain condition by keyword fails",
+                honest.fails().stream().anyMatch(f -> f.contains("No switch that turns a test off or focuses one was found") && f.contains("test_marks.py: @pytest.mark.skipif(")
+                        && !f.contains("ready.spec.ts"))
+                && honest.warns().stream().anyMatch(w -> w.contains("ready.spec.ts: may switch a test off") && w.contains("this.skip();") && w.contains("test.fixme(isMobile, ISSUE_REASON);")
+                        && !w.contains("false,")));
 
         // a branch with no commit in common with the base: every diff would be empty or fail
         git(repo, "switch", "-q", "--orphan", "feature/PROJ-13-orphan");

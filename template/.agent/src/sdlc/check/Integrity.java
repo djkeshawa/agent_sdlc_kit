@@ -26,7 +26,8 @@ import sdlc.workflow.Checks;
  * a simple reading can only guess at is a NOTE, and says "appears".
  *
  * Test files of every language are read the same way: only the lines a change adds are linted for
- * the usual ways of writing a switch (lintedSwitches), each line no longer than LONGEST. That lint
+ * the usual ways of writing a switch (lint), each line no longer than LONGEST: a PROBLEM where the
+ * lines show it for sure, a NOTE where a condition or more context may decide it. That lint
  * is a helper that catches mistakes and plain attempts early, not a guard: text can be written to
  * hide a switch from a reader of text. Which tests a file holds, and how many that ran do not run
  * now, is read from its run (Witness), not from its source; the run is the guard.
@@ -92,8 +93,15 @@ public final class Integrity {
 
     // The switch lint: the usual ways of writing a switch that skips a test, marks it as to do or focuses on one, looked for on
     // the lines a change adds to test files. A helper that catches mistakes and plain attempts early, in commands that run no
-    // test; not a guard: an author who sets out to hide a switch from a reader of text can (see lintedSwitches). The run of a
-    // test file (sdlc check) is the guard.
+    // test; not a guard: an author who sets out to hide a switch from a reader of text can (see lint). The run of a test file
+    // (sdlc check) is the guard.
+    //
+    // It says what it finds at one of two levels (see lint). Sure, a problem: a switch whose whole meaning stands in what it
+    // read, with no condition possible (an annotation that switches off, a declaration with its title, an assumption that
+    // never holds). Anything else in which it sees a switch's words is a note, never a failure: whether a skip from inside a
+    // test runs under a condition, whether a computed first argument is a condition or a title, whether abort( is the one
+    // that skips, needs more than the added lines hold, and the run of the file says what happened. A call is never judged
+    // from a part of it: one whose arguments a line leaves open is judged with the lines after it.
     //
     // Its work is bounded and linear in what it is given. An added line longer than LONGEST is not read at all (the report says
     // how many were not). A line is read two ways (see reading), and so is a run of two or three added lines, joined (see
@@ -140,7 +148,7 @@ public final class Integrity {
      */
     private static final Pattern BODY_SKIP = Pattern.compile("(?:^|[;{}:])\\s*(?:(?:pytest\\s*\\.\\s*skip|self\\s*\\.\\s*skipTest|raise\\s+(?:unittest\\s*\\.\\s*)?SkipTest"
             + "|t\\s*\\.\\s*Skip(?:f|Now)?)\\s*\\(|this\\s*\\.\\s*skip\\s*\\(\\s*\\)|pending\\s*\\(\\s*(?:['\"`]|\\)))");
-    /** What makes a skip from inside a test conditional, on its line or the one above it: if, else, a ternary, &&, || and their kin. */
+    /** A condition before an assumption on its reading (if (x) assumeTrue(false)): if, else, a ternary, &&, || and their kin. */
     private static final Pattern CONDITION = Pattern.compile("(?=[iuewcf?&|])(?:\\b(?:if|unless|elif|else|when|except|catch|case|while|for)\\b|\\?(?![.?])|&&|\\|\\|)");
     /** A test declared without a body, on one line of its own (its code: strings emptied): it('pending'); Mocha and Vitest report it as pending. */
     private static final Pattern PENDING = Pattern.compile("^(?:it|test|specify)\\s*\\(\\s*(?:''|\"\"|``)\\s*\\)\\s*;?$");
@@ -162,6 +170,12 @@ public final class Integrity {
     private static final Pattern KEY = Pattern.compile(
             "(?=[sStofDIEaxfepr])(?:skip|Skip|todo|only|fixme|runIf|pending|Disabled|Ignore|EnabledIf|enabled|abort|assume|xfail|xit|xtest|xdescribe|xcontext|xspecify|fit|fdescribe)");
     private static final int SKIP = 1, MODIFIER = 2, ANNOTATED = 4, ABORTED = 8, ASSUMED = 16, XFAIL = 32, ALIASED = 64;
+    /**
+     * What the lint makes of a reading, in order: nothing; a note; a call whose arguments the reading leaves open before they
+     * say what it is (judged with the lines after it, see lint); a switch it is sure of.
+     */
+    private static final int NONE = 0, NOTE = 1, OPEN = 2, SURE = 3;
+    private static final Pattern NUMBER = Pattern.compile("\\d[\\d_.]*");
 
     /** The kinds of switch a line's words allow (see KEY), in one pass. */
     private static int keys(String decodedLine) {
@@ -232,11 +246,21 @@ public final class Integrity {
         return new Budget(Integer.MAX_VALUE / 8);
     }
 
-    /** True when one line holds a switch (see lintedSwitches), read without the lines around it. */
+    /** True when one line holds a switch the lint is sure of (see lint), read without the lines around it. */
     public static boolean lintedSwitch(String line) {
-        if (line.length() > LONGEST) return false;
+        return level(line) == SURE;
+    }
+
+    /** True when one line, read without the lines around it, holds what the lint only notes (see lint), a call it leaves open too. */
+    public static boolean lintedNote(String line) {
+        int level = level(line);
+        return level == NOTE || level == OPEN;
+    }
+
+    private static int level(String line) {
+        if (line.length() > LONGEST) return NONE;
         String d = decoded(line);
-        return switched(readDecoded(d), keys(d), "", true);
+        return judged(readDecoded(d), keys(d), true);
     }
 
     /** True when a line shows what the test finds, in one of its two readings (see reading). */
@@ -371,20 +395,47 @@ public final class Integrity {
         return n;
     }
 
+    /** What the lint found on the lines added to one file: the switches it is sure of (problems), and what it only notes. */
+    public record Lint(List<String> sure, List<String> notes) {}
+
+    /** The switches the lint is sure of (see lint). */
+    public static List<String> lintedSwitches(List<String> addedLines) {
+        return lint(addedLines).sure();
+    }
+
     /**
      * The line lint over the lines a change adds to one file, in their order, as the change wrote
-     * them: each line that holds a switch, as it is written, and each run of two or three added
-     * lines that hold one only together (it, a line break, .skip; @, a line break, Disabled),
-     * joined by a space. A line longer than LONGEST is not read, nor joined (see unlinted). The
-     * lines are taken as neighbours as the diff lists them; lines of two places of the file that
-     * only together read as a switch are reported too, which errs on the safe side.
+     * them. Each line is read alone, and each run of two or three added lines is read joined by a
+     * space, for what only they hold together (it, a line break, .skip; @, a line break,
+     * Disabled). A line longer than LONGEST is not read, nor joined (see unlinted). The lines are
+     * taken as neighbours as the diff lists them.
      *
-     * A skip from inside a test (pytest.skip, self.skipTest, this.skip(), t.Skip, Playwright's
-     * test.skip()) is reported only where the added lines show it unconditional: not when its
-     * line, or the added line above it, holds an if, an else, a ternary, && or ||. A skip with a
-     * condition first (Playwright's test.skip(browserName === 'webkit', 'reason'), skipif,
-     * skipUnless, @DisabledIf..., @EnabledIf...) is not a switch, unless its condition is a plain
-     * true (test.skip(true, ...), skipif(True, ...)).
+     * What it finds is said at one of two levels, each as the line, or the lines joined:
+     *
+     * Sure (a problem): what switches a test off or focuses one wherever it stands, its whole
+     * meaning in what was read. @Disabled, @Ignore, TestNG's @Test(enabled = false),
+     * @DisabledIf("true"), @EnabledIf("false"); pytest's skip mark where it applies to tests,
+     * skipif with a plain True for its condition (by place or by keyword) or with none, xfail
+     * that does not run; unittest's skip, skipIf(True), skipUnless(False); a declaration with its
+     * title (it.skip('x', ...), describe.only('x', ...), test.todo('x'), xit(...), fit('x', ...),
+     * it.skip.each, test('x', { skip: true }, ...), a test declared without a body on one line),
+     * Vitest's it.skipIf(true) and runIf(false); assumeTrue with a plain false, or assumeFalse
+     * with a plain true, as an argument of its own, with no condition before it on its reading.
+     *
+     * A note: everything else where it sees a switch's words, and where it would need more than
+     * the added lines hold to know that it is a switch, or that no condition holds it. A skip
+     * from inside a test (pytest.skip, self.skipTest, raise SkipTest, this.skip(), t.Skip,
+     * Jasmine's pending('x'), Playwright's test.skip() and test.skip(true, ...)), which a
+     * condition on another line may hold; Playwright's test.skip and test.fixme with a computed
+     * first argument (a condition, or a computed title: test.skip(isMobile, REASON),
+     * it.skip(name, ...)); a switch kept or chosen (const later = it.skip, cond ? describe :
+     * describe.skip); Assumptions.abort and abort( called alone; an assumption that never holds
+     * after a condition on its reading; a call whose arguments end in none of its readings.
+     *
+     * A call is judged where its arguments are: one whose arguments a line leaves open before
+     * they say what it is (test.skip(, a line break, false,) is judged with the next line, then
+     * with the next two, and is a note when they do not close it either. No line is said from a
+     * part of a call.
      *
      * It finds the usual ways of writing a switch, to catch mistakes and plain attempts early. It
      * is not a guard: an author who sets out to hide a switch from a reader of text can (a switch
@@ -393,148 +444,218 @@ public final class Integrity {
      * comment between a switch's words). The run of the file says which tests that ran before
      * the change do not run now, whatever the source says.
      */
-    public static List<String> lintedSwitches(List<String> addedLines) {
+    public static Lint lint(List<String> addedLines) {
         int n = addedLines.size();
-        List<String> out = new ArrayList<>();
-        boolean[] told = new boolean[n], read = new boolean[n];
-        int[] keys = new int[n];
-        String[] code = new String[n];
+        List<String> sure = new ArrayList<>();
+        TreeMap<Integer, String> notes = new TreeMap<>();
+        boolean[] read = new boolean[n], told = new boolean[n];
+        int[] keys = new int[n], level = new int[n];
         for (int i = 0; i < n; i++) {
             String line = addedLines.get(i);
             read[i] = line.length() <= LONGEST;
             if (!read[i]) continue;
             String d = decoded(line);
-            Reading r = readDecoded(d);
-            code[i] = r.code();
             keys[i] = keys(d);
-            if (switched(r, keys[i], above(code, i), true)) {
+            level[i] = judged(readDecoded(d), keys[i], true);
+            if (level[i] == SURE) {
                 told[i] = true;
-                out.add(line.trim());
+                sure.add(line.trim());
+            }
+        }
+        // a call a line leaves open is judged where its arguments end: with the next line, or the next two; a note when neither closes it
+        for (int i = 0; i < n; i++) {
+            if (level[i] != OPEN || told[i]) continue;
+            int width = 1, judged = OPEN;
+            for (int w = 2; w <= 3 && judged == OPEN && fresh(read, told, i, w); w++) {
+                judged = judged(addedLines, keys, i, w);
+                width = w;
+            }
+            if (judged == OPEN) {
+                width = 1;
+                judged = NOTE;
+            }
+            told[i] = true;
+            if (judged == NONE) continue; // the call closes as no switch; the lines after it are read on their own
+            for (int k = i; k < i + width; k++) told[k] = true;
+            if (judged == SURE) sure.add(shown(addedLines, i, width));
+            else notes.putIfAbsent(i, shown(addedLines, i, width));
+        }
+        // what only two or three lines hold together; a run whose call stays open is a note at the end, unless a wider run closes it
+        int[] open = new int[n];
+        for (int width = 2; width <= 3; width++) {
+            for (int i = 0; i + width <= n; i++) {
+                if (!fresh(read, told, i, width)) continue;
+                int key = 0;
+                boolean alone = false;
+                for (int k = i; k < i + width; k++) {
+                    key |= keys[k];
+                    alone |= level[k] != NONE;
+                }
+                // every word a switch needs is on one line (a join puts a space between lines), so a run with none holds none
+                if (key == 0) continue;
+                int judged = judged(addedLines, keys, i, width);
+                open[i] = judged == OPEN ? width : 0;
+                if (judged == SURE) {
+                    for (int k = i; k < i + width; k++) told[k] = true;
+                    sure.add(shown(addedLines, i, width));
+                } else if (judged == NOTE && !alone) { // a line that is a note alone says it itself
+                    for (int k = i; k < i + width; k++) told[k] = true;
+                    notes.putIfAbsent(i, shown(addedLines, i, width));
+                }
             }
         }
         for (int width = 2; width <= 3; width++) {
-            for (int i = 0; i + width <= n; i++) {
-                boolean fresh = true;
-                int key = 0;
-                for (int k = i; k < i + width; k++) {
-                    fresh &= read[k] && !told[k];
-                    key |= keys[k];
-                }
-                // every word a switch needs is on one line (a join puts a space between lines), so a run with none holds none
-                if (!fresh || key == 0) continue;
-                List<String> lines = addedLines.subList(i, i + width);
-                if (!switched(joined(lines), key, above(code, i), false)) continue;
+            for (int i = 0; i < n; i++) {
+                if (open[i] != width || !fresh(read, told, i, width)) continue;
                 for (int k = i; k < i + width; k++) told[k] = true;
-                out.add(String.join(" ", lines.stream().map(String::trim).toList()));
+                notes.putIfAbsent(i, shown(addedLines, i, width));
             }
         }
-        return out;
+        for (int i = 0; i < n; i++) if (level[i] == NOTE && !told[i]) notes.putIfAbsent(i, addedLines.get(i).trim());
+        return new Lint(sure, new ArrayList<>(notes.values()));
     }
 
-    /** The code of the nearest added line above line i that has any (up to three lines up), for whether a skip under it is conditional. */
-    private static String above(String[] code, int i) {
-        for (int k = i - 1; k >= 0 && k >= i - 3; k--) if (code[k] != null && !code[k].isEmpty()) return code[k];
-        return "";
+    /** True when the lines from i, width of them, are read and not yet said. */
+    private static boolean fresh(boolean[] read, boolean[] told, int i, int width) {
+        if (i + width > read.length) return false;
+        for (int k = i; k < i + width; k++) if (!read[k] || told[k]) return false;
+        return true;
+    }
+
+    private static String shown(List<String> lines, int i, int width) {
+        return String.join(" ", lines.subList(i, i + width).stream().map(String::trim).toList());
+    }
+
+    /** What the lint makes of the lines from i, width of them, read together (see joined). */
+    private static int judged(List<String> lines, int[] keys, int i, int width) {
+        int key = 0;
+        for (int k = i; k < i + width; k++) key |= keys[k];
+        return judged(joined(lines.subList(i, i + width)), key, false);
     }
 
     /**
-     * True when a reading holds a switch. above is the code of the added line above (see
-     * lintedSwitches); single is false for lines read together, where a pending test (a whole
-     * declaration on one line) is not looked for.
+     * What the lint makes of a reading of one line or of lines read together: the most that either
+     * of its two readings holds (see Reading). single is false for lines read together, where a
+     * pending test (a whole declaration on one line) is not looked for.
      */
-    private static boolean switched(Reading r, int keys, String above, boolean single) {
-        if (keys == 0 && !single) return false;
-        // whether a skip from inside a test is conditional: read once, for every skip of the line
-        boolean conditional = keys != 0 && (CONDITION.matcher(new Counted(r.code())).find() || CONDITION.matcher(new Counted(above)).find());
-        return switched(r.code(), keys, true, conditional, single) || r.written() != null && switched(r.written(), keys, false, conditional, single);
+    private static int judged(Reading r, int keys, boolean single) {
+        if (keys == 0 && !single) return NONE;
+        int level = judged(r.code(), keys, true, single);
+        return level < SURE && r.written() != null ? Math.max(level, judged(r.written(), keys, false, single)) : level;
     }
 
-    /** True when one reading holds a switch; keys are its line's (see keys): each kind of switch is looked for only where its word stands. */
-    private static boolean switched(String text, int keys, boolean code, boolean conditional, boolean single) {
+    /** What one reading holds; keys are its line's (see keys): each kind of switch is looked for only where its word stands. */
+    private static int judged(String text, int keys, boolean code, boolean single) {
         CharSequence s = new Counted(text);
-        if (single && code && PENDING.matcher(s).lookingAt()) return true;
-        if (keys == 0) return false;
-        if (code && (keys & SKIP) != 0 && BODY_SKIP.matcher(s).find() && !conditional) return true;
-        if ((keys & ANNOTATED) != 0 && ANNOTATION.matcher(s).find() || (keys & ABORTED) != 0 && ABORTS.matcher(s).find()
-                || (keys & ALIASED) != 0 && ALIAS.matcher(s).find()) {
-            return true;
-        }
+        if (single && code && PENDING.matcher(s).lookingAt()) return SURE;
+        if (keys == 0) return NONE;
+        if ((keys & ANNOTATED) != 0 && ANNOTATION.matcher(s).find() || (keys & ALIASED) != 0 && ALIAS.matcher(s).find()) return SURE;
         Budget budget = new Budget(s.length());
-        if ((keys & MODIFIER) != 0 && (scriptSwitch(s, conditional, budget) || options(s, budget))) return true;
-        if ((keys & (SKIP | XFAIL)) != 0 && pythonSwitch(s, budget)) return true;
-        return (keys & ABORTED) != 0 && !bareAborts(s, budget, true).isEmpty() || (keys & ASSUMED) != 0 && !assumptions(s, budget, true).isEmpty();
+        int level = NONE;
+        if ((keys & MODIFIER) != 0) level = options(s, budget) ? SURE : scriptSwitch(s, budget);
+        if (level < SURE && (keys & (SKIP | XFAIL)) != 0) level = Math.max(level, pythonSwitch(s, budget));
+        if (level < SURE && (keys & ASSUMED) != 0) level = Math.max(level, assumption(s, budget));
+        // the rest are notes: a skip from inside a test, abort
+        if (level == NONE && code && (keys & SKIP) != 0 && BODY_SKIP.matcher(s).find()) level = NOTE;
+        if (level == NONE && (keys & ABORTED) != 0) level = ABORTS.matcher(s).find() ? NOTE : aborted(bareAborts(s, budget, true));
+        return level;
     }
 
     /**
-     * it.skip, test.only and their kin. A skip or a fixme whose first argument is a title (a
-     * string) is a switch, and so is one followed by another member (.each). One with no
-     * arguments or a plain true skips from inside a test (Playwright's test.skip(),
-     * test.skip(true, 'reason')), and one followed by nothing is a reference (const later =
-     * it.skip): each a switch where it is unconditional (see lintedSwitches), not in an if or a
-     * ternary (cond ? describe : describe.skip). One whose first argument is a condition, and
-     * whose second is a description or absent, is a conditional skip (Playwright's
-     * test.skip(browserName === 'webkit', 'reason')): not a switch. A function as the second
-     * argument makes it a declaration with a computed title (it.skip(name, () => {})): a switch.
-     * Vitest's it.skipIf(true) and runIf(false) are switches.
+     * it.skip, test.only and their kin. Sure: a title for the first argument (a string, alone or
+     * joined to more with +: a declaration, it.skip('x', ...), Playwright's test.skip('x', ...)
+     * too), another member after the modifier (it.skip.each), and Vitest's it.skipIf(true) and
+     * runIf(false). A skip or a fixme whose first argument is a plain false or a number switches
+     * nothing (Playwright's test.skip(false, ...)). Anything else is a note: no call (const later =
+     * it.skip, cond ? describe : describe.skip); no argument or a plain true (Playwright's skip
+     * from inside a test, test.skip(), test.skip(true, 'reason'), which a condition around it may
+     * hold); a computed first argument (Playwright's condition, test.skip(isMobile, REASON), or a
+     * computed title, it.skip(name, ...)). OPEN when the reading ends before its first argument
+     * does.
      */
-    private static boolean scriptSwitch(CharSequence s, boolean conditional, Budget budget) {
-        if (LITERAL_IF.matcher(s).find()) return true;
+    private static int scriptSwitch(CharSequence s, Budget budget) {
+        if (LITERAL_IF.matcher(s).find()) return SURE;
+        int level = NONE;
         Matcher m = SCRIPT_SWITCH.matcher(s);
-        while (m.find()) {
-            String modifier = m.group(1);
-            if (modifier.equals("only") || modifier.equals("todo")) return true;
+        while (level < SURE && m.find()) {
             int at = m.end();
             while (at < s.length() && blank(s.charAt(at))) at++;
-            if (at < s.length() && s.charAt(at) == '.') return true;
-            if (at >= s.length() || s.charAt(at) != '(') {
-                if (!conditional) return true;
-                continue;
-            }
-            Arguments a = arguments(s, at, budget);
-            if (a.list().isEmpty() && !a.closed()) return true;
-            String first = a.list().isEmpty() ? "" : a.list().get(0);
-            if (a.list().isEmpty() || first.equals("true")) {
-                if (!conditional) return true;
-                continue;
-            }
-            if (first.isEmpty() && !a.closed() || literal(first)) return true;
-            if (a.list().size() >= 2 && !a.list().get(1).isEmpty() && !literal(a.list().get(1))) return true;
+            if (at >= s.length()) level = Math.max(level, OPEN);
+            else if (s.charAt(at) == '.') return SURE;
+            else if (s.charAt(at) != '(') level = Math.max(level, NOTE);
+            else level = Math.max(level, called(m.group(1), arguments(s, at, budget)));
         }
-        return false;
+        return level;
     }
 
-    private static boolean literal(String arg) {
-        return !arg.isEmpty() && "'\"`".indexOf(arg.charAt(0)) >= 0;
+    /** it.skip(...) and its kin, judged by their arguments (see scriptSwitch). */
+    private static int called(String modifier, Arguments a) {
+        List<String> args = a.list();
+        String first = args.isEmpty() ? "" : args.get(0);
+        if (title(first)) return SURE;
+        if (args.size() < 2 && !a.closed()) return OPEN; // its first argument may go on
+        boolean skips = modifier.equals("skip") || modifier.equals("fixme");
+        if (skips && (first.equals("false") || NUMBER.matcher(first).matches())) return NONE;
+        return NOTE;
+    }
+
+    /** A title: a string (quoted or a template) that begins the argument, alone or joined to more with +. */
+    private static boolean title(String arg) {
+        if (arg.isEmpty() || "'\"`".indexOf(arg.charAt(0)) < 0) return false;
+        char quote = arg.charAt(0);
+        work += arg.length();
+        for (int i = 1; i < arg.length(); i++) {
+            char c = arg.charAt(i);
+            if (c == '\\') {
+                i++;
+            } else if (c == quote) {
+                String rest = arg.substring(i + 1).strip();
+                return rest.isEmpty() || rest.charAt(0) == '+';
+            }
+        }
+        return false;
     }
 
     /**
-     * pytest's skip mark, applied to tests (a decorator, pytestmark, marks=); skipif with a plain
-     * True; xfail with run=False and no condition. unittest's skip; skipIf(True; skipUnless(False.
+     * pytest's marks where they apply to tests (a decorator, pytestmark = ..., marks=...) and
+     * unittest's decorators. Sure: pytest's skip; skipif with a plain True for its condition, by
+     * place or by keyword (skipif(True, ...), skipif(reason=..., condition=True)), or with no
+     * condition at all (pytest then skips); xfail with run=False and no condition or a plain
+     * True; unittest's skip, skipIf(True, ...) and skipUnless(False, ...), also by keyword. Another
+     * condition switches nothing. OPEN while the arguments read so far do not say it.
      */
-    private static boolean pythonSwitch(CharSequence s, Budget budget) {
-        Matcher m = PYTEST_MARK.matcher(s);
-        while (m.find()) {
-            String mark = m.group(1);
-            if (mark.equals("skip")) return true;
-            Arguments a = argumentsAfter(s, m.end(), budget);
-            if (a == null || a.list().isEmpty()) continue;
-            String first = a.list().get(0).replace(" ", "");
-            if (mark.equals("skipif") && (first.equals("True") || first.equals("condition=True"))) return true;
-            if (mark.equals("xfail") && a.list().stream().anyMatch(x -> x.replace(" ", "").equals("run=False"))
-                    && (first.equals("True") || KEYWORD.matcher(first).lookingAt())
-                    && a.list().stream().map(x -> x.replace(" ", "")).noneMatch(x -> x.startsWith("condition=") && !x.equals("condition=True"))) {
-                return true;
-            }
+    private static int pythonSwitch(CharSequence s, Budget budget) {
+        int level = NONE;
+        for (Matcher m = PYTEST_MARK.matcher(s); level < SURE && m.find();) {
+            level = m.group(1).equals("skip") ? SURE : Math.max(level, marked(m.group(1), s, m.end(), budget));
         }
-        Matcher u = UNITTEST_SKIP.matcher(s);
-        while (u.find()) {
-            String mark = u.group(1);
-            if (mark.equals("skip")) return true;
-            Arguments a = argumentsAfter(s, u.end(), budget);
-            if (a == null || a.list().isEmpty()) continue;
-            if (a.list().get(0).equals(mark.equals("skipIf") ? "True" : "False")) return true;
+        for (Matcher u = UNITTEST_SKIP.matcher(s); level < SURE && u.find();) {
+            level = u.group(1).equals("skip") ? SURE : Math.max(level, marked(u.group(1), s, u.end(), budget));
         }
-        return false;
+        return level;
+    }
+
+    /** skipif, xfail (pytest), skipIf, skipUnless (unittest), whose name ends at at: judged by their condition (see pythonSwitch). */
+    private static int marked(String mark, CharSequence s, int at, Budget budget) {
+        while (at < s.length() && blank(s.charAt(at))) at++;
+        boolean pytest = mark.equals("skipif") || mark.equals("xfail");
+        if (at >= s.length()) return OPEN;
+        if (s.charAt(at) != '(') return mark.equals("skipif") ? SURE : NONE; // pytest's mark applied bare skips, with no condition
+        Arguments a = arguments(s, at, budget);
+        List<String> args = a.list();
+        int ended = a.closed() ? args.size() : args.size() - 1; // an argument counts where it ends
+        String condition = null;
+        boolean runs = true;
+        for (int k = 0; k < ended; k++) {
+            String arg = args.get(k).replace(" ", "");
+            if (arg.startsWith("condition=")) condition = arg.substring("condition=".length());
+            else if (arg.equals("run=False")) runs = false;
+            else if (k == 0 && !KEYWORD.matcher(args.get(k)).lookingAt()) condition = arg;
+        }
+        if (condition != null && !condition.equals(mark.equals("skipUnless") ? "False" : "True")) return NONE;
+        if (mark.equals("xfail")) return !a.closed() && (runs || condition == null) ? OPEN : runs ? NONE : SURE; // a condition= may still come
+        if (condition != null) return SURE;
+        return !a.closed() ? OPEN : pytest ? SURE : NONE; // no condition: pytest skips; unittest's call is an error
     }
 
     /** A test declaration whose option object, an argument after its title, says skip, only or todo: true (Vitest). */
@@ -630,8 +751,9 @@ public final class Integrity {
      * (controller.abort(), x?.abort()), a # or a name (a declaration: function abort(), void
      * abort(), def abort(); but return abort(...) is a call), and not followed by a body or a
      * return type (abort() { ... }, abort(): void { ... }, a method declared in a class, an object
-     * or an interface; but x ? abort() : y is a call). Each as [start, end); with first, only the
-     * first.
+     * or an interface; but x ? abort() : y is a call). A note, never sure: whether it is the abort
+     * that skips a test is not in the text. Each as [start, end, 1 when its parentheses close in the
+     * reading, else 0]; with first, only the first.
      */
     private static List<int[]> bareAborts(CharSequence s, Budget budget, boolean first) {
         List<int[]> out = new ArrayList<>();
@@ -652,10 +774,15 @@ public final class Integrity {
                 while (k < s.length() && Character.isWhitespace(s.charAt(k))) k++;
                 if (k < s.length() && (s.charAt(k) == '{' || s.charAt(k) == ':' && before != '?')) continue;
             }
-            out.add(new int[] {m.start(), close >= 0 ? close + 1 : s.length()});
+            out.add(new int[] {m.start(), close >= 0 ? close + 1 : s.length(), close >= 0 ? 1 : 0});
             if (first) break;
         }
         return out;
+    }
+
+    /** A note for abort( called alone; OPEN while its parentheses do not close in the reading (a declaration may follow them). */
+    private static int aborted(List<int[]> aborts) {
+        return aborts.isEmpty() ? NONE : aborts.get(0)[2] == 1 ? NOTE : OPEN;
     }
 
     private static boolean word(char c) {
@@ -663,25 +790,51 @@ public final class Integrity {
     }
 
     /**
-     * Where an assumption never holds: assumeTrue with an argument that is a plain false, or
-     * assumeFalse with one that is a plain true, whatever the other arguments are (a message, a
-     * lambda, String.format(...)). A call whose end is not within reach has its last argument cut
-     * there. Each as [start, end); with first, only the first.
+     * assumeTrue with a plain false as an argument of its own, or assumeFalse with a plain true,
+     * whatever the other arguments are (a message, a lambda, String.format(...)): sure, unless a
+     * condition stands before it on its reading (if (x) assumeTrue(false)): a note then. An
+     * argument counts where it ends; OPEN while the call is not closed and none counts.
      */
-    private static List<int[]> assumptions(CharSequence s, Budget budget, boolean first) {
+    private static int assumption(CharSequence s, Budget budget) {
+        int level = NONE, condition = -2;
+        Matcher m = ASSUME.matcher(s);
+        while (level < SURE && m.find()) {
+            Arguments a = arguments(s, m.end() - 1, budget);
+            String never = m.group(1).equals("True") ? "false" : "true";
+            List<String> args = a.list();
+            boolean holds = false;
+            for (int k = 0, ended = a.closed() ? args.size() : args.size() - 1; k < ended && !holds; k++) holds = args.get(k).equals(never);
+            if (!holds) {
+                if (!a.closed()) level = Math.max(level, OPEN);
+                continue;
+            }
+            if (condition == -2) {
+                Matcher c = CONDITION.matcher(s);
+                condition = c.find() ? c.start() : -1;
+            }
+            level = Math.max(level, condition >= 0 && condition < m.start() ? NOTE : SURE);
+        }
+        return level;
+    }
+
+    /**
+     * Where an assumption never holds, as withoutBuiltInSwitches takes it out: assumeTrue with an
+     * argument that is a plain false, or assumeFalse with one that is a plain true, a condition
+     * before it or not. A call whose end is not within reach has its last argument cut there.
+     * Each as [start, end).
+     */
+    private static List<int[]> assumptions(CharSequence s, Budget budget) {
         List<int[]> out = new ArrayList<>();
         Matcher m = ASSUME.matcher(s);
         while (m.find()) {
             String never = m.group(1).equals("True") ? "false" : "true";
             Arguments a = arguments(s, m.end() - 1, budget);
-            if (!a.list().contains(never)) continue;
-            out.add(new int[] {m.start(), a.end()});
-            if (first) break;
+            if (a.list().contains(never)) out.add(new int[] {m.start(), a.end()});
         }
         return out;
     }
 
-    /** What withoutBuiltInSwitches takes out: the words of every switch the lint judges, conditional ones too (it judges them not switches). */
+    /** What withoutBuiltInSwitches takes out: the words of every switch the lint judges, those it only notes and conditional ones too. */
     private static final Pattern BUILT_IN = Pattern.compile(SCRIPT_SWITCH.pattern() + "|\\b[xf](?:it|test|describe|context|specify)\\b"
             + "|@\\s*(?:[\\w$]+\\s*\\.\\s*){0,12}(?:Disabled\\w*|Ignore|EnabledIf\\w*)\\b|" + ABORTS.pattern()
             + "|\\bpytest\\s*\\.\\s*(?:mark\\s*\\.\\s*)?(?:skip\\w*|xfail)\\b|\\bunittest\\s*\\.\\s*skip\\w*|\\bself\\s*\\.\\s*skipTest\\b|\\bSkipTest\\b"
@@ -696,7 +849,7 @@ public final class Integrity {
      */
     public static String withoutBuiltInSwitches(String line) {
         if (line.length() > LONGEST) return line;
-        List<int[]> spans = new ArrayList<>(assumptions(line, unbounded(), false));
+        List<int[]> spans = new ArrayList<>(assumptions(line, unbounded()));
         spans.addAll(bareAborts(line, unbounded(), false));
         spans.sort(Comparator.comparingInt((int[] x) -> x[0]).reversed());
         StringBuilder out = new StringBuilder(line);
@@ -817,12 +970,16 @@ public final class Integrity {
     }
 
     private void switchedOff() {
-        // every test file alike: the lines the change adds, as it wrote them, are linted alone and two or three together; a line
-        // longer than the lint reads is not read, and the report says how many were not
+        // every test file alike: the lines the change adds, as it wrote them, are linted alone and two or three together; what
+        // the lint is sure of is a problem, the rest a note; a line longer than the lint reads is not read, and the report says
+        // how many were not
         for (String path : change.paths("AM")) {
             if (!anyTestFile(path)) continue;
             List<String> lines = whole.getOrDefault(path, List.of());
-            for (String hit : lintedSwitches(lines)) switchedOff(path, hit);
+            Lint lint = lint(lines);
+            for (String hit : lint.sure()) switchedOff(path, hit);
+            // what the lint cannot know to be a switch, or to be unconditional, is said; the run of the file judges it
+            for (String hit : lint.notes()) note(FOCUSED.matcher(hit).find() ? "may focus a test" : "may switch a test off", path, "the run of the file judges it: " + hit);
             int unread = unlinted(lines);
             if (unread > 0) {
                 note("lines too long for the switch lint", path, unread + (unread == 1 ? " added line is" : " added lines are") + " longer than " + LONGEST
