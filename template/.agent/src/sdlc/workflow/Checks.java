@@ -79,7 +79,15 @@ public final class Checks {
     // ---------------- tests ----------------
 
     public static boolean containsDisabled(String text) {
-        for (String re : Ctx.cfg.list("tests.disabledPatterns")) if (Pattern.compile(re).matcher(text).find()) return true;
+        for (String re : Ctx.cfg.list("tests.disabledPatterns")) {
+            try {
+                if (Pattern.compile(re).matcher(text).find()) return true;
+            } catch (StackOverflowError e) {
+                // a repository's own pattern that recurses once per repetition, on text made to drive it deep: the
+                // pattern could not be applied, and text written to break the check is not let through as clean
+                return true;
+            }
+        }
         return false;
     }
 
@@ -87,7 +95,9 @@ public final class Checks {
         List<String> hits = new ArrayList<>();
         for (Map.Entry<String, List<String>> e : added.entrySet()) {
             if (!Glob.any(Ctx.cfg.list("paths.test"), e.getKey())) continue;
-            for (String line : e.getValue()) if (containsDisabled(line)) hits.add(e.getKey() + ": " + line.trim());
+            // a line longer than the switch lint reads is not read here either (check-pr and check say how many were not read):
+            // the configured patterns are a repository's own, and their cost on a very long line is not known
+            for (String line : e.getValue()) if (line.length() <= sdlc.check.Integrity.LONGEST && containsDisabled(line)) hits.add(e.getKey() + ": " + line.trim());
         }
         return hits;
     }
@@ -186,10 +196,16 @@ public final class Checks {
         Set<String> disabled = new LinkedHashSet<>();
         for (String hit : disabledTests(added)) if (containsDisabled(sdlc.check.Integrity.withoutBuiltInSwitches(hit.substring(hit.indexOf(": ") + 2)))) disabled.add(hit);
         // every test file, of every language, is linted by the lines the change adds, alone and two or three together
-        // (it, a line break, .skip; @, a line break, Disabled); which tests are skipped is for a run to say, and check-pr runs none
+        // (it, a line break, .skip; @, a line break, Disabled); which tests are skipped is for a run to say, and check-pr runs none.
+        // What the lint is sure of fails; what it cannot know to be a switch, or to be unconditional, is a warning
         for (String f : files) {
             if (!Glob.any(Ctx.cfg.list("paths.test"), f)) continue;
-            for (String hit : sdlc.check.Integrity.lintedSwitches(added.getOrDefault(f, List.of()))) disabled.add(f + ": " + hit);
+            sdlc.check.Integrity.Lint lint = sdlc.check.Integrity.lint(added.getOrDefault(f, List.of()));
+            for (String hit : lint.sure()) disabled.add(f + ": " + hit);
+            if (!lint.notes().isEmpty()) {
+                warns.add(f + ": may switch a test off under a condition or in a test's body, or is no switch at all (a text check; sdlc check shows whether a test"
+                        + " stopped running): " + lint.notes());
+            }
             int unread = sdlc.check.Integrity.unlinted(added.getOrDefault(f, List.of()));
             if (unread > 0) {
                 warns.add(f + ": " + unread + " added line(s) longer than " + sdlc.check.Integrity.LONGEST + " characters were not read for switches (sdlc check runs the file)");
