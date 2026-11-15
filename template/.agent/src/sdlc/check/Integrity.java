@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.IntSupplier;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -43,17 +44,25 @@ public final class Integrity {
     // ---------------- what counts as a test file (the one place that decides) ----------------
 
     private static final Pattern TEST_FOLDER = Pattern.compile(".*/(?:__tests__|tests?)/.*");
+    /** Read on a file's name alone (no "/" in it), so each alternative's [^/]* runs to the name's end once. */
     private static final Pattern TEST_NAME = Pattern.compile(
-            ".*/(?:[^/]*\\.(?:test|spec)\\.[^/]+|[^/]*(?:Test|Tests|IT)\\.(?:java|kt|groovy|scala)|test_[^/]*\\.py|[^/]*_test\\.(?:py|go))");
+            "[^/]*\\.(?:test|spec)\\.[^/]+|[^/]*(?:Test|Tests|IT)\\.(?:java|kt|groovy|scala)|test_[^/]*\\.py|[^/]*_test\\.(?:py|go)");
 
     /** A test file: under src/test, test, tests or __tests__, or named like one (FooTest.java, foo.test.ts, test_foo.py, foo_test.go). */
     static boolean isTestFile(String path) {
-        String p = "/" + path;
-        return TEST_FOLDER.matcher(p).matches() || TEST_NAME.matcher(p).matches();
+        return TEST_FOLDER.matcher("/" + path).matches() || testNamed(path);
     }
 
     static boolean testNamed(String path) {
-        return TEST_NAME.matcher("/" + path).matches();
+        return TEST_NAME.matcher(path.substring(path.lastIndexOf('/') + 1)).matches();
+    }
+
+    /**
+     * A test file as the scan knows one: by the built-in idea (see isTestFile), or by the
+     * repository's own test paths (paths.test). check-pr lints the same files as sdlc check.
+     */
+    public static boolean testFile(String path, List<String> testPaths) {
+        return isTestFile(path) || sdlc.util.Glob.any(testPaths, path);
     }
 
     private static boolean isJava(String path) {
@@ -71,8 +80,22 @@ public final class Integrity {
     private static final Pattern BUILD = Pattern.compile(
             "(?:.*/)?(?:pom\\.xml|build\\.gradle(?:\\.kts)?|settings\\.gradle(?:\\.kts)?|gradle\\.properties|tsconfig[^/]*\\.json|vitest\\.config\\.[^/]+|jest\\.config\\.[^/]+|Makefile|Dockerfile[^/]*)");
     private static final Pattern SCRIPT_FILE = Pattern.compile(".*\\.(?:sh|bash|ps1|cmd|bat)|(?:.*/)?\\.mvn/maven\\.config|(?:.*/)?vite\\.config\\.[^/]+");
-    private static final Pattern MIGRATION = Pattern.compile(
-            "(?:.*/)?(?:db/migration|migrations|alembic/versions|db/changelog)/.*|.*\\.sql|(?:.*/)?[^/]*changelog[^/]*\\.(?:xml|ya?ml|json)");
+    private static final Pattern MIGRATION = Pattern.compile("(?:.*/)?(?:db/migration|migrations|alembic/versions|db/changelog)/.*|.*\\.sql");
+    /** The extension of a changelog file (Liquibase): its name holds "changelog" before it. */
+    private static final Pattern CHANGELOG_EXTENSION = Pattern.compile("\\.(?:xml|ya?ml|json)$");
+
+    /**
+     * A database migration: in a migration folder, a .sql file, or a changelog file. The changelog
+     * is read by its name, not by a pattern: "[^/]*changelog[^/]*" would try each place in a long
+     * name for both of its parts.
+     */
+    private static boolean migration(String path) {
+        if (MIGRATION.matcher(path).matches()) return true;
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        Matcher ext = CHANGELOG_EXTENSION.matcher(name);
+        return ext.find() && name.substring(0, ext.start()).contains("changelog");
+    }
+
     private static final Pattern STEERING = Pattern.compile(
             "(?:.*/)?\\.gitattributes|(?:.*/)?CODEOWNERS|(?:.*/)?AGENTS\\.md|(?:.*/)?CLAUDE\\.md|\\.claude/.*|\\.codex/.*|\\.cursor/.*"
                     + "|\\.github/copilot-instructions\\.md|\\.github/instructions/.*|\\.agent/.*|\\.githooks/.*");
@@ -102,9 +125,13 @@ public final class Integrity {
     // test runs under a condition, whether a computed first argument is a condition or a title, whether abort( is the one
     // that skips, needs more than the added lines hold, and the run of the file says what happened. A call is never judged
     // from a part of it: one whose arguments a line leaves open is judged with the lines after it. No pattern says sure by
-    // itself: every sure form goes through the readers of one gate (see judged and the table in lint): a complete argument
-    // list, a literal that is the whole argument, a title that is a string for certain, an option that is a top-level
-    // property, a call that registers a test, a decorator or an annotation that is the whole expression.
+    // itself: every sure form goes through the readers of one gate (see the table in lint): a complete argument list, a
+    // literal that is the whole argument, a title that is a string for certain, an option that is a top-level property, a
+    // call that registers a test, a decorator or an annotation that is the whole expression; and then through the gate
+    // itself (see sure), the one place where a form becomes sure: it stands on its own (a statement, a declaration's
+    // annotation, a decorator), and nothing holds it (a condition before it on its reading, or on the added line before).
+    // The written reading decides (see judged): the code reading, whose strings are emptied and comments dropped, never
+    // makes a form sure.
     //
     // Its work is bounded and linear in what it is given. An added line longer than LONGEST is not read at all (the report says
     // how many were not). A line is read two ways (see reading), and so is a run of two or three added lines, joined (see
@@ -145,8 +172,9 @@ public final class Integrity {
     /** A mark of pytest (group 1: skip, skipif or xfail) or of unittest (group 2: skip, skipIf or skipUnless), as the whole name. */
     private static final Pattern PY_MARK = Pattern.compile(
             "(?=[pu])\\b(?:pytest\\s*\\.\\s*mark\\s*\\.\\s*(skip|skipif|xfail)|unittest\\s*\\.\\s*(skip|skipIf|skipUnless))(?![\\w$])");
-    /** Where a mark applies to tests: a decorator's @, pytestmark = and marks= (of pytest.param). */
-    private static final Pattern PY_CONTEXT = Pattern.compile("(?=[@pm])(?:@|\\b(?:pytestmark|marks)\\s*=(?!=))");
+    /** Where a mark applies to tests: a decorator's @ and pytestmark =; and pytest.param, whose marks= is read (see param). */
+    private static final Pattern PY_CONTEXT = Pattern.compile("(?=[@p])(?:@|\\bpytestmark\\s*=(?!=))");
+    private static final Pattern PARAM = Pattern.compile("(?=p)\\bpytest\\s*\\.\\s*param\\s*\\(");
     /**
      * A skip from inside a test, as a statement of its own: pytest.skip(...), self.skipTest(...),
      * raise unittest.SkipTest(...), Mocha's this.skip() (no argument), Go's t.Skip, t.Skipf, t.SkipNow,
@@ -156,8 +184,8 @@ public final class Integrity {
             + "|t\\s*\\.\\s*Skip(?:f|Now)?)\\s*\\(|this\\s*\\.\\s*skip\\s*\\(\\s*\\)|pending\\s*\\(\\s*(?:['\"`]|\\)))");
     /** A condition before an assumption on its reading (if (x) assumeTrue(false)): if, else, a ternary, &&, || and their kin. */
     private static final Pattern CONDITION = Pattern.compile("(?=[iuewcf?&|])(?:\\b(?:if|unless|elif|else|when|except|catch|case|while|for)\\b|\\?(?![.?])|&&|\\|\\|)");
-    /** A test declared without a body, on one line of its own (its code: strings emptied): it('pending'); Mocha and Vitest report it as pending. */
-    private static final Pattern PENDING = Pattern.compile("^(?:it|test|specify)\\s*\\(\\s*(?:''|\"\"|``)\\s*\\)\\s*;?$");
+    /** The start of a test declared without a body, its whole declaration a reading of one line: it('pending'); (see pending). */
+    private static final Pattern PENDING = Pattern.compile("(?:it|test|specify)\\s*+\\(");
     /** A test declaration, for its option object (Vitest: test('x', { skip: true }, fn)); not another object's (regex.test(x)). */
     private static final Pattern DECLARATION = Pattern.compile("(?=[itdsc])(?<![\\w$.])(?<!\\.\\s)\\b(?:it|test|describe|suite|context|specify)(?:" + DOT + "\\w+){0,3}?\\s*\\(");
     /** A reading that may hold an option that switches (skip:, only:, todo:): only such a reading is read for option objects. */
@@ -270,13 +298,13 @@ public final class Integrity {
     private static int level(String line) {
         if (line.length() > LONGEST) return NONE;
         String d = decoded(line);
-        return judged(readDecoded(d), keys(d), true);
+        return judged(readDecoded(d), keys(d), true, () -> FREE).level();
     }
 
     /** True when a line shows what the test finds, in one of its two readings (see reading). */
     static boolean seen(String line, Predicate<String> test) {
         Reading r = reading(line);
-        return test.test(r.code()) || r.written() != null && test.test(r.written());
+        return test.test(r.code()) || test.test(r.written());
     }
 
     /** A line wholly a comment: it starts with // or with a # that no name follows (in JavaScript #name is code). */
@@ -286,22 +314,41 @@ public final class Integrity {
         return t.startsWith("#") && (t.length() == 1 || !Character.isJavaIdentifierPart(t.charAt(1)));
     }
 
+    /** Where what is written after a line wholly a comment begins: after its first line break (a decoded one ends the comment), else at its end. */
+    private static int afterComment(String d) {
+        for (int i = 0; i < d.length(); i++) if (lineBreak(d.charAt(i))) return i + 1;
+        return d.length();
+    }
+
     /**
      * The two ways a line, or a run of lines, is read, each with its white space of any kind made
-     * one space: its code (see code), and the text as written, unless it is wholly a comment
-     * (null then). Both are read with their Unicode escapes decoded (see decoded). One line cannot
-     * tell its quotes for certain (a quote in a regular expression), so the code is never the only
-     * reading: what a line shows as written is not hidden by the masking, and a switch's words
-     * inside a string or a trailing comment are reported too.
+     * one space: its code (see code), and the text as written (of a line wholly a comment, only
+     * what a decoded line break in it leaves after the comment: mostly nothing). Both are read with
+     * their Unicode escapes decoded (see decoded). One line cannot tell its quotes for certain (a
+     * quote in a regular expression), so the code is never the only reading: what a line shows as
+     * written is not hidden by the masking, and a switch's words inside a string or a trailing
+     * comment are read too. The written reading decides what is sure (see judged). codeAt and
+     * writtenAt say, for each character of a reading, where it stands in what was read (the
+     * decoded line, or the decoded lines joined by line breaks), so a form one reading finds is
+     * found in the other by where it starts.
      */
-    private record Reading(String code, String written) {}
+    private record Reading(String code, int[] codeAt, String written, int[] writtenAt) {}
 
     private static Reading reading(String line) {
         return readDecoded(decoded(line));
     }
 
     private static Reading readDecoded(String d) {
-        return new Reading(fold(code(d)), commentLine(d) ? null : fold(d));
+        int n = d.length();
+        int[] raw = new int[n + 1], codeAt = new int[n + 1], writtenAt = new int[n + 1];
+        String code = fold(code(d, raw), raw, codeAt);
+        int from = commentLine(d) ? afterComment(d) : 0;
+        int[] shifted = null;
+        if (from > 0) {
+            shifted = new int[n - from + 1];
+            for (int i = 0; i < n - from; i++) shifted[i] = from + i;
+        }
+        return new Reading(code, codeAt, fold(from > 0 ? d.substring(from) : d, shifted, writtenAt), writtenAt);
     }
 
     /**
@@ -311,19 +358,34 @@ public final class Integrity {
      * that ends a line is dropped).
      */
     private static Reading joined(List<String> lines) {
-        StringBuilder code = new StringBuilder(), written = new StringBuilder();
-        for (int k = 0; k < lines.size(); k++) {
-            String d = decoded(lines.get(k));
+        List<String> decodedLines = new ArrayList<>(lines.size());
+        int size = lines.size() - 1;
+        for (String l : lines) {
+            String d = decoded(l);
+            decodedLines.add(d);
+            size += d.length();
+        }
+        StringBuilder all = new StringBuilder(size), written = new StringBuilder(size);
+        int[] writtenRaw = new int[size + 1];
+        for (int k = 0; k < decodedLines.size(); k++) {
+            String d = decodedLines.get(k);
             if (k > 0) {
-                code.append('\n');
+                writtenRaw[written.length()] = all.length();
+                all.append('\n');
                 written.append(' ');
             }
-            code.append(d);
-            if (commentLine(d)) continue;
-            String t = d.stripTrailing();
-            written.append(t.endsWith("\\") ? t.substring(0, t.length() - 1) : t);
+            int offset = all.length(), from = commentLine(d) ? afterComment(d) : 0, to = d.length();
+            all.append(d);
+            while (to > from && blank(d.charAt(to - 1))) to--;
+            if (to > from && d.charAt(to - 1) == '\\') to--;
+            for (int j = from; j < to; j++) {
+                writtenRaw[written.length()] = offset + j;
+                written.append(d.charAt(j));
+            }
         }
-        return new Reading(fold(code(code.toString())), fold(written));
+        int[] raw = new int[size + 1], codeAt = new int[size + 1], writtenAt = new int[size + 1];
+        String code = fold(code(all.toString(), raw), raw, codeAt);
+        return new Reading(code, codeAt, fold(written, writtenRaw, writtenAt), writtenAt);
     }
 
     /**
@@ -381,18 +443,30 @@ public final class Integrity {
 
     /** A text with each run of white space made one space, and none at its ends, in one pass. */
     private static String fold(CharSequence s) {
+        return fold(s, null, null);
+    }
+
+    /**
+     * The same; with at, at[k] says where the k-th character of the result stands: in[i] for the
+     * i-th character of s (i itself without in). A run of white space stands where it starts.
+     */
+    private static String fold(CharSequence s, int[] in, int[] at) {
         int n = s.length();
         work += n;
         StringBuilder out = new StringBuilder(n);
-        boolean space = false;
+        int space = -1; // where the run of white space before the next character starts, or -1
         for (int i = 0; i < n; i++) {
             char c = s.charAt(i);
             if (blank(c)) {
-                space = true;
+                if (space < 0) space = i;
                 continue;
             }
-            if (space && out.length() > 0) out.append(' ');
-            space = false;
+            if (space >= 0 && out.length() > 0) {
+                if (at != null) at[out.length()] = in == null ? space : in[space];
+                out.append(' ');
+            }
+            space = -1;
+            if (at != null) at[out.length()] = in == null ? i : in[i];
             out.append(c);
         }
         return out.toString();
@@ -423,42 +497,49 @@ public final class Integrity {
      * What it finds is said at one of two levels, each as the line, or the lines joined:
      *
      * Sure (a problem): what switches a test off or focuses one wherever it stands, its whole
-     * meaning proven from what was read. No pattern says sure by itself: each sure form is proven
-     * by the readers of the gate (see judged), and a form they cannot prove is a note:
+     * meaning proven from the text as written (see judged). No pattern says sure by itself: each
+     * sure form is proven by the readers of the gate, then placed by the gate itself (see sure),
+     * and a form they cannot prove is a note:
      *
      *   form                                              proven by
      *   @Disabled, @Ignore (also qualified, with          annotation: arguments complete; the whole
-     *     arguments)                                        annotation (javaEnds, no quote before @)
+     *     arguments)                                        annotation (javaEnds); declared
      *   @Test(enabled = false)                            annotation + element: a whole false
      *   @DisabledIf("true"), @EnabledIf("false"), also    annotation + annotationCondition: a whole
      *     value = / expression =                            string literal
      *   @pytest.mark.skip, @unittest.skip (bare or        decorator: the whole decorator (also in
-     *     called)                                           parentheses), arguments complete
-     *   pytestmark = / marks= pytest.mark.skip, alone     markValue: the whole value or list element,
-     *     or in a list                                      the list complete; held
+     *     called)                                           parentheses), arguments complete; decorated
+     *   pytestmark = pytest.mark.skip, alone or in a      markValue: the whole value or list element,
+     *     list; pytest.param(..., marks=...)                the list complete; a statement or an element
      *   pytest skipif: a whole True among its             decorator/markValue + markLevel: every
      *     conditions, or none (bare too)                    condition read, pytest's rule for condition=
      *   pytest xfail(run=False), no condition or a True   markLevel: run a whole False
      *   unittest skipIf(True), skipUnless(False)          markLevel: a whole literal, by place or keyword
      *   it.skip('x', ...), describe.only, test.todo,      registering + title: the call, its first
-     *     test.fixme, specify.skip, it.concurrent.skip      argument ended and a title; held
+     *     test.fixme, specify.skip, it.concurrent.skip      argument ended and a title; a statement
      *   it.skip.each(table)('x', ...), also `table`       registering: the table complete, then the
-     *                                                       call with a title; held
-     *   xit, xtest, xdescribe, xcontext, xspecify,        aliases + registering + title; held
+     *                                                       call with a title; a statement
+     *   xit, xtest, xdescribe, xcontext, xspecify,        aliases + registering + title; a statement
      *     fdescribe, fit ('x', ...), also .each
      *   it.skipIf(true)('x'), describe.runIf(false)('x')  conditionalCall: arguments complete, a whole
-     *                                                       literal; then registering + title; held
+     *                                                       literal; then registering + title; a statement
      *   test('x', { skip: true }, fn), only:, todo:       options + optionObject: a top-level
      *                                                       property, a whole true, nothing after it
      *                                                       that may change it, the whole argument;
-     *                                                       a title first; held
-     *   it('x'); a test without a body                    PENDING: the whole line is the declaration
+     *                                                       a title first; a statement
+     *   it('x'); a test without a body                    pending: one string literal, the whole line
+     *                                                       the declaration; a statement
      *   assumeTrue(false), assumeFalse(true)              assumption: an argument that is a whole
-     *                                                       literal and ended; held
+     *                                                       literal and ended, the call closed and its
+     *                                                       statement ended there; a statement
      *
-     * held: no condition before the form on its reading (Read.held), nor on the added line just
-     * before it when that line opens a block or a statement under a condition (opensCondition).
-     * Annotations and decorators take no condition, so they are not held.
+     * The gate (see sure): declared, an annotation after nothing on its statement but complete
+     * annotations and modifiers; decorated, a decorator after decorators only, from the start of
+     * its reading; a statement, at the start of its statement (not an argument, a value or a
+     * lambda's body), and held by nothing: no condition before it on its reading (Read.held), nor
+     * an added line just before the reading that opens a block or a statement under a condition,
+     * or ends where an expression goes on (see holdsNext); an element likewise, or an element of a
+     * list. Annotations and decorators take no condition, so they are not held.
      *
      * A note: everything else where it sees a switch's words, and where it would need more than
      * the added lines hold to know that it is a switch, or that no condition holds it. A skip
@@ -469,14 +550,18 @@ public final class Integrity {
      * xit(name, ...)); a modifier that is referred to, not called (const later = it.skip, cond ?
      * test.skip.each : test.each); a condition that is computed (skipif(sys.platform == ...),
      * @Test(enabled = RUN), @DisabledIf("isWindows"), it.skipIf(isWindows)); an option whose value
-     * is computed or that a spread after it may change; a mark or an annotation inside a larger
-     * expression (@(pytest.mark.skip if IS_CI else identity), skip_slow = pytest.mark.skip(...),
-     * "@Disabled" in a string); a sure form after a condition on its reading (if (x) it.skip('x',
-     * ...)), or on the line after an added line that opens a block under a condition (if (!db) {,
-     * then describe.skip('db', ...): see opensCondition; a condition further away is not seen);
-     * Assumptions.abort and abort( called alone; a call whose arguments end in none of its
-     * readings. Nothing: the same forms with the literal that runs (skipif(False),
-     * test.skip(false, ...), @Test(enabled = true), a skip option inside another property).
+     * is computed or that a spread or a quoted key after it may change; a mark or an annotation
+     * inside a larger expression (@(pytest.mark.skip if IS_CI else identity), skip_slow =
+     * pytest.mark.skip(...), "@Disabled" in a string); a sure form that is not a statement or a
+     * declaration of its own (() -> assumeTrue(false), f(it.skip('x', fn)), x = @Disabled), or
+     * after a condition on its reading (if (x) it.skip('x', ...)), or on the line after an added
+     * line that holds it (if (!db) {, then describe.skip('db', ...): see holdsNext; a condition
+     * further away is not seen); a form the code reading proves but the text as written does not
+     * (a comment between its words: @, a comment, Disabled); Assumptions.abort and abort( called
+     * alone; a call whose arguments end in none of its readings. Nothing: the same forms with the
+     * literal that runs (skipif(False), test.skip(false, ...), @Test(enabled = true),
+     * @DisabledIf("false"), a skip option inside another property), and an annotation's name
+     * right after a name (an address: ci@Disabled.example).
      *
      * A call is judged where its arguments are: one whose arguments a line leaves open before
      * they say what it is (test.skip(, a line break, false,) is judged with the next line, then
@@ -494,45 +579,41 @@ public final class Integrity {
         int n = addedLines.size();
         List<String> sure = new ArrayList<>();
         TreeMap<Integer, String> notes = new TreeMap<>();
-        boolean[] read = new boolean[n], told = new boolean[n];
+        boolean[] read = new boolean[n], told = new boolean[n], byLine = new boolean[n];
         int[] keys = new int[n], level = new int[n];
+        byte[] before = new byte[n]; // whether the added line before line i holds it (see holdsNext): 0 not read yet, 1 no, 2 yes
         for (int i = 0; i < n; i++) {
             String line = addedLines.get(i);
             read[i] = line.length() <= LONGEST;
             if (!read[i]) continue;
             String d = decoded(line);
             keys[i] = keys(d);
-            level[i] = judged(readDecoded(d), keys[i], true);
-        }
-        for (int i = 0; i < n; i++) {
-            if (level[i] != SURE) continue;
-            told[i] = true;
-            // a line that opens a block or a statement under a condition (if (ci) {, except ImportError:) holds the sure form after
-            // it that a condition can hold (a declaration, an option, an assumption, pytestmark): the two lines together are a note
-            if (i > 0 && read[i - 1] && opensCondition(addedLines.get(i - 1)) && judged(addedLines, keys, i - 1, 2) == NOTE) {
-                level[i] = NOTE;
-                notes.putIfAbsent(i - 1, shown(addedLines, i - 1, 2));
-            } else {
-                sure.add(addedLines.get(i).trim());
+            Verdict v = judged(readDecoded(d), keys[i], true, lineBefore(addedLines, read, before, i));
+            level[i] = v.level();
+            byLine[i] = v.lineBefore();
+            if (level[i] == SURE) {
+                told[i] = true;
+                sure.add(line.trim());
             }
         }
         // a call a line leaves open is judged where its arguments end: with the next line, or the next two; a note when neither closes it
         for (int i = 0; i < n; i++) {
             if (level[i] != OPEN || told[i]) continue;
-            int width = 1, judged = OPEN;
-            for (int w = 2; w <= 3 && judged == OPEN && fresh(read, told, i, w); w++) {
-                judged = judged(addedLines, keys, i, w);
+            int width = 1;
+            Verdict judged = new Verdict(OPEN, false);
+            for (int w = 2; w <= 3 && judged.level() == OPEN && fresh(read, told, i, w); w++) {
+                judged = judged(addedLines, keys, i, w, lineBefore(addedLines, read, before, i));
                 width = w;
             }
-            if (judged == OPEN) {
+            if (judged.level() == OPEN) {
                 width = 1;
-                judged = NOTE;
+                judged = new Verdict(NOTE, false);
             }
             told[i] = true;
-            if (judged == NONE) continue; // the call closes as no switch; the lines after it are read on their own
+            if (judged.level() == NONE) continue; // the call closes as no switch; the lines after it are read on their own
             for (int k = i; k < i + width; k++) told[k] = true;
-            if (judged == SURE) sure.add(shown(addedLines, i, width));
-            else notes.putIfAbsent(i, shown(addedLines, i, width));
+            if (judged.level() == SURE) sure.add(shown(addedLines, i, width));
+            else noted(notes, addedLines, i, width, judged.lineBefore());
         }
         // what only two or three lines hold together; a run whose call stays open is a note at the end, unless a wider run closes it
         int[] open = new int[n];
@@ -547,14 +628,14 @@ public final class Integrity {
                 }
                 // every word a switch needs is on one line (a join puts a space between lines), so a run with none holds none
                 if (key == 0) continue;
-                int judged = judged(addedLines, keys, i, width);
-                open[i] = judged == OPEN ? width : 0;
-                if (judged == SURE) {
+                Verdict judged = judged(addedLines, keys, i, width, lineBefore(addedLines, read, before, i));
+                open[i] = judged.level() == OPEN ? width : 0;
+                if (judged.level() == SURE) {
                     for (int k = i; k < i + width; k++) told[k] = true;
                     sure.add(shown(addedLines, i, width));
-                } else if (judged == NOTE && !alone) { // a line that is a note alone says it itself
+                } else if (judged.level() == NOTE && !alone) { // a line that is a note alone says it itself
                     for (int k = i; k < i + width; k++) told[k] = true;
-                    notes.putIfAbsent(i, shown(addedLines, i, width));
+                    noted(notes, addedLines, i, width, judged.lineBefore());
                 }
             }
         }
@@ -565,16 +646,51 @@ public final class Integrity {
                 notes.putIfAbsent(i, shown(addedLines, i, width));
             }
         }
-        for (int i = 0; i < n; i++) if (level[i] == NOTE && !told[i]) notes.putIfAbsent(i, addedLines.get(i).trim());
+        for (int i = 0; i < n; i++) if (level[i] == NOTE && !told[i]) noted(notes, addedLines, i, 1, byLine[i]);
         return new Lint(sure, new ArrayList<>(notes.values()));
     }
 
-    /** True when a line opens a block or a statement under a condition: its code holds a condition and ends with {, ) or :. */
-    private static boolean opensCondition(String line) {
+    /**
+     * A note for the lines from i, width of them, said where they start; shown with the added line
+     * before them when that line is what holds them (see holdsNext), which may be a note of its own.
+     */
+    private static void noted(TreeMap<Integer, String> notes, List<String> lines, int i, int width, boolean lineBefore) {
+        notes.putIfAbsent(i, lineBefore && i > 0 ? shown(lines, i - 1, width + 1) : shown(lines, i, width));
+    }
+
+    /** How the added line before line i holds it (see holdsNext), read when the gate asks, once. */
+    private static IntSupplier lineBefore(List<String> lines, boolean[] read, byte[] memo, int i) {
+        return () -> {
+            if (i == 0 || !read[i - 1]) return FREE;
+            if (memo[i] == 0) memo[i] = (byte) (holdsNext(lines.get(i - 1)) + 1);
+            return memo[i] - 1;
+        };
+    }
+
+    /** How an added line holds the one after it (see holdsNext): not at all; as part of a list or a call; wholly. */
+    private static final int FREE = 0, IN_BRACKETS = 1, HELD = 2;
+    /** Words after which a line goes on: a condition, a value or an operand follows (else, return, and, ...). */
+    private static final Set<String> ENDS_GOING_ON = Set.of("if", "elif", "else", "unless", "when", "while", "for", "do", "case", "return", "throw", "yield",
+            "await", "typeof", "void", "new", "delete", "in", "of", "instanceof", "is", "and", "or", "not", "lambda");
+
+    /**
+     * How an added line holds the one after it. HELD when what follows may not run, or not as a
+     * statement of its own: its code opens a block or a statement under a condition (it holds a
+     * condition and ends with {, ) or :: if (ci) {, except ImportError:), or it ends where an
+     * expression goes on: an operator (?, &&, ||, =, =>, ->, +, ...), a backslash, or a word such
+     * as else, return or and. IN_BRACKETS when it ends with an opening bracket or a comma: what
+     * follows is an argument or an element (a pytest.param may be one; a statement is not).
+     */
+    private static int holdsNext(String line) {
         String c = fold(code(decoded(line)));
-        if (c.isEmpty()) return false;
+        if (c.isEmpty()) return FREE;
         char last = c.charAt(c.length() - 1);
-        return (last == '{' || last == ')' || last == ':') && CONDITION.matcher(new Counted(c)).find();
+        if ((last == '{' || last == ')' || last == ':') && CONDITION.matcher(new Counted(c)).find()) return HELD;
+        if (last == '(' || last == '[' || last == ',') return IN_BRACKETS;
+        if ("?=&|+-*/%!<>^~.\\".indexOf(last) >= 0) return HELD;
+        int w = c.length();
+        while (w > 0 && word(c.charAt(w - 1))) w--;
+        return w < c.length() && ENDS_GOING_ON.contains(c.substring(w)) ? HELD : FREE;
     }
 
     /** True when the lines from i, width of them, are read and not yet said. */
@@ -588,65 +704,122 @@ public final class Integrity {
         return String.join(" ", lines.subList(i, i + width).stream().map(String::trim).toList());
     }
 
+    /** What the lint makes of a reading: its level, and whether the added line before it is what keeps it from being sure. */
+    private record Verdict(int level, boolean lineBefore) {}
+
+    private static final Verdict NOTHING_FOUND = new Verdict(NONE, false), FOUND_SURE = new Verdict(SURE, false);
+
     /** What the lint makes of the lines from i, width of them, read together (see joined). */
-    private static int judged(List<String> lines, int[] keys, int i, int width) {
+    private static Verdict judged(List<String> lines, int[] keys, int i, int width, IntSupplier lineBefore) {
         int key = 0;
         for (int k = i; k < i + width; k++) key |= keys[k];
-        return judged(joined(lines.subList(i, i + width)), key, false);
+        return judged(joined(lines.subList(i, i + width)), key, false, lineBefore);
     }
 
     /**
-     * What the lint makes of a reading of one line or of lines read together: the most that either
-     * of its two readings holds (see Reading). single is false for lines read together, where a
-     * pending test (a whole declaration on one line) is not looked for.
+     * What the lint makes of a reading of one line or of lines read together (see Reading). The
+     * written reading decides: a form is sure only when the gate proves it from the text as
+     * written. The code reading (strings emptied, comments dropped) lost text, so it never makes a
+     * form sure; it adds what only it sees (a switch's words with a comment between them:
+     * @, a comment, Disabled; a skip from inside a test), as a note at most. Each form it judges is found
+     * in the written reading by its kind and where it starts: where the written reading judges the
+     * same form, its level stands (@DisabledIf("false") is nothing, though the code reading
+     * cannot read the emptied string), and a form the code reading proves sure but the written
+     * reading does not is a note (test('x', { skip: true, 'skip': false }, fn): the emptied
+     * 'skip' hid the override). single is false for lines read together, where a pending test (a
+     * whole declaration on one line) is not looked for. lineBefore: see sure.
      */
-    private static int judged(Reading r, int keys, boolean single) {
-        if (keys == 0 && !single) return NONE;
-        int level = judged(r.code(), keys, true, single);
-        return level < SURE && r.written() != null ? Math.max(level, judged(r.written(), keys, false, single)) : level;
+    private static Verdict judged(Reading r, int keys, boolean single, IntSupplier lineBefore) {
+        if (keys == 0 && !single) return NOTHING_FOUND;
+        Read w = judge(r.written(), keys, false, single, lineBefore);
+        if (w.level == SURE) return FOUND_SURE;
+        Read c = judge(r.code(), keys, true, single, lineBefore);
+        int level = w.level;
+        if (!c.forms.isEmpty()) {
+            Map<Long, Integer> twins = new HashMap<>();
+            for (int[] f : w.forms) twins.merge(place(f[0], r.writtenAt()[f[1]]), f[2], Math::max);
+            for (int[] f : c.forms) {
+                Integer twin = twins.get(place(f[0], r.codeAt()[f[1]]));
+                if (twin == null) level = Math.max(level, f[2] == SURE ? NOTE : f[2]); // only the code reading sees it
+                else if (f[2] == SURE && twin < SURE) level = Math.max(level, NOTE);
+            }
+        }
+        return level == NONE ? NOTHING_FOUND : new Verdict(level, level == NOTE && (w.heldByLineBefore || c.heldByLineBefore));
     }
 
-    /** What one reading holds; keys are its line's (see keys): each kind of switch is looked for only where its word stands. */
-    private static int judged(String text, int keys, boolean code, boolean single) {
-        CharSequence s = new Counted(text);
-        if (single && code && PENDING.matcher(s).lookingAt()) return SURE;
-        if (keys == 0) return NONE;
-        Read r = new Read(s);
-        int level = NONE;
-        if ((keys & ANNOTATED) != 0) level = annotations(r);
-        if (level < SURE && (keys & ALIASED) != 0) level = Math.max(level, aliases(r));
-        if (level < SURE && (keys & MODIFIER) != 0) level = Math.max(level, options(r));
-        if (level < SURE && (keys & MODIFIER) != 0) level = Math.max(level, scriptSwitch(r));
-        if (level < SURE && (keys & (SKIP | XFAIL)) != 0) level = Math.max(level, python(r));
-        if (level < SURE && (keys & ASSUMED) != 0) level = Math.max(level, assumption(r));
-        // the rest are notes: a skip from inside a test, abort
-        if (level == NONE && code && (keys & SKIP) != 0 && BODY_SKIP.matcher(s).find()) level = NOTE;
-        if (level == NONE && (keys & ABORTED) != 0) level = ABORTS.matcher(s).find() ? NOTE : aborted(bareAborts(s, r.budget, true));
-        return level;
+    /** A form's kind and where it starts in what was read, as one key. */
+    private static long place(int kind, int at) {
+        return (long) kind << 32 | at;
+    }
+
+    /** What one reading holds, each form said through the gate (Read.form); keys are its line's (see keys): each kind of switch is looked for only where its word stands. */
+    private static Read judge(String text, int keys, boolean code, boolean single, IntSupplier lineBefore) {
+        Read r = new Read(new Counted(text), lineBefore);
+        if (single) pending(r);
+        if (keys == 0) return r;
+        if (r.level < SURE && (keys & ANNOTATED) != 0) annotations(r);
+        if (r.level < SURE && (keys & ALIASED) != 0) aliases(r);
+        if (r.level < SURE && (keys & MODIFIER) != 0) options(r);
+        if (r.level < SURE && (keys & MODIFIER) != 0) scriptSwitch(r);
+        if (r.level < SURE && (keys & (SKIP | XFAIL)) != 0) python(r);
+        if (r.level < SURE && (keys & ASSUMED) != 0) assumption(r);
+        // the rest are notes: a skip from inside a test (read in the code only), abort
+        if (r.level == NONE && code && (keys & SKIP) != 0) {
+            Matcher b = BODY_SKIP.matcher(r.s);
+            if (b.find()) r.form(K_BODY, b.start(), NOTE, AS_STATEMENT);
+        }
+        if (r.level == NONE && (keys & ABORTED) != 0) {
+            Matcher a = ABORTS.matcher(r.s);
+            List<int[]> bare = a.find() ? null : bareAborts(r.s, r.budget, true);
+            if (bare == null) r.form(K_ABORT, a.start(), NOTE, AS_STATEMENT);
+            else if (!bare.isEmpty()) r.form(K_ABORT, bare.get(0)[0], aborted(bare), AS_STATEMENT);
+        }
+        return r;
     }
 
     // ---------------- the gate: what proves a switch sure ----------------
     //
     // No pattern says "sure" by itself. A pattern finds where a switch's words stand; the readers below then prove, from the
     // reading alone, the whole meaning those words claim, or the find is a note (or nothing, where the reading shows that it
-    // switches nothing). The readers, each bounded (see Budget):
+    // switches nothing). Each form a reader judges is said through Read.form, and only the gate there (see sure) can let it
+    // be sure: it reads where the form stands. The readers, each bounded (see Budget):
     //   arguments    a bracketed list, read to its closing bracket, strings skipped; an argument counts where it ends, before
     //                a comma of the list or at its closing bracket. A form that needs the whole list is OPEN until it closes.
     //   whole        a literal (true, false, True, False, "true") that is the whole argument, nothing else in it
     //   title        a whole argument that is a string for certain (see title)
     //   optionObject the top-level properties of an object that is a whole argument of a test declaration
     //   registering  the call that registers a test after a modifier: (title, ...), or .each(table)(title, ...)
-    //   ends         what follows a decorator or an annotation: the end of its expression
-    //   held         a condition (if, else, ?, &&, ||, ...) before the find on its reading
+    //   ends         what follows a decorator, an annotation or an assumption: the end of its expression or statement
+    // and in the gate:
+    //   starts       where each token of the reading stands: at a statement's start, after annotations and modifiers only, ...
+    //   held         a condition (if, else, ?, &&, ||, ...) before the form on its reading
+    //   holdsNext    the added line before the reading's first line opens a condition, or an expression the form goes on
 
-    /** One reading being judged: its text, the budget of its calls, and where its first condition stands (see held). */
+    /** The kinds of form the readers judge, so that a form of one reading is found in the other (see judged). */
+    private static final int K_PENDING = 1, K_ANNOTATION = 2, K_ALIAS = 3, K_OPTIONS = 4, K_CONDITIONAL = 5, K_MODIFIER = 6, K_DECORATOR = 7,
+            K_PYTESTMARK = 8, K_PARAM = 9, K_MARK = 10, K_ASSUME = 11, K_BODY = 12, K_ABORT = 13;
+    /** Where a form must stand to be sure (see sure). */
+    private static final int AS_STATEMENT = 0, AS_ANNOTATION = 1, AS_DECORATOR = 2, AS_ELEMENT = 3;
+    /** What may stand before a token on its reading (see starts): nothing on its statement; annotations and modifiers; decorators from the start. */
+    private static final int AT_STATEMENT = 1, AT_DECLARATION = 2, AT_DECORATOR = 4;
+    private static final Set<String> MODIFIERS = Set.of("public", "protected", "private", "static", "final", "abstract", "default", "synchronized");
+
+    /** One reading being judged: its text, the budget of its calls, the forms judged on it and the most any of them holds. */
     private static final class Read {
         final CharSequence s;
         final Budget budget;
+        private final IntSupplier lineBefore;
+        /** Each form judged on this reading: {its kind, where it starts, its level}. */
+        final List<int[]> forms = new ArrayList<>(2);
+        int level = NONE;
+        /** True when the gate kept a form from being sure only for the added line before (see sure). */
+        boolean heldByLineBefore;
         private int condition = -2;
+        private byte[] starts;
 
-        Read(CharSequence s) {
+        Read(CharSequence s, IntSupplier lineBefore) {
             this.s = s;
+            this.lineBefore = lineBefore;
             budget = new Budget(s.length());
         }
 
@@ -658,6 +831,169 @@ public final class Integrity {
             }
             return condition >= 0 && condition < at;
         }
+
+        /** True when the token at at stands where what says (AT_STATEMENT, ...: see starts). */
+        boolean startsAt(int at, int what) {
+            if (starts == null) starts = starts(s);
+            return (starts[at] & what) != 0;
+        }
+
+        /** What a reader made of the form of this kind at at: said here, and sure only when the gate says so (see sure). */
+        void form(int kind, int at, int level, int stands) {
+            if (level == SURE) level = sure(this, at, stands);
+            forms.add(new int[] {kind, at, level});
+            this.level = Math.max(this.level, level);
+        }
+    }
+
+    /**
+     * The gate: the one place where a form becomes sure. A reader has proven what the form's
+     * words mean, read whole (they switch); the gate reads where the form stands, and lets it be
+     * sure only where such a form stands on its own:
+     *   an annotation  after nothing on its statement but complete annotations and modifiers
+     *                  (@Test @Disabled, public @Disabled; not f(@Disabled), x = @Disabled, a
+     *                  word or a quote before it);
+     *   a decorator    at the start of its reading, after complete decorators only;
+     *   a statement    (a declaration, an option, an assumption, pytestmark =, a pending test) at
+     *                  the start of its statement: the reading's start, or after ;, {, } or the
+     *                  end of a comment, nothing between (not after =, (, ->, =>, return, a word
+     *                  or a quote: an argument, a value, a deferred body);
+     *   an element     (pytest.param with marks=) at the start of its statement, or an element of
+     *                  a list or a group that is no call's argument list;
+     * and, a statement and an element, held by nothing: no condition before it on its reading
+     * (Read.held), and the added line before the reading's first one does not hold it (see
+     * holdsNext). Annotations and decorators take no condition: Java has no conditional
+     * annotation, and a Python function defined under a condition is skipped wherever it is
+     * defined. Anything else is a note.
+     */
+    private static int sure(Read r, int at, int stands) {
+        if (stands == AS_ANNOTATION) return r.startsAt(at, AT_DECLARATION) ? SURE : NOTE;
+        if (stands == AS_DECORATOR) return r.startsAt(at, AT_DECORATOR) ? SURE : NOTE;
+        if (!(stands == AS_STATEMENT ? r.startsAt(at, AT_STATEMENT) : element(r, at)) || r.held(at)) return NOTE;
+        int before = r.lineBefore.getAsInt();
+        if (before == HELD || before == IN_BRACKETS && stands == AS_STATEMENT) {
+            r.heldByLineBefore = true;
+            return NOTE;
+        }
+        return SURE;
+    }
+
+    /**
+     * Where each token of a reading stands (see AT_STATEMENT), in one forward pass: AT_STATEMENT
+     * when nothing stands before it on its statement (the reading's start, or ;, {, } or the end
+     * of a comment before it), AT_DECLARATION when only complete annotations and modifiers do,
+     * AT_DECORATOR when only complete annotations do, from the reading's start. Any other token
+     * (a word, a quote, an operator) ends all three until the next ;, { or }. Strings are not
+     * skipped: a quote is a token like any other, since a reading cannot tell every quote for
+     * certain. Linear: each character is passed once, and the arguments of the annotations it
+     * reads are bounded by a budget of its own.
+     */
+    private static byte[] starts(CharSequence s) {
+        int n = s.length();
+        byte[] out = new byte[n + 1];
+        Budget budget = new Budget(n);
+        int state = AT_STATEMENT | AT_DECLARATION | AT_DECORATOR;
+        int i = 0;
+        while (i < n) {
+            char c = s.charAt(i);
+            if (blank(c)) {
+                i++;
+                continue;
+            }
+            out[i] = (byte) state;
+            char next = i + 1 < n ? s.charAt(i + 1) : '\0';
+            if (c == ';' || c == '{' || c == '}') {
+                state = AT_STATEMENT | AT_DECLARATION;
+                i++;
+            } else if (c == '*' && next == '/') {
+                state = AT_STATEMENT | AT_DECLARATION;
+                i += 2;
+            } else if (c == '@') {
+                int end = (state & (AT_DECLARATION | AT_DECORATOR)) != 0 ? annotationEnd(s, i, budget) : -1;
+                if (end > i) {
+                    state &= AT_DECLARATION | AT_DECORATOR;
+                    i = end;
+                } else {
+                    state = 0;
+                    i++;
+                }
+            } else if (Character.isJavaIdentifierStart(c)) {
+                int w = wordEnd(s, i);
+                state = (state & AT_DECLARATION) != 0 && MODIFIERS.contains(s.subSequence(i, w).toString()) ? AT_DECLARATION : 0;
+                i = w;
+            } else {
+                state = 0;
+                i++;
+            }
+        }
+        return out;
+    }
+
+    /**
+     * The index after the complete annotation or decorator whose @ is at at: a name, qualified or
+     * not, with an argument list that closes if one follows (@Test, @Tag("a"), @pytest.mark.skip(...)),
+     * or a group (@(...)); -1 when it is not complete on the reading.
+     */
+    private static int annotationEnd(CharSequence s, int at, Budget budget) {
+        int n = s.length(), i = blanks(s, at + 1);
+        if (i < n && s.charAt(i) == '(') {
+            Arguments group = arguments(s, i, budget);
+            return group.closed() ? group.end() : -1;
+        }
+        if (i >= n || !Character.isJavaIdentifierStart(s.charAt(i))) return -1;
+        int w = wordEnd(s, i);
+        while (true) {
+            int j = blanks(s, w);
+            if (j < n && s.charAt(j) == '.') {
+                int k = blanks(s, j + 1), v = wordEnd(s, k);
+                if (v == k) return -1;
+                w = v;
+            } else if (j < n && s.charAt(j) == '(') {
+                Arguments a = arguments(s, j, budget);
+                return a.closed() ? a.end() : -1;
+            } else {
+                return w;
+            }
+        }
+    }
+
+    /** An element of a list (pytest.param in a parametrize list): at its statement's start, after [ or a comma, or in a group that is no call's. */
+    private static boolean element(Read r, int at) {
+        if (r.startsAt(at, AT_STATEMENT)) return true;
+        CharSequence s = r.s;
+        int p = at - 1;
+        while (p >= 0 && blank(s.charAt(p))) p--;
+        if (p < 0) return true;
+        char c = s.charAt(p);
+        if (c == '[' || c == ',') return true;
+        if (c != '(') return false;
+        int q = p - 1;
+        while (q >= 0 && blank(s.charAt(q))) q--;
+        return q < 0 || !word(s.charAt(q)) && s.charAt(q) != ')' && s.charAt(q) != ']';
+    }
+
+    /** Where a call's qualified name starts (Assumptions.assumeTrue, org.junit.Assume.assumeTrue), its name starting at at. */
+    private static int qualified(CharSequence s, int at) {
+        int start = at;
+        while (true) {
+            int p = start - 1;
+            while (p >= 0 && blank(s.charAt(p))) p--;
+            if (p < 0 || s.charAt(p) != '.') return start;
+            p--;
+            while (p >= 0 && blank(s.charAt(p))) p--;
+            int q = p;
+            while (q >= 0 && word(s.charAt(q))) q--;
+            if (q == p) return start;
+            start = q + 1;
+        }
+    }
+
+    /** True when a statement ends at at: the reading ends, or ;, } or a comment follows. */
+    private static boolean endsStatement(CharSequence s, int at) {
+        int i = blanks(s, at);
+        if (i >= s.length()) return true;
+        char c = s.charAt(i), next = i + 1 < s.length() ? s.charAt(i + 1) : ' ';
+        return c == ';' || c == '}' || c == '#' || c == '/' && (next == '/' || next == '*');
     }
 
     private static int blanks(CharSequence s, int i) {
@@ -682,18 +1018,38 @@ public final class Integrity {
     }
 
     /**
+     * A test declared without a body, its whole declaration the reading of one line: it, test or
+     * specify called with one string literal (a template without ${...}) and nothing after its
+     * closing parenthesis but a semicolon (it('pending');). Mocha and Vitest report it as pending.
+     */
+    private static void pending(Read r) {
+        Matcher m = PENDING.matcher(r.s);
+        if (!m.lookingAt()) return;
+        Arguments a = arguments(r.s, m.end() - 1, r.budget);
+        int i = a.closed() ? blanks(r.s, a.end()) : 0;
+        if (i < r.s.length() && r.s.charAt(i) == ';') i = blanks(r.s, i + 1);
+        boolean whole = a.closed() && i >= r.s.length() && a.list().size() == 1 && literal(a.list().get(0));
+        r.form(K_PENDING, 0, whole ? SURE : NONE, AS_STATEMENT);
+    }
+
+    /** A string literal and nothing else: '...', "..." or a template without ${...}. */
+    private static boolean literal(String arg) {
+        if (arg.isEmpty() || "'\"`".indexOf(arg.charAt(0)) < 0) return false;
+        work += arg.length();
+        return stringEnd(arg, 0) == arg.length() && (arg.charAt(0) != '`' || !arg.contains("${"));
+    }
+
+    /**
      * it.skip, test.only and their kin (test.describe.skip, it.concurrent.skip, it?.skip), and
      * Vitest's it.skipIf(...) and runIf(...): judged by the call that registers a test after them
      * (see registered, conditionalCall).
      */
-    private static int scriptSwitch(Read r) {
-        int level = NONE;
-        for (Matcher m = CONDITIONAL_CALL.matcher(r.s); level < SURE && m.find();) level = Math.max(level, conditionalCall(r, m));
-        for (Matcher m = SCRIPT_SWITCH.matcher(r.s); level < SURE && m.find();) {
+    private static void scriptSwitch(Read r) {
+        for (Matcher m = CONDITIONAL_CALL.matcher(r.s); r.level < SURE && m.find();) r.form(K_CONDITIONAL, m.start(), conditionalCall(r, m), AS_STATEMENT);
+        for (Matcher m = SCRIPT_SWITCH.matcher(r.s); r.level < SURE && m.find();) {
             String modifier = m.group(1);
-            level = Math.max(level, registered(r, m.start(), m.end(), modifier.equals("skip") || modifier.equals("fixme"), true, true));
+            r.form(K_MODIFIER, m.start(), registered(r, m.end(), modifier.equals("skip") || modifier.equals("fixme"), true, true), AS_STATEMENT);
         }
-        return level;
     }
 
     /**
@@ -707,7 +1063,7 @@ public final class Integrity {
         if (!a.closed()) return OPEN;
         boolean skipIf = m.group(1).equals("skipIf");
         int level = whole(a.list().size() == 1 ? a.list().get(0) : "", skipIf ? "true" : "false", skipIf ? "false" : "true");
-        return level == SURE ? registered(r, m.start(), a.end(), false, true, true) : level;
+        return level == SURE ? registered(r, a.end(), false, true, true) : level;
     }
 
     /**
@@ -715,32 +1071,30 @@ public final class Integrity {
      * registered); one that is not called is nothing (an import names it). fit is called by other
      * functions too (fit(data)): only a call of it with a title says anything.
      */
-    private static int aliases(Read r) {
-        int level = NONE;
-        for (Matcher m = ALIAS.matcher(r.s); level < SURE && m.find();) {
+    private static void aliases(Read r) {
+        for (Matcher m = ALIAS.matcher(r.s); r.level < SURE && m.find();) {
             boolean fit = m.group().equals("fit");
-            level = Math.max(level, registered(r, m.start(), m.end(), false, false, !fit));
+            r.form(K_ALIAS, m.start(), registered(r, m.end(), false, false, !fit), AS_STATEMENT);
         }
-        return level;
     }
 
     /**
-     * A modifier whose words run from start to after, judged by the call that registers a test
-     * after it (see registering). Sure: called with a title for its first argument (see title),
-     * directly or after .each, and no condition before it on its reading (see Read.held). OPEN
+     * A modifier whose words end at after, judged by the call that registers a test after it (see
+     * registering). Sure (for the gate to place): called with a title for its first argument (see
+     * title), directly or after .each. OPEN
      * while the reading ends before the first argument does. A skip or a fixme called directly with
      * a plain false or a number is nothing (Playwright's test.skip(false, ...)). Anything else is a
      * note (a first argument that is computed: a Playwright condition or a computed title; a
      * modifier that is referred to, not called), or nothing where referenced or computed says so.
      */
-    private static int registered(Read r, int start, int after, boolean skips, boolean referenced, boolean computed) {
+    private static int registered(Read r, int after, boolean skips, boolean referenced, boolean computed) {
         Call call = registering(r, after);
         if (call.args() == null) return call.level() == NOTE && !referenced ? NONE : call.level();
         Arguments a = call.args();
         if (a.list().isEmpty()) return !a.closed() ? OPEN : computed ? NOTE : NONE; // test.skip(): a skip from inside a test
         if (a.ended() == 0) return OPEN; // its first argument may go on
         String first = a.list().get(0);
-        if (title(first)) return r.held(start) ? NOTE : SURE;
+        if (title(first)) return SURE;
         if (skips && !call.each() && (first.equals("false") || NUMBER.matcher(first).matches())) return NONE;
         return computed ? NOTE : NONE;
     }
@@ -877,22 +1231,20 @@ public final class Integrity {
 
     /**
      * A test declaration (test('x', { skip: true }, fn), Vitest) whose option object switches (see
-     * optionObject): sure when its first argument is a title, and no condition stands before it
-     * on its reading; a note otherwise. Only a reading that holds skip:, only: or todo: is read.
+     * optionObject): sure (for the gate to place) when its first argument is a title; a note
+     * otherwise. Only a reading that holds skip:, only: or todo: is read.
      */
-    private static int options(Read r) {
-        if (!OPTION_KEY.matcher(r.s).find()) return NONE;
-        int level = NONE;
-        for (Matcher m = DECLARATION.matcher(r.s); level < SURE && m.find();) {
+    private static void options(Read r) {
+        if (!OPTION_KEY.matcher(r.s).find()) return;
+        for (Matcher m = DECLARATION.matcher(r.s); r.level < SURE && m.find();) {
             Arguments a = arguments(r.s, m.end() - 1, r.budget);
             int found = NONE;
             for (int k = 1; k < a.list().size() && found < SURE; k++) {
                 if (a.list().get(k).startsWith("{")) found = Math.max(found, optionObject(r, a.starts().get(k)));
             }
-            if (found == SURE && (!title(a.list().get(0)) || r.held(m.start()))) found = NOTE;
-            level = Math.max(level, found);
+            if (found == SURE && !title(a.list().get(0))) found = NOTE;
+            r.form(K_OPTIONS, m.start(), found, AS_STATEMENT);
         }
-        return level;
     }
 
     /**
@@ -939,17 +1291,17 @@ public final class Integrity {
      * @DisabledIf("true") and @EnabledIf("false"), by place or as value = or expression = (sure
      * when that element is the whole literal that switches, nothing when it is the other, a note
      * when it is computed or a method's name). Each sure only with its arguments complete and as
-     * the whole annotation: nothing but white space and a name before its @ (not a quote), and
-     * after it the end of the reading, another annotation, a declaration or a comment.
+     * the whole annotation: after it the end of the reading, another annotation, a declaration or
+     * a comment; before it what the gate allows (complete annotations and modifiers: see sure).
+     * Nothing when a name stands right before its @ (an address: ci@Disabled.example).
      */
-    private static int annotations(Read r) {
-        int level = NONE;
-        for (Matcher m = ANNOTATION.matcher(r.s); level < SURE && m.find();) level = Math.max(level, annotation(r, m));
-        return level;
+    private static void annotations(Read r) {
+        for (Matcher m = ANNOTATION.matcher(r.s); r.level < SURE && m.find();) r.form(K_ANNOTATION, m.start(), annotation(r, m), AS_ANNOTATION);
     }
 
     private static int annotation(Read r, Matcher m) {
         CharSequence s = r.s;
+        if (m.start() > 0 && word(s.charAt(m.start() - 1))) return NONE;
         int i = blanks(s, m.end()), end = m.end();
         Arguments a = null;
         if (i < s.length() && s.charAt(i) == '(') {
@@ -963,10 +1315,7 @@ public final class Integrity {
             default -> a == null ? NONE : annotationCondition(a, m.group(1).equals("DisabledIf"));
         };
         if (level != SURE) return level;
-        int before = m.start() - 1;
-        while (before >= 0 && blank(s.charAt(before))) before--;
-        boolean alone = before < 0 || "'\"`".indexOf(s.charAt(before)) < 0 && !word(s.charAt(before));
-        return alone && javaEnds(s, end) ? SURE : NOTE;
+        return javaEnds(s, end) ? SURE : NOTE;
     }
 
     /** The element of this name among an annotation's arguments, judged by its value (see whole); NONE when there is none. */
@@ -1014,22 +1363,34 @@ public final class Integrity {
 
     /**
      * pytest's marks and unittest's decorators where they apply to tests: a decorator (also in
-     * parentheses), pytestmark = and marks= (alone, or as an element of a list or a tuple). Sure
-     * when the mark switches (see markLevel) and is the whole decorator or the whole value or
-     * element (see decorator, markValue). A mark anywhere else (kept in a variable, passed to a
-     * call, inside a larger expression: @(pytest.mark.skip if IS_CI else identity)) is a note
-     * when it would switch, nothing when it would not.
+     * parentheses), pytestmark = and the marks= of pytest.param (alone, or as an element of a
+     * list or a tuple). Sure (for the gate to place) when the mark switches (see markLevel) and is
+     * the whole decorator or the whole value or element (see decorator, markValue, param). A mark
+     * anywhere else (kept in a variable, passed to another call, inside a larger expression:
+     * @(pytest.mark.skip if IS_CI else identity)) is a note when it would switch, nothing when it
+     * would not.
      */
-    private static int python(Read r) {
-        int level = NONE;
+    private static void python(Read r) {
         Set<Integer> judged = new java.util.HashSet<>(); // the marks a decorator or a value has judged, by where they start
-        for (Matcher c = PY_CONTEXT.matcher(r.s); level < SURE && c.find();) {
-            level = Math.max(level, c.group().equals("@") ? decorator(r, c.end(), judged) : markValue(r, c.end(), c.group().startsWith("marks"), judged));
+        for (Matcher c = PY_CONTEXT.matcher(r.s); r.level < SURE && c.find();) {
+            if (c.group().equals("@")) r.form(K_DECORATOR, c.start(), decorator(r, c.end(), judged), AS_DECORATOR);
+            else r.form(K_PYTESTMARK, c.start(), markValue(r, c.end(), false, judged), AS_STATEMENT);
         }
-        for (Matcher m = PY_MARK.matcher(r.s); level < SURE && m.find();) {
+        for (Matcher p = PARAM.matcher(r.s); r.level < SURE && p.find();) r.form(K_PARAM, p.start(), param(r, p, judged), AS_ELEMENT);
+        for (Matcher m = PY_MARK.matcher(r.s); r.level < SURE && m.find();) {
             if (judged.contains(m.start())) continue;
             int alone = mark(r, m)[0];
-            level = Math.max(level, alone == SURE ? NOTE : alone);
+            r.form(K_MARK, m.start(), alone == SURE ? NOTE : alone, AS_STATEMENT);
+        }
+    }
+
+    /** pytest.param(..., marks=...), whose parenthesis ends p: the most its marks= holds (see markValue); NONE without marks=. */
+    private static int param(Read r, Matcher p, Set<Integer> judged) {
+        Arguments a = arguments(r.s, p.end() - 1, r.budget);
+        int level = NONE;
+        for (int k = 0; k < a.list().size(); k++) {
+            Matcher keyword = KEYWORD.matcher(a.list().get(k));
+            if (keyword.lookingAt() && keyword.group(1).equals("marks")) level = Math.max(level, markValue(r, a.starts().get(k) + keyword.end(), true, judged));
         }
         return level;
     }
@@ -1059,8 +1420,8 @@ public final class Integrity {
     }
 
     /**
-     * The value of pytestmark = or (argument) marks= whose = ends at after: its marks as whole
-     * values or elements (see python).
+     * The value of pytestmark = or (argument) the marks= of pytest.param, whose = ends at after:
+     * its marks as whole values or elements (see python).
      */
     private static int markValue(Read r, int after, boolean argument, Set<Integer> judged) {
         CharSequence s = r.s;
@@ -1094,7 +1455,7 @@ public final class Integrity {
         if (level == OPEN) return OPEN;
         int ends = pythonEnds(s, end, argument ? ARGUMENT : STATEMENT);
         if (ends != ENDS) return ends == CUT ? OPEN : NOTE;
-        return level == SURE && r.held(after) ? NOTE : level; // if X: pytestmark = ...
+        return level;
     }
 
     /**
@@ -1304,27 +1665,24 @@ public final class Integrity {
 
     /**
      * assumeTrue with a plain false as an argument of its own, or assumeFalse with a plain true,
-     * whatever the other arguments are (a message, a lambda, String.format(...)): sure, unless a
-     * condition stands before it on its reading (if (x) assumeTrue(false)): a note then. An
-     * argument counts where it ends, and only a whole literal counts (assumeTrue(false || x) is
-     * computed: nothing, as any computed assumption); OPEN while the call is not closed and none
-     * counts.
+     * whatever the other arguments are (a message, a lambda, String.format(...)), as a statement
+     * of its own: the call, qualified or not (Assumptions., Assume.), starts its statement (see
+     * sure: not after =, (, ->, =>, return: a deferred body or an argument, as in
+     * assertThrows(X.class, () -> assumeTrue(false))) and ends it (;, }, a comment or the
+     * reading's end after its closing parenthesis): sure then, for the gate to place, else a
+     * note. An argument counts where it ends, and only a whole literal counts (assumeTrue(false ||
+     * x) is computed: nothing, as any computed assumption); OPEN while the call is not closed.
      */
-    private static int assumption(Read r) {
-        int level = NONE;
+    private static void assumption(Read r) {
         Matcher m = ASSUME.matcher(r.s);
-        while (level < SURE && m.find()) {
+        while (r.level < SURE && m.find()) {
             Arguments a = arguments(r.s, m.end() - 1, r.budget);
             String never = m.group(1).equals("True") ? "false" : "true";
             boolean holds = false;
             for (int k = 0; k < a.ended() && !holds; k++) holds = a.list().get(k).equals(never);
-            if (!holds) {
-                if (!a.closed()) level = Math.max(level, OPEN);
-                continue;
-            }
-            level = Math.max(level, r.held(m.start()) ? NOTE : SURE);
+            int level = !a.closed() ? OPEN : !holds ? NONE : endsStatement(r.s, a.end()) ? SURE : NOTE;
+            r.form(K_ASSUME, qualified(r.s, m.start()), level, AS_STATEMENT);
         }
-        return level;
     }
 
     /**
@@ -1404,7 +1762,8 @@ public final class Integrity {
 
     // ---------------- coverage ----------------
 
-    private static final Pattern MINIMUM = Pattern.compile("<minimum>\\s*([\\d.]+)\\s*%?\\s*</minimum>|\\bminimum\\s*=\\s*([\\d.]+)");
+    // possessive: the white space before and after an optional % is not split two ways (<minimum>1, many spaces, then no </minimum>)
+    private static final Pattern MINIMUM = Pattern.compile("<minimum>\\s*+([\\d.]++)\\s*+%?+\\s*+</minimum>|\\bminimum\\s*+=\\s*+([\\d.]++)");
     private static final Pattern SCRIPT_THRESHOLD = Pattern.compile("[\"']?\\b(lines|branches|functions|statements)[\"']?\\s*:\\s*(\\d+(?:\\.\\d+)?)");
 
     private final Change change;
@@ -1460,13 +1819,13 @@ public final class Integrity {
         s.deletedTestFiles();
         s.skipFlags();
         s.fewerAssertions();
-        s.byPath(PIPELINE, "pipeline changed");
+        s.byPath(path -> PIPELINE.matcher(path).matches(), "pipeline changed");
         s.buildConfiguration();
         s.dependencies();
         s.lockFiles();
-        s.byPath(MIGRATION, "database migration changed");
+        s.byPath(Integrity::migration, "database migration changed");
         s.coverage();
-        s.byPath(STEERING, "agent or review instructions changed");
+        s.byPath(path -> STEERING.matcher(path).matches(), "agent or review instructions changed");
         List<Finding> all = new ArrayList<>(s.out);
         all.sort(Comparator.comparing(Finding::level));
         return all;
@@ -1476,7 +1835,7 @@ public final class Integrity {
 
     /** The built-in idea of a test file, and the repository's own (paths.test). */
     private static boolean anyTestFile(String path) {
-        return isTestFile(path) || sdlc.util.Glob.any(sdlc.core.Ctx.cfg.list("paths.test"), path);
+        return testFile(path, sdlc.core.Ctx.cfg.list("paths.test"));
     }
 
     private void switchedOff() {
@@ -1524,6 +1883,11 @@ public final class Integrity {
      * is never the only reading of an added line (see reading).
      */
     static String code(String t) {
+        return code(t, null);
+    }
+
+    /** The code of t (see above); with map, map[k] is where the k-th character of the code stands in t. */
+    private static String code(String t, int[] map) {
         int n = t.length();
         work += n;
         StringBuilder out = new StringBuilder(n);
@@ -1535,21 +1899,21 @@ public final class Integrity {
         while (i < n) {
             char c = t.charAt(i);
             if (top > 0 && stack[top - 1] < 0) { // the text of a template string
-                if (lineBreak(c)) out.append('\n');
+                if (lineBreak(c)) put(out, map, '\n', i);
                 if (c == '\\' && i + 1 < n && !lineBreak(t.charAt(i + 1))) i++;
                 else if (c == '`') {
                     top--;
-                    out.append('`');
+                    put(out, map, '`', i);
                 } else if (c == '$' && i + 1 < n && t.charAt(i + 1) == '{') {
                     stack = push(stack, top++, 0);
-                    out.append(' ');
+                    put(out, map, ' ', i);
                     i++;
                 }
                 i++;
                 continue;
             }
             if (lineBreak(c)) {
-                out.append('\n');
+                put(out, map, '\n', i);
                 lineStart = true;
                 i++;
                 continue;
@@ -1564,7 +1928,7 @@ public final class Integrity {
                 }
                 if (k < n && t.charAt(k) == '*') {
                     int end = lineEnd(t, k), close = closing(t, k, end);
-                    out.append(' ');
+                    put(out, map, ' ', k);
                     i = close < 0 ? end : close + 2;
                     continue;
                 }
@@ -1574,29 +1938,35 @@ public final class Integrity {
             if (c == '/' && next == '/') {
                 i = lineEnd(t, i);
             } else if (c == '/' && next == '*') {
-                i = blockComment(t, i + 2, out);
+                i = blockComment(t, i + 2, out, map);
             } else if (c == '\\' && lineBreak(next)) {
                 i++;
             } else if ((c == '"' || c == '\'') && next == c && i + 2 < n && t.charAt(i + 2) == c) {
-                i = tripleString(t, i, out);
+                i = tripleString(t, i, out, map);
             } else if (c == '"' || c == '\'') {
-                i = string(t, i, out);
+                i = string(t, i, out, map);
             } else if (c == '`') {
                 stack = push(stack, top++, -1);
-                out.append('`');
+                put(out, map, '`', i);
                 i++;
             } else if (top > 0 && c == '}' && stack[top - 1] == 0) {
                 top--; // the end of a ${...}: back in the template's text
-                out.append(' ');
+                put(out, map, ' ', i);
                 i++;
             } else {
                 if (top > 0 && c == '{') stack[top - 1]++;
                 else if (top > 0 && c == '}') stack[top - 1]--;
-                out.append(c);
+                put(out, map, c, i);
                 i++;
             }
         }
         return out.toString();
+    }
+
+    /** Appends c, which stands for the character of the source at at (map: see code). The code is never longer than its source. */
+    private static void put(StringBuilder out, int[] map, char c, int at) {
+        if (map != null) map[out.length()] = at;
+        out.append(c);
     }
 
     private static int[] push(int[] stack, int at, int value) {
@@ -1627,31 +1997,32 @@ public final class Integrity {
     }
 
     /** A block comment whose inside starts at from: a space for it, its line breaks kept; the index after its end, or the text's end. */
-    private static int blockComment(String t, int from, StringBuilder out) {
-        out.append(' ');
+    private static int blockComment(String t, int from, StringBuilder out, int[] map) {
+        put(out, map, ' ', from - 2);
         for (int i = from; i < t.length(); i++) {
             work++;
             char c = t.charAt(i);
             if (c == '*' && i + 1 < t.length() && t.charAt(i + 1) == '/') return i + 2;
-            if (lineBreak(c)) out.append('\n');
+            if (lineBreak(c)) put(out, map, '\n', i);
         }
         return t.length();
     }
 
     /** A ' or " string that starts at from: emptied when it closes on its line, else the rest of the line as written. The index after it. */
-    private static int string(String t, int from, StringBuilder out) {
+    private static int string(String t, int from, StringBuilder out, int[] map) {
         char quote = t.charAt(from);
         int i = from + 1;
         while (i < t.length() && !lineBreak(t.charAt(i))) {
             work++;
             char c = t.charAt(i);
             if (c == quote) {
-                out.append(quote).append(quote);
+                put(out, map, quote, from);
+                put(out, map, quote, i);
                 return i + 1;
             }
             i += c == '\\' && i + 1 < t.length() && !lineBreak(t.charAt(i + 1)) ? 2 : 1;
         }
-        out.append(t, from, i);
+        for (int k = from; k < i; k++) put(out, map, t.charAt(k), k);
         return i;
     }
 
@@ -1660,15 +2031,16 @@ public final class Integrity {
      * to two quotes, its line breaks kept, to the same three quotes or to the text's end. The
      * index after it.
      */
-    private static int tripleString(String t, int from, StringBuilder out) {
+    private static int tripleString(String t, int from, StringBuilder out, int[] map) {
         char quote = t.charAt(from);
-        out.append(quote).append(quote);
+        put(out, map, quote, from);
+        put(out, map, quote, from + 1);
         int i = from + 3;
         while (i < t.length()) {
             work++;
             char c = t.charAt(i);
             if (c == quote && i + 2 < t.length() && t.charAt(i + 1) == quote && t.charAt(i + 2) == quote) return i + 3;
-            if (lineBreak(c)) out.append('\n');
+            if (lineBreak(c)) put(out, map, '\n', i);
             i += c == '\\' && i + 1 < t.length() && !lineBreak(t.charAt(i + 1)) ? 2 : 1;
         }
         return i;
@@ -1714,8 +2086,12 @@ public final class Integrity {
 
     /** Source files, whose code can declare tests; the lines of any other file (a .json, a .txt fixture) are data. */
     private static final Pattern SOURCE = Pattern.compile(".*\\.(?:java|kt|kts|groovy|scala|[cm]?[jt]sx?|vue|svelte|py|go|rb|cs|php|rs|swift)");
-    private static final Pattern PACKAGE_LINE = Pattern.compile("\\s*package\\s+[\\w.]+\\s*;?\\s*");
-    private static final Pattern IMPORT_LINE = Pattern.compile("\\s*import\\s+(?:static\\s+)?[\\w.]+(?:\\s*\\.\\s*\\*)?\\s*;?\\s*");
+    // A package or import line, read whole (matches) on a line of at most LONGEST characters. Every repetition is possessive:
+    // what follows each one cannot start with what it takes (white space before a name, a name before ";", ";" before white
+    // space), so giving back a character never finds a match, and the white space around ";" is not split two ways.
+    private static final Pattern PACKAGE_LINE = Pattern.compile("\\s*+package\\s++[\\w.]++\\s*+;?+\\s*+");
+    // a name's dot is part of the name unless ".*" follows it (import a.b.*): the lookahead reads the white space after one dot
+    private static final Pattern IMPORT_LINE = Pattern.compile("\\s*+import\\s++(?:static\\s++)?+(?:\\w|\\.(?!\\s*+\\*))++(?:\\s*+\\.\\s*+\\*)?+\\s*+;?+\\s*+");
     private static final Pattern JVM = Pattern.compile(".*\\.(?:java|kt|groovy|scala)");
 
     /**
@@ -1727,19 +2103,31 @@ public final class Integrity {
      * (see code), carrying a comment or a string that runs over several lines from line to line:
      * an example in such a comment or template string declares nothing. Where that reading may
      * go wrong (a quote it cannot tell), what it hides is still "text": a note, not a problem. A
-     * file that is not source (see SOURCE) declares nothing. Which tests it held is not read.
+     * line longer than LONGEST is not read for a test call: when no line that was read declares
+     * one, "unread" (a note, not a problem). A file that is not source (see SOURCE) declares
+     * nothing. Which tests it held is not read.
      */
     private static String declaresTests(String path, List<String> lines) {
         if (!SOURCE.matcher(path).matches()) return null;
+        boolean unread = false;
         // each line's characters, as the pattern reads them, are counted (see work)
-        for (String line : code(String.join("\n", lines)).split("\n", -1)) if (TEST_CALL.matcher(new Counted(line)).find()) return "code";
-        for (String line : lines) if (TEST_CALL.matcher(new Counted(line)).find()) return "text";
+        for (String line : code(String.join("\n", lines), null).split("\n", -1)) {
+            if (line.length() > LONGEST) unread = true;
+            else if (TEST_CALL.matcher(new Counted(line)).find()) return "code";
+        }
+        if (unread) return "unread";
+        for (String line : lines) if (line.length() <= LONGEST && TEST_CALL.matcher(new Counted(line)).find()) return "text";
         return null;
     }
 
-    /** The lines that are not package lines (and, with imports, not import lines either). */
+    /**
+     * The lines that are not package lines (and, with imports, not import lines either). A line
+     * longer than LONGEST is not read as either: it stays in the body, so two files are the same
+     * but for their package and imports only when such lines are equal as written.
+     */
     private static List<String> body(List<String> lines, boolean imports) {
-        return lines.stream().filter(l -> !PACKAGE_LINE.matcher(l).matches() && !(imports && IMPORT_LINE.matcher(l).matches())).toList();
+        return lines.stream().filter(l -> l.length() > LONGEST || !PACKAGE_LINE.matcher(new Counted(l)).matches()
+                && !(imports && IMPORT_LINE.matcher(new Counted(l)).matches())).toList();
     }
 
     /**
@@ -1779,6 +2167,7 @@ public final class Integrity {
             else if (repackaged != null) note("test file moved", path, "the same file is now at " + repackaged + ", in another package");
             else if (reimported != null) note("test file moved and its imports changed", path, "the same tests are now at " + reimported + ", with other imports: its run judges it");
             else if (testNamed(path) || "code".equals(declared)) problem("test file deleted", path, "the file is gone");
+            else if ("unread".equals(declared)) note("test support file deleted", path, "a line of it is longer than " + LONGEST + " characters and was not read; no line that was read declares a test");
             else if ("text".equals(declared)) note("test support file deleted", path, "only a comment or a string in it mentions a test; no line of its code declares one");
             else note("test support file deleted", path, "it declares no test cases that a simple reading can find");
         }
@@ -1953,8 +2342,8 @@ public final class Integrity {
         }
     }
 
-    private void byPath(Pattern kind, String what) {
-        for (Change.File f : change.files) if (kind.matcher(f.path()).matches()) note(what, f.path(), word(f.status()));
+    private void byPath(Predicate<String> kind, String what) {
+        for (Change.File f : change.files) if (kind.test(f.path())) note(what, f.path(), word(f.status()));
     }
 
     private void buildConfiguration() {
@@ -2057,11 +2446,15 @@ public final class Integrity {
         return isJava(path) ? JAVA_ASSERT : SCRIPT_ASSERT;
     }
 
+    /** The matches of p on the lines, each line read in pieces of at most LONGEST characters (a call cut by a piece's end is not counted). */
     private static int count(Pattern p, List<String> lines) {
         int n = 0;
         for (String line : lines) {
-            Matcher m = p.matcher(line);
-            while (m.find()) n++;
+            Matcher m = p.matcher(new Counted(line));
+            for (int at = 0; at < line.length(); at += LONGEST) {
+                m.region(at, Math.min(line.length(), at + LONGEST));
+                while (m.find()) n++;
+            }
         }
         return n;
     }
@@ -2124,7 +2517,7 @@ public final class Integrity {
     private static List<Double> numbers(Pattern p, List<String> lines) {
         List<Double> out = new ArrayList<>();
         for (String line : lines) {
-            Matcher m = p.matcher(line);
+            Matcher m = p.matcher(new Counted(line));
             while (m.find()) {
                 Double d = number(m.group(1) != null ? m.group(1) : m.group(2));
                 if (d != null) out.add(d);
@@ -2136,7 +2529,7 @@ public final class Integrity {
     private static Map<String, Double> keyed(List<String> lines) {
         Map<String, Double> out = new LinkedHashMap<>();
         for (String line : lines) {
-            Matcher m = SCRIPT_THRESHOLD.matcher(line);
+            Matcher m = SCRIPT_THRESHOLD.matcher(new Counted(line));
             while (m.find()) {
                 Double d = number(m.group(2));
                 if (d != null) out.putIfAbsent(m.group(1), d);

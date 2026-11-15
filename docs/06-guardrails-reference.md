@@ -130,11 +130,14 @@ GitHub Enterprise and SonarQube servers in read-only mode.
 - **The disabled-test check reads text.** The git hook and `check-pr` look for the usual ways of
   writing a skip, a to-do mark or a focus on the lines a change adds. That catches mistakes and
   plain attempts, not a switch written so that it does not read as one, and not an empty test.
-  `check-pr` fails only on what a line shows for sure, read whole: an annotation or a decorator
-  that is the whole expression, a declaration with its title, an option or a condition that is a
-  whole literal, an assumption that never holds. A skip from inside a test, a computed condition,
-  a switch inside a larger expression or only named, or `abort(` is a warning, since a condition
-  may hold it.
+  `check-pr` fails only on what a line shows for sure, read whole from the text as written and
+  standing on its own: an annotation or a decorator that is the whole expression, a declaration
+  with its title, an option or a condition that is a whole literal, an assumption that never
+  holds, each a statement or a declaration of its own (not an argument, a value or a lambda's
+  body) and under no condition on its line or on the added line before. A skip from inside a
+  test, a computed condition, a switch inside a larger expression or only named, or `abort(` is a
+  warning, since a condition may hold it. It lints the same test files as `sdlc check`: named or
+  placed like test files, or under `paths.test`.
   `sdlc check` runs the tests and shows every test that ran before the change and does not run
   now; a pipeline that must be sure runs it ([docs/09](09-check.md)).
 - **Approvals** prove that a listed human posted the exact line in Jira. If agents use **your**

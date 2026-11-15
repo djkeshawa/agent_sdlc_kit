@@ -321,6 +321,39 @@ final class TrustTests {
                 && gate.warns().stream().anyMatch(w -> w.contains("GateTest.java: may switch a test off") && w.contains("@Test(enabled = false || RUN_TESTS)"))
                 && gate.warns().stream().anyMatch(w -> w.contains("test_gate.py: may switch a test off") && w.contains("@(pytest.mark.skip if IS_CI else identity)")));
 
+        // audit round 6, finding 6: check-pr lints the test files sdlc check lints, by their built-in names and folders too, not
+        // only those under the configured paths.test (src/test/** for this Java stack)
+        git(repo, "switch", "-q", "-c", "feature/PROJ-22-outside", "origin/main");
+        write(repo, "web/disabled.test.ts", "it.skip('x', () => {});\n");
+        write(repo, "web/__tests__/cases.ts", "describe.only('y', () => {});\n");
+        write(repo, "web/helpers.ts", "export const later = 'it.skip';\n");
+        write(repo, "src/test/java/OutsideTest.java", "class OutsideTest {}\n");
+        write(repo, "src/main/java/A.java", "class A { int j; }\n");
+        commit(repo, "feat(PROJ-22): script tests outside the configured test paths");
+        Ctx.init(repo);
+        String outside = Checks.prPolicy(null, false).fails().stream().filter(f -> f.contains("No switch that turns a test off or focuses one was found")).findFirst().orElse("");
+        check("trust: a script test file outside the configured test paths, named or placed like one, fails check-pr as it fails sdlc check",
+                outside.contains("web/disabled.test.ts: it.skip('x', () => {});") && outside.contains("web/__tests__/cases.ts: describe.only('y', () => {});")
+                        && !outside.contains("web/helpers.ts"));
+
+        // audit round 6, findings 2 to 5 and 7, through check-pr: only what the lint proves from the text as written, standing on its
+        // own, fails; a quoted override, a condition on the line before a joined declaration and a caught assumption are warnings
+        git(repo, "switch", "-q", "-c", "feature/PROJ-23-round6", "origin/main");
+        write(repo, "src/test/java/round6.test.ts", "test('x', { skip: true, 'skip': false }, fn);\nif (isCI) {\n  describe.skip(\n    'database', () => {});\n}\n");
+        write(repo, "src/test/java/Round6Test.java", "class Round6Test {\n    @Test @Disabled void off() {}\n    @DisabledIf(\"false\") @Test void on() {}\n"
+                + "    @Test void caught() { assertThrows(TestAbortedException.class, () -> assumeTrue(false)); }\n}\n");
+        write(repo, "src/main/java/A.java", "class A { int k; }\n");
+        commit(repo, "feat(PROJ-23): the round 6 shapes");
+        Ctx.init(repo);
+        Checks.Result round6 = Checks.prPolicy(null, false);
+        String failed6 = round6.fails().stream().filter(f -> f.contains("No switch that turns a test off or focuses one was found")).findFirst().orElse("");
+        check("trust: check-pr fails on @Test @Disabled, and only on it",
+                failed6.contains("Round6Test.java: @Test @Disabled void off() {}") && !failed6.contains("round6.test.ts") && !failed6.contains("caught") && !failed6.contains("DisabledIf"));
+        check("trust: and warns on the quoted override, the declaration under a condition on the line before and the caught assumption; @DisabledIf(\"false\") is not said",
+                round6.warns().stream().anyMatch(w -> w.contains("round6.test.ts: may switch a test off") && w.contains("test('x', { skip: true, 'skip': false }, fn);")
+                        && w.contains("if (isCI) { describe.skip( 'database', () => {});"))
+                && round6.warns().stream().anyMatch(w -> w.contains("Round6Test.java: may switch a test off") && w.contains("assumeTrue(false)") && !w.contains("DisabledIf")));
+
         // a branch with no commit in common with the base: every diff would be empty or fail
         git(repo, "switch", "-q", "--orphan", "feature/PROJ-13-orphan");
         write(repo, "src/main/java/A.java", "class A { int o; }\n");
