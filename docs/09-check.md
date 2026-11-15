@@ -468,6 +468,10 @@ Claude Code, in `.claude/settings.json`:
   changed test files it ran beside before the change were the base's.
   For Maven the compiled tests of the module are removed before each such run, so a test file
   that was taken away is not still there as a class.
+- For Maven only the class named after the test file is run (`-Dtest=` that class, with its
+  nested classes): tests in another top-level class of the same `.java` file are not run or
+  counted, so a test added there is not seen, and a file whose tests are all in such a class
+  "ran after the change and reports no tests" (could not be judged).
 - A test file that cannot be named safely on a command line is not run. For Maven: a class
   name or module folder with a character outside letters, digits, `_`, `$`, `.`, `/` and `-`
   (a comma or a space would be read as a list or an option). For Vitest: a file name that
