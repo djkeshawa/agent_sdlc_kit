@@ -131,18 +131,23 @@ final class Witness {
      * identities whose difference between the file as it was and after the change it judges
      * (change), and per way, those whose difference from run to run it judges (repeat). ALL
      * stands for every identity of the file, and for the file itself (a run of a way that gave no
-     * result where another gave one). A key is suite#name, so it is never ALL.
+     * result where another gave one). A key is suite#name, so it is never ALL; "" stands for the
+     * file itself, a run of a way that gave no result where another gave one.
+     *
+     * Only a verdict that fails the check answers for the whole file (FILE): the person must look
+     * at the file anyway, and what it says is not passed. Those are the file whose first run after
+     * the change did not compile or load (no report after the change, so nothing to compare) and
+     * the definite line of tests that ran and do not run now (see lost). A verdict that does not
+     * fail the check, could not be judged or unstable, answers only for what it names: the
+     * identities it shows, or the identities whose counts make the count it speaks of (see
+     * varied), so that another difference beside it is still said by reconcile.
      */
     record Cover(Set<String> change, Map<Side, Set<String>> repeat) {
         static final String ALL = "*";
         /** Answers for nothing: what it says is said beside the differences, which are then answered elsewhere. */
         static final Cover NONE = new Cover(Set.of(), Map.of());
-        /** Every difference of the file's list: a verdict said of the whole file from every run of it. */
+        /** Every difference of the file's list: a verdict that fails the check, said of the whole file from every run of it. */
         static final Cover FILE = every(Set.of(ALL), Side.values());
-        /** Every difference between the file as it was and after the change, and none from run to run. */
-        static final Cover LIST = new Cover(Set.of(ALL), Map.of());
-        /** Every difference from run to run, in every way, and none between the sides. */
-        static final Cover RUNS = new Cover(Set.of(), FILE.repeat());
 
         /** These identities, between the sides, and from run to run in these ways. */
         static Cover of(Collection<String> keys, Side... ways) {
@@ -349,8 +354,9 @@ final class Witness {
             if (!gave(a)) {
                 // code that does not compile or load is the change's own failure; a missing build tool, a timeout or a name that cannot be passed on is not
                 boolean broken = a != null && a.broken();
+                // no report after the change: no difference of the file is listed (see decide), so what it answers for is moot; only the failure keeps the file
                 ended.put(f, new Verdict(f, "", broken ? Kind.FAILS_AFTER : Kind.UNKNOWN, (broken ? "after the change it " : "could not be run after the change: ")
-                        + (a == null ? "no result" : a.problem()), by, Cover.FILE));
+                        + (a == null ? "no result" : a.problem()), by, broken ? Cover.FILE : Cover.NONE));
                 continue;
             }
             String shared = runner.sharedBySides(change, head.dir, f);
@@ -507,9 +513,10 @@ final class Witness {
             if (named.containsKey(f) && !muted("new tests")) newIn.put(f, newTests(f, counts, freshEvery, by));
             FileRun o = ed ? olds.get(0) : null, a = afters.get(0);
             if (ed && !gave(o)) out.add(new Verdict(f, "", Kind.UNKNOWN, "run as it was before the change, the file " + (o == null ? "gave no result" : o.problem())
-                    + ", so it cannot be told which of its tests are new, were switched off or were removed", by, Cover.LIST));
-            // a file that ran and has no test, and had none: nothing to judge, and it is said so (a file that had tests has lost them: see lost)
-            else if (a.cases().isEmpty() && (o == null || o.cases().isEmpty())) out.add(new Verdict(f, "", Kind.UNKNOWN, "the file ran after the change and reports no tests", by, Cover.FILE));
+                    + ", so it cannot be told which of its tests are new, were switched off or were removed", by, Cover.NONE));
+            // a file that ran and has no test, and had none: nothing to judge, and it is said so (a file that had tests has lost them: see lost). Neither
+            // line answers for a difference: with no report as it was the ledger holds none between the sides, and an empty file has no case to differ
+            else if (a.cases().isEmpty() && (o == null || o.cases().isEmpty())) out.add(new Verdict(f, "", Kind.UNKNOWN, "the file ran after the change and reports no tests", by, Cover.NONE));
         }
         out.addAll(lone);
         Set<String> unsteady = new LinkedHashSet<>(), recounted = new LinkedHashSet<>(); // files whose skips, and whose counts of gone and fresh cases, said another thing in a repeat run
@@ -560,7 +567,7 @@ final class Witness {
             Skips s = skipsIn.get(f);
             if (spoke.contains(f) || !s.answer().isEmpty() || s.fewer() || out.stream().anyMatch(v -> v.file().equals(f) && v.name().isEmpty() && v.kind() == Kind.UNSTABLE)) continue;
             out.add(new Verdict(f, "", Kind.UNSTABLE, "whether tests that ran before the change are skipped now differs from run to run: what the file reports, after the change or as it "
-                    + "was, is not the same in every run", by, Cover.RUNS));
+                    + "was, is not the same in every run", by, varied(seen, f, SKIPS, Side.OLD, Side.AFTER)));
         }
         // what the skips could not judge, where fewer tests run nowhere (else the rule for tests that ran and do not run now said it, above)
         for (Map.Entry<String, Skips> s : skipsIn.entrySet()) {
@@ -569,7 +576,7 @@ final class Witness {
             for (Verdict v : s.getValue().answer()) {
                 if (unsteady.contains(f)) out.add(new Verdict(f, "", Kind.UNSTABLE,
                         "whether tests that ran before the change are skipped now differs from run to run: what the file reports, after the change or as it was, is not the same in every run",
-                        by, v.tests(), v.cover().and(Cover.RUNS)));
+                        by, v.tests(), v.cover().and(varied(seen, f, SKIPS, Side.OLD, Side.AFTER))));
                 else out.add(v);
             }
         }
@@ -1192,7 +1199,7 @@ final class Witness {
             Count at = counts.stream().filter(c -> c != null && c.least() > 0).findFirst().orElseThrow();
             Verdict v = say(f, at, "", cover, by).get(0);
             return List.of(new Verdict(f, "", Kind.UNSTABLE, v.detail().substring(0, v.detail().indexOf(". Under names"))
-                    + ", but what the file reports, after the change or as it was, is not the same in every run", by, v.tests(), cover.and(Cover.RUNS)));
+                    + ", but what the file reports, after the change or as it was, is not the same in every run", by, v.tests(), Cover.of(fresh, Side.OLD, Side.BEFORE, Side.AFTER)));
         }
         Count at = counts.stream().filter(c -> c != null && !c.passBoth().isEmpty()).findFirst().orElseThrow();
         return say(f, at, "", cover, by).stream().filter(v -> freshEvery.stream().anyMatch(k -> v.cover().change().contains(k))).toList();
@@ -1289,10 +1296,12 @@ final class Witness {
      *
      * One row for the file: with the counts, and what the reports show (names no longer
      * reported, names skipped now, names reported for the first time), never one name as the
-     * test lost. It is said from every run of the file: a row that fails the check, or says the
-     * file's reports differ from run to run, answers for every difference of the file's reports
-     * (see reconcile); a row that could not be judged answers for the differences between the file
-     * as it was and after the change only, so that one from run to run beside it is still said.
+     * test lost. It is said from every run of the file: a row that fails the check answers for
+     * every difference of the file's reports (see reconcile), as the person must look at the file
+     * anyway; a row that does not answers only for what it names: one that could not be judged
+     * for the names it shows, between the file as it was and after the change, and one that says
+     * the count differs from run to run for those too, and for the identities whose counts make
+     * the count differ (see varied), so that another difference beside either is still said.
      * The guide lists what moves the count: two tests merged into one is one test that ran and
      * does not run now, and is said so.
      */
@@ -1313,7 +1322,7 @@ final class Witness {
         if (okOld.stream().anyMatch(r -> failing(r.cases()))) {
             long first = Math.max(1, passed(olds.get(0).cases()) - ran(afters.get(0).cases()));
             return List.of(new Verdict(f, "", Kind.UNKNOWN, counts + shows + ". But the file as it was reported failures" + FAILURES + ": a file that did not pass as it was is not "
-                    + "said to have lost tests, so whether a test that ran does not run now is not known", by, (int) first, Cover.LIST));
+                    + "said to have lost tests, so whether a test that ran does not run now is not known", by, (int) first, Cover.change(shownKeys(n))));
         }
         // the fourth run, at its fewest, where usable
         Set<String> oldKeys = new LinkedHashSet<>();
@@ -1344,7 +1353,7 @@ final class Witness {
                 // on the code after the change the file as it was runs no more tests than it does now: the change of the code may have taken all of them
                 if (fourth.unclear().containsKey(f)) return List.of();
                 return List.of(new Verdict(f, "", Kind.UNKNOWN, head + ". But as it was, on the code after the change, the file runs " + r4 + ", no more than it runs now, so the change "
-                        + "of the code, not of the tests, may have taken " + (total == 1 ? "it" : "them") + t4, by, (int) (total - t), Cover.LIST));
+                        + "of the code, not of the tests, may have taken " + (total == 1 ? "it" : "them") + t4, by, (int) (total - t), Cover.change(shownKeys(n))));
             }
             StringBuilder d = new StringBuilder(head);
             // whether the runs differ, from the same count on both sides: the cases that passed at the first try (a case that passed only when run again is
@@ -1363,18 +1372,53 @@ final class Witness {
             // fewer run than passed as it was in every run only where the cases that passed when the build ran them again count
             return List.of(new Verdict(f, "", Kind.UNKNOWN, counts + ", and passed " + (minP0 - minR0) + " more only when the build ran " + (minP0 - minR0 == 1 ? "it" : "them") + " again"
                     + shows + ": a case that passed only when run again may be a set-up that failed and then passed, not a test, so whether a test that ran does not run now "
-                    + "is not known", by, (int) (withAgain - t), Cover.LIST));
+                    + "is not known", by, (int) (withAgain - t), Cover.change(shownKeys(n))));
         }
         // fewer run than passed as it was in some runs only, beyond the old tests said: unstable
         if (!whole || most - t - u > 0) {
-            String which = !whole ? ", and a run of the file " + (okOld.size() < olds.size() ? "as it was" : "after the change") + " gave no result" : "";
+            String which = !whole ? ", and a run of the file " + (okOld.size() < olds.size() && okAfter.size() < afters.size() ? "as it was and one after the change"
+                    : okOld.size() < olds.size() ? "as it was" : "after the change") + " gave no result" : "";
             String ranges = "the file as it was passed " + range(minR0, maxR0) + " of its tests, and after the change it runs " + range(minR1, maxR1)
                     + (minR0 != maxR0 || minR1 != maxR1 ? ", from run to run" : "");
             return List.of(new Verdict(f, "", Kind.UNSTABLE, ranges + shows + which + ": whether tests that ran before the change do not run now is not the same in every run: "
-                    + "what the file reports, after the change or as it was, differs from run to run", by, (int) Math.max(1, most - t - u), Cover.FILE));
+                    + "what the file reports, after the change or as it was, differs from run to run", by, (int) Math.max(1, most - t - u),
+                    Cover.change(shownKeys(n)).and(varied(seen, f, PASSES, Side.OLD)).and(varied(seen, f, RUNS, Side.AFTER))));
         }
         // all of it is said above as old tests taken out of the way or unstable
         return List.of();
+    }
+
+    /** The identities a line that shows what the first reports show (see shows) names: the names gone, new, and skipped now that ran before. */
+    private static Set<String> shownKeys(Names n) {
+        Set<String> out = new java.util.TreeSet<>(n.moved());
+        for (Flip f : n.off()) out.add(f.key());
+        return out;
+    }
+
+    /** Per identity, the counts of its cases that a line about counts reads (see varied): how many passed (at the first try, and at all), ran, are skipped, are there. */
+    private static final java.util.function.Function<List<JUnitXml.Case>, Object> PASSES = cs -> List.of(passed(cs), passes(cs)), RUNS = Witness::ran,
+            SKIPS = cs -> List.of((long) cs.size(), skipped(cs)), CASES = cs -> (long) cs.size();
+
+    /**
+     * What a line about counts that differ from run to run answers for: per way, the identities
+     * whose count (measure) differs between the runs of that way that gave a report, and the file
+     * itself ("") where a run of it gave none. Those are what make its count differ; another
+     * difference from run to run, a test that passed in one run and failed or passed only when
+     * run again in another, does not change it, and is said elsewhere.
+     */
+    private static Cover varied(Seen seen, String f, java.util.function.Function<List<JUnitXml.Case>, Object> measure, Side... ways) {
+        Map<Side, Set<String>> r = new EnumMap<>(Side.class);
+        for (Side way : ways) {
+            List<FileRun> all = seen.of(way, f);
+            if (all.size() < 2) continue;
+            List<Map<String, List<JUnitXml.Case>>> each = all.stream().filter(Witness::gave).map(x -> byKey(x.cases())).toList();
+            Set<String> keys = new java.util.TreeSet<>(), out = new java.util.TreeSet<>();
+            if (each.size() < all.size()) out.add("");
+            for (Map<String, List<JUnitXml.Case>> m : each) keys.addAll(m.keySet());
+            for (String k : keys) if (each.stream().map(m -> measure.apply(m.getOrDefault(k, List.of()))).distinct().count() > 1) out.add(k);
+            r.put(way, out);
+        }
+        return new Cover(Set.of(), r);
     }
 
     /** " (no longer reported: a, b; skipped now under a name that ran before: c; reported for the first time: d)": what the first reports show. */
@@ -1440,7 +1484,7 @@ final class Witness {
             Cover cover = Cover.change(e.getValue().moved());
             if (g > nf && recounted.contains(f)) {
                 out.add(new Verdict(f, "", Kind.UNSTABLE, had(e.getValue()) + ", but what the file reports, after the change or as it was, is not the same in every run", by, g - nf,
-                        cover.and(Cover.RUNS)));
+                        cover.and(varied(seen, f, CASES, Side.OLD, Side.AFTER))));
             } else if (g > nf) {
                 String why = e.getValue().listing().either();
                 long r0 = passed(seen.of(Side.OLD, f).get(0).cases()), r1 = ran(seen.of(Side.AFTER, f).get(0).cases());
