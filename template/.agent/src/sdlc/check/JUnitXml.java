@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 
 import org.w3c.dom.Element;
@@ -39,18 +40,53 @@ public final class JUnitXml {
         }
     }
 
+    /** The parser of every report, and of what a report would make of a name (see Attributes). */
+    private static DocumentBuilder builder() throws javax.xml.parsers.ParserConfigurationException {
+        DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();
+        f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        f.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        f.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        f.setXIncludeAware(false);
+        f.setExpandEntityReferences(false);
+        DocumentBuilder builder = f.newDocumentBuilder();
+        builder.setErrorHandler(null); // no chatter on stderr; a bad report is an IOException
+        return builder;
+    }
+
+    /**
+     * Reads a text as read reads it where a report writes it as the value of an attribute: in a
+     * UTF-8 document, between double quotes. The parser then reads its character references,
+     * makes every line end one line feed (CR LF, a lone CR) and every tab and line feed a space
+     * (XML 1.0, attribute-value normalization); nothing else. One parser for many texts.
+     */
+    public static final class Attributes {
+        private final DocumentBuilder builder;
+
+        public Attributes() {
+            try {
+                builder = builder();
+            } catch (javax.xml.parsers.ParserConfigurationException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+
+        /** The value read, or null where the document is not well-formed XML (a report holding it cannot be read). Never throws. */
+        public String read(String text) {
+            try {
+                builder.reset();
+                builder.setErrorHandler(null);
+                byte[] doc = ("<?xml version=\"1.0\" encoding=\"UTF-8\" ?><a v=\"" + text + "\"/>").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                return builder.parse(new java.io.ByteArrayInputStream(doc)).getDocumentElement().getAttribute("v");
+            } catch (Exception e) {
+                return null;
+            }
+        }
+    }
+
     public static List<Case> read(Path file) throws IOException {
         if (Files.size(file) > MAX_BYTES) throw new IOException("the report " + file.getFileName() + " is larger than " + (MAX_BYTES >> 20) + " MB");
         try (InputStream in = Files.newInputStream(file)) {
-            DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();
-            f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            f.setFeature("http://xml.org/sax/features/external-general-entities", false);
-            f.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-            f.setXIncludeAware(false);
-            f.setExpandEntityReferences(false);
-            var builder = f.newDocumentBuilder();
-            builder.setErrorHandler(null); // no chatter on stderr; a bad report is an IOException below
-            NodeList cases = builder.parse(in).getElementsByTagName("testcase");
+            NodeList cases = builder().parse(in).getElementsByTagName("testcase");
             List<Case> out = new ArrayList<>();
             for (int i = 0; i < cases.getLength(); i++) {
                 Element c = (Element) cases.item(i);

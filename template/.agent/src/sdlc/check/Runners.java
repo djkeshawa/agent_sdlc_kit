@@ -37,6 +37,11 @@ public final class Runners {
         return said(Vitest.result(JUnitXml.read(report), file, null, 1, false, "", Vitest.Retries.read(retries)));
     }
 
+    /** For the self test: a test's name as vitest's JUnit report gives it once read, from the name vitest gave it (see Vitest.Retries.asReported); null where none. */
+    public static String vitestReportedName(String name) {
+        return Vitest.Retries.asReported(name, new JUnitXml.Attributes());
+    }
+
     /** For the self test: the text of the check's own reporter for vitest (see Vitest.REPORTER). */
     public static String vitestReporter() {
         return Vitest.REPORTER;
@@ -346,7 +351,7 @@ public final class Runners {
          * test's author may write any of them.
          */
         static FileRun result(List<JUnitXml.Case> cases, String name, String unreadable, int exit, boolean didNotLoad, String said, Retries retries) {
-            List<JUnitXml.Case> mine = cases.stream().filter(c -> c.suite().replace('\\', '/').equals(name)).map(Runners::assertionOrError).toList();
+            List<JUnitXml.Case> mine = cases.stream().filter(c -> slashes(c.suite()).equals(name)).map(Runners::assertionOrError).toList();
             if (!mine.isEmpty()) return retries.apply(mine, name);
             if (unreadable != null) return FileRun.failed("its report cannot be read (" + unreadable + ")");
             if (exit == 127) return FileRun.failed("node could not be started (is Node.js on the PATH?)");
@@ -355,6 +360,11 @@ public final class Runners {
             // (and says so about this file: another file's syntax error says nothing about this one)
             if (didNotLoad) return FileRun.broken("did not load (vitest exit " + exit + ": " + said + ")");
             return FileRun.failed("gave no result (vitest exit " + exit + ": " + said + ")");
+        }
+
+        /** A path vitest wrote, with "/" between its folders: on Windows it writes "\\"; elsewhere a backslash is part of a name, not a separator. */
+        private static String slashes(String path) {
+            return Proc.WINDOWS ? path.replace('\\', '/') : path;
         }
 
         /** The environment variable that tells the check's reporter where to write. */
@@ -416,9 +426,9 @@ public final class Runners {
         private static final long MAX_RETRIES_BYTES = 50L * 1024 * 1024;
 
         /**
-         * What the check's reporter wrote (see REPORTER): per file, per name, each test of that
-         * name as vitest ran it; or why it cannot be used (why), in which case no pass of the run is
-         * taken for a pass at the first try.
+         * What the check's reporter wrote (see REPORTER): per file, per name as the JUnit report
+         * gives it (see asReported), each test of that name as vitest ran it; or why it cannot be
+         * used (why), in which case no pass of the run is taken for a pass at the first try.
          */
         record Retries(Map<String, Map<String, List<Ran>>> files, String why) {
             /** One test as vitest ran it: its state ("pass", "fail", "skip", "todo", or null where it did not run), how often it was run again, the retries it was given (null where vitest does not say). */
@@ -441,17 +451,151 @@ public final class Runners {
                     Object root = sdlc.util.Json.parseStrict(Files.readString(json));
                     if (!(root instanceof Map<?, ?> top) || !(top.get("tests") instanceof List<?> tests)) throw new IllegalArgumentException("no list of tests");
                     Map<String, Map<String, List<Ran>>> files = new LinkedHashMap<>();
+                    JUnitXml.Attributes xml = new JUnitXml.Attributes();
                     for (Object t : tests) {
                         if (!(t instanceof Map<?, ?> m) || !(m.get("file") instanceof String file) || !(m.get("name") instanceof String name)) throw new IllegalArgumentException("a test without its file or name");
                         Object state = m.get("state");
                         if (state != null && !(state instanceof String)) throw new IllegalArgumentException("a state that is not a word");
-                        files.computeIfAbsent(file.replace('\\', '/'), k -> new LinkedHashMap<>()).computeIfAbsent(name, k -> new ArrayList<>())
+                        // each test under its name as the JUnit report gives it once read: the two are compared, never the name vitest gave
+                        if (name.length() > MAX_NAME) return unknown("vitest's account of its tests names a test longer than " + MAX_NAME + " characters");
+                        String reported = asReported(name, xml);
+                        if (reported == null) return unknown("vitest's account of its tests names a test that its JUnit report cannot write as XML");
+                        files.computeIfAbsent(slashes(file), k -> new LinkedHashMap<>()).computeIfAbsent(reported, k -> new ArrayList<>())
                                 .add(new Ran((String) state, count(m.get("retryCount")), count(m.get("retry"))));
                     }
                     return new Retries(files, null);
                 } catch (IOException | RuntimeException e) {
                     return unknown("vitest's account of its tests cannot be read (" + e.getMessage() + ")");
                 }
+            }
+
+            /** The longest name that is compared: longer ones make the account unusable, as reading one costs memory in proportion. */
+            static final int MAX_NAME = 1_000_000;
+
+            /**
+             * A test's name as vitest's JUnit report gives it once read (see JUnitXml.read), from
+             * the name vitest gave it: what vitest's junit reporter writes into the name attribute
+             * (escapeXML of vitest 3: &, ", ', < and > written as references, then the characters
+             * XML 1.0 forbids or discourages taken out, by the same two patterns, which read UTF-16
+             * code units: so a lone low surrogate takes the character before it along, and a
+             * reference may lose its ';'), each lone surrogate left then written as U+FFFD (Node
+             * writes the report in UTF-8), then read by the check's own XML parser as an attribute's
+             * value (a line end, a tab or a line feed becomes a space). null where that is not
+             * well-formed XML: a report that held it could not be read. Linear in the name's
+             * length; never throws.
+             */
+            static String asReported(String name, JUnitXml.Attributes xml) {
+                StringBuilder escaped = new StringBuilder(name.length() + 16);
+                for (int i = 0; i < name.length(); i++) {
+                    char c = name.charAt(i);
+                    switch (c) {
+                        case '&' -> escaped.append("&amp;");
+                        case '"' -> escaped.append("&quot;");
+                        case '\'' -> escaped.append("&apos;");
+                        case '<' -> escaped.append("&lt;");
+                        case '>' -> escaped.append("&gt;");
+                        default -> escaped.append(c);
+                    }
+                }
+                String written = wellFormed(discouragedOut(invalidOut(escaped)));
+                return xml.read(written);
+            }
+
+            private static boolean high(char c) {
+                return c >= 0xD800 && c <= 0xDBFF;
+            }
+
+            private static boolean low(char c) {
+                return c >= 0xDC00 && c <= 0xDFFF;
+            }
+
+            /**
+             * Vitest's first pattern, global, on code units, its alternatives tried in that order at
+             * each place: one of U+0000 to U+0008, U+000B, U+000C, U+000E to U+001F, U+FFFD, U+FFFE,
+             * U+FFFF; a high surrogate without a low one after it; a low surrogate with the code unit
+             * before it where that is not a high surrogate, or alone at the start.
+             */
+            private static String invalidOut(CharSequence s) {
+                StringBuilder out = new StringBuilder(s.length());
+                int n = s.length();
+                for (int i = 0; i < n; ) {
+                    char c = s.charAt(i);
+                    boolean lowNext = i + 1 < n && low(s.charAt(i + 1));
+                    if (c <= 0x08 || c == 0x0B || c == 0x0C || (c >= 0x0E && c <= 0x1F) || c >= 0xFFFD) i++;
+                    else if (high(c) && !lowNext) i++;
+                    else if (!high(c) && lowNext) i += 2; // a low surrogate with the code unit before it
+                    else if (i == 0 && low(c)) i++;
+                    else {
+                        out.append(c);
+                        i++;
+                    }
+                }
+                return out.toString();
+            }
+
+            /**
+             * Vitest's second pattern (what XML 1.0 discourages), global, on code units: U+007F to
+             * U+0084, U+0086 to U+009F, U+FDD0 to U+FDEF, the last two code points of planes 1 to
+             * 15, and those of plane 16 only together with what follows them (see plane16Tail), as
+             * the pattern is written.
+             */
+            private static String discouragedOut(String s) {
+                StringBuilder out = new StringBuilder(s.length());
+                int n = s.length();
+                for (int i = 0; i < n; ) {
+                    char c = s.charAt(i);
+                    if ((c >= 0x7F && c <= 0x84) || (c >= 0x86 && c <= 0x9F) || (c >= 0xFDD0 && c <= 0xFDEF)) {
+                        i++;
+                        continue;
+                    }
+                    if (high(c) && (c & 0x3F) == 0x3F && i + 1 < n && (s.charAt(i + 1) == 0xDFFE || s.charAt(i + 1) == 0xDFFF)) {
+                        if (c != 0xDBFF) {
+                            i += 2;
+                            continue;
+                        }
+                        int after = plane16Tail(s, i + 2);
+                        if (after >= 0) {
+                            i += 2 + after;
+                            continue;
+                        }
+                    }
+                    out.append(c);
+                    i++;
+                }
+                return out.toString();
+            }
+
+            /**
+             * How many code units at j the group after U+10FFFE or U+10FFFF takes in vitest's second
+             * pattern, or -1 where it does not match. Its alternatives, in order: one code unit that
+             * is not a line feed, a carriage return, U+2028, U+2029 or a surrogate; a surrogate pair;
+             * a high surrogate alone; any code unit but a high surrogate with a low one after it.
+             */
+            private static int plane16Tail(String s, int j) {
+                if (j >= s.length()) return -1;
+                char d = s.charAt(j);
+                boolean lowNext = j + 1 < s.length() && low(s.charAt(j + 1));
+                if (d != '\n' && d != '\r' && d != 0x2028 && d != 0x2029 && !high(d) && !low(d)) return 1;
+                if (high(d)) return lowNext ? 2 : 1;
+                return lowNext ? 2 : -1; // a line end or a low surrogate, with a low surrogate after it
+            }
+
+            /** Each lone surrogate as U+FFFD, as Node's UTF-8 encoder writes it. */
+            private static String wellFormed(String s) {
+                StringBuilder out = null;
+                for (int i = 0; i < s.length(); i++) {
+                    char c = s.charAt(i);
+                    boolean pair = high(c) && i + 1 < s.length() && low(s.charAt(i + 1));
+                    if (pair) {
+                        if (out != null) out.append(c).append(s.charAt(i + 1));
+                        i++;
+                        continue;
+                    }
+                    boolean lone = high(c) || low(c);
+                    if (lone && out == null) out = new StringBuilder(s.length()).append(s, 0, i);
+                    if (out != null) out.append(lone ? '\uFFFD' : c);
+                }
+                return out == null ? s : out.toString();
             }
 
             /** A count: null, or a whole number from 0 up. */
@@ -474,6 +618,8 @@ public final class Runners {
             FileRun apply(List<JUnitXml.Case> mine, String file) {
                 String unknown = null;
                 Map<String, List<Ran>> ran = why == null ? files.getOrDefault(file, Map.of()) : null;
+                Map<String, Integer> listed = new java.util.HashMap<>(); // how many cases of the report have each name
+                for (JUnitXml.Case c : mine) listed.merge(c.name(), 1, Integer::sum);
                 List<JUnitXml.Case> out = new ArrayList<>();
                 for (JUnitXml.Case c : mine) {
                     if (c.status() == JUnitXml.Status.SKIPPED) {
@@ -493,6 +639,10 @@ public final class Runners {
                     }
                     if (same.isEmpty()) {
                         if (unknown == null) unknown = "vitest's account of its tests does not name a test its JUnit report lists as passed (" + c.name() + ")";
+                        out.add(c);
+                    } else if (same.size() > listed.get(c.name())) {
+                        // more tests of this name than the report has cases of it: which of them this case is, is not known
+                        if (unknown == null) unknown = "vitest's account of its tests names more tests " + c.name() + " than its JUnit report lists";
                         out.add(c);
                     } else if (same.stream().noneMatch(r -> "pass".equals(r.state()))) {
                         if (same.stream().allMatch(r -> r.state() == null || r.state().equals("skip") || r.state().equals("todo"))) out.add(with(c, JUnitXml.Status.SKIPPED, again));

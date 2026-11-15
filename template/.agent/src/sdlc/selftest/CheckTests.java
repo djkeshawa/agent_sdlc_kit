@@ -160,6 +160,7 @@ final class CheckTests {
         check("check: a test whose failure starts with vitest's words for an empty file is still a failure",
                 sdlc.check.Runners.vitestReport(xml, retries, "src/refund.test.ts").equals("ERRORED refunds > rejects; PASSED refunds > accepts"));
         vitestRetries(repo, xml, retries, none);
+        vitestNames(xml, retries, none);
         Files.delete(xml);
         Files.delete(retries);
 
@@ -273,6 +274,137 @@ final class CheckTests {
         check("vitest retries: the check's reporter is a fixed text that writes vitest's own retry count where the check says, and names the tests as the JUnit reporter does",
                 reporter.contains("process.env.SDLC_VITEST_RETRIES") && reporter.contains("r.retryCount") && reporter.contains("base + ' > ' + t.name")
                 && reporter.contains("onFinished") && reporter.contains("onTestRunEnd") && !reporter.contains("${"));
+    }
+
+    /**
+     * CR6-1: vitest's JUnit reporter writes a name into an XML attribute, and reading it changes it
+     * (a line end, a tab or a line feed becomes a space; what XML 1.0 forbids or discourages is
+     * taken out before it is written). The check's account gives the name vitest gave, and is
+     * compared under exactly that, so an ordinary title with a line break does not leave the file
+     * without an account of its retries.
+     */
+    private static void vitestNames(Path xml, Path retries, Path none) throws IOException {
+        java.util.function.BiFunction<String, String, String> said = (report, json) -> {
+            try {
+                Files.writeString(xml, "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n<testsuites><testsuite name=\"app.test.js\">\n" + report + "</testsuite></testsuites>\n");
+                Files.writeString(retries, json);
+                return sdlc.check.Runners.vitestReport(xml, retries, "app.test.js");
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        };
+        String row = "{\"file\":\"app.test.js\",\"name\":\"%s\",\"state\":\"pass\",\"retryCount\":%s,\"retry\":null}";
+        // the audit's case, as Vitest 3.2.4 wrote it: test.each(['a\nb'])('handles %s', ...) beside a new test; the name holds a line feed in the attribute
+        String multiline = "<testcase classname=\"app.test.js\" name=\"handles a\nb\" time=\"0\">\n</testcase>\n<testcase classname=\"app.test.js\" name=\"feature\" time=\"0\">\n</testcase>\n";
+        check("vitest names: a title with a line break (test.each with \\n) is matched to its case, and the file says which passes were at the first try",
+                said.apply(multiline, "{\"tests\":[" + row.formatted("handles a\\nb", "0") + "," + row.formatted("feature", "0") + "]}").equals("PASSED handles a b; PASSED feature"));
+        check("vitest names: and a test of such a name that vitest ran again is marked so",
+                said.apply(multiline, "{\"tests\":[" + row.formatted("handles a\\nb", "1") + "," + row.formatted("feature", "0") + "]}").equals("PASSED handles a b (run again); PASSED feature"));
+        // names as vitest gave them, and as its JUnit report gives them once read: what Vitest 3.2.4 wrote, read by the check's parser
+        String[][] shapes = {
+                {"nl a\nb", "nl a b"},
+                {"tab a\tb", "tab a b"},
+                {"cr a\rb", "cr a b"},
+                {"crlf a\r\nb", "crlf a b"},
+                {"spaces a   b", "spaces a   b"},
+                {"  lead and trail  ", "  lead and trail  "},
+                {"lt <x>", "lt <x>"},
+                {"amp a & b", "amp a & b"},
+                {"dq \"q\"", "dq \"q\""},
+                {"sq 'q'", "sq 'q'"},
+                {"bs a\\b", "bs a\\b"},
+                {"ansi \u001B[31mred\u001B[0m", "ansi [31mred[0m"},
+                {"nul a\u0000b", "nul ab"},
+                {"ctl a\u0001\u007F\u0085\u009Fb", "ctl a\u0085b"},
+                {"emoji \uD83D\uDE00", "emoji \uD83D\uDE00"},
+                {"lone high \uD800 x", "lone high  x"},
+                {"lone low a\uDC00b", "lone low b"},
+                {"a > b inside", "a > b inside"},
+                {"repl \uFFFD x", "repl  x"},
+                {"nonchar \uFFFE x", "nonchar  x"},
+                {"fdd0 \uFDD0 x", "fdd0  x"},
+                {"vt \u000B ff \u000C", "vt  ff "},
+                {"ls \u2028 ps \u2029", "ls \u2028 ps \u2029"},
+                {"amp entity &amp; &#10;", "amp entity &amp; &#10;"},
+                {"plane1 nonchar \uD83F\uDFFE x", "plane1 nonchar  x"},
+                {"outer\nnested\t<&> >   inner  \"x\" > leaf 'y'\r\n", "outer nested <&> >   inner  \"x\" > leaf 'y' "},
+                {"dup x\ny", "dup x y"},
+                {"dup x y", "dup x y"},
+                {"each 'n\\tm' > t", "each 'n\\tm' > t"},
+                {"each 'o<p' > t", "each 'o<p' > t"},
+                {"obj { a: 'b\\nc' } arr 1,x\ty j %j", "obj { a: 'b\\nc' } arr 1,x y j %j"},
+                {"dollar 'v\\nw'", "dollar 'v\\nw'"},
+                {"ctl-low \u0001\uDC00 x", "ctl-low \uFFFD x"},
+                {"pair-low \uD83D\uDE00\uDC00 x", "pair-low \uFFFD x"},
+                {"low-low \uDC00\uDC00 x", "low-low\uFFFD x"},
+                {"start", "start"},
+                {"p16 \uDBFF\uDFFEy", "p16 "},
+                {"p16nl \uDBFF\uDFFF\nz", "p16nl \uDBFF\uDFFF z"},
+                {"p16 end \uDBFF\uDFFF", "p16 end \uDBFF\uDFFF"},
+                {"p16 pair \uDBFF\uDFFE\uD83D\uDE00", "p16 pair "},
+                {"p16 high \uDBFF\uDFFE\uD800 q", "p16 high q"},
+                {"p16 nl-low \uDBFF\uDFFE\n\uDC00 r", "p16 nl-low r"},
+                {"p15 \uDBBF\uDFFE s", "p15  s"},
+                {"nel \u0085 x", "nel \u0085 x"},
+                {"del \u007F", "del "},
+                {"high-high \uD800\uD800\uDC00 t", "high-high \uD800\uDC00 t"},
+                {"\uDC00 at start", " at start"},
+                {"x\uDBFF\uDFFF\uDFFF", "x\uFFFD"},
+                {"e\u0301 combining", "e\u0301 combining"},
+                {"\u00A0 nbsp", "\u00A0 nbsp"},
+                {"\t\n\r", "   "}
+        };
+        java.util.List<String> wrong = new java.util.ArrayList<>();
+        for (String[] shape : shapes) if (!shape[1].equals(sdlc.check.Runners.vitestReportedName(shape[0]))) wrong.add(shape[0] + " -> " + sdlc.check.Runners.vitestReportedName(shape[0]));
+        check("vitest names: each title shape is compared under the change vitest's JUnit reporter and the XML parser make to it " + wrong, wrong.isEmpty());
+        // a name vitest writes so that no XML parser can read its report (a lone low surrogate takes a reference's ';' along): no account of it either
+        check("vitest names: a name whose report would not be XML has no name in it",
+                sdlc.check.Runners.vitestReportedName("amp-low &\uDC00x") == null && sdlc.check.Runners.vitestReportedName("lt-low <\uDC00") == null);
+        check("vitest names: and an account that names one is not used",
+                said.apply(multiline, "{\"tests\":[" + row.formatted("amp-low &\\udc00x", "0") + "," + row.formatted("feature", "0") + "]}")
+                        .endsWith("[retries not known: vitest's account of its tests names a test that its JUnit report cannot write as XML]"));
+        // two titles that the report writes alike: the report has two cases of the name, and the name is not told apart (the check says so of the name, see Witness)
+        String dup = "<testcase classname=\"app.test.js\" name=\"dup x\ny\"></testcase>\n<testcase classname=\"app.test.js\" name=\"dup x y\"></testcase>\n";
+        check("vitest names: two titles the report writes alike are both of the name, and a retry of either marks both",
+                said.apply(dup, "{\"tests\":[" + row.formatted("dup x\\ny", "0") + "," + row.formatted("dup x y", "0") + "]}").equals("PASSED dup x y; PASSED dup x y")
+                && said.apply(dup, "{\"tests\":[" + row.formatted("dup x\\ny", "1") + "," + row.formatted("dup x y", "0") + "]}").equals("PASSED dup x y (run again); PASSED dup x y (run again)"));
+        String one = "<testcase classname=\"app.test.js\" name=\"dup x y\"></testcase>\n";
+        check("vitest names: an account with more tests of a name than the report has cases of it does not say which it is",
+                said.apply(one, "{\"tests\":[" + row.formatted("dup x\\ny", "0") + "," + row.formatted("dup x y", "0") + "]}")
+                        .equals("PASSED dup x y [retries not known: vitest's account of its tests names more tests dup x y than its JUnit report lists]"));
+        // a very long title is compared; one longer than the check reads makes the account unusable, never a wrong match
+        String longName = "L".repeat(100_000);
+        String longCase = "<testcase classname=\"app.test.js\" name=\"" + longName + "\"></testcase>\n";
+        check("vitest names: a title of 100000 characters is matched",
+                said.apply(longCase, "{\"tests\":[" + row.formatted(longName, "1") + "]}").equals("PASSED " + longName + " (run again)"));
+        String tooLong = "L".repeat(1_000_001);
+        check("vitest names: a longer one than the check compares makes the account unusable, with why",
+                said.apply(longCase, "{\"tests\":[" + row.formatted(tooLong, "0") + "]}").endsWith("[retries not known: vitest's account of its tests names a test longer than 1000000 characters]"));
+        // any code units at all: the transformation never throws, and what it gives an XML parser could have read
+        java.util.Random random = new java.util.Random(61);
+        char[] alphabet = {'a', ' ', '&', '<', '>', '"', '\'', ';', '\n', '\r', '\t', '\u0000', '\u0001', '\u001b', '\u007f', '\u0085', '\u009f', '\ufdd0', '\ufffd', '\ufffe', '\uffff',
+                '\ud800', '\udbff', '\udbbf', '\udc00', '\udfff', '\udffe', '\u2028', 'x'};
+        boolean steady = true;
+        for (int i = 0; i < 3000 && steady; i++) {
+            StringBuilder b = new StringBuilder();
+            for (int k = random.nextInt(24); k > 0; k--) b.append(alphabet[random.nextInt(alphabet.length)]);
+            try {
+                String got = sdlc.check.Runners.vitestReportedName(b.toString());
+                if (got != null) for (int k = 0; k < got.length(); k++) {
+                    char c = got.charAt(k);
+                    boolean pair = Character.isHighSurrogate(c) && k + 1 < got.length() && Character.isLowSurrogate(got.charAt(k + 1));
+                    if (pair) k++;
+                    else if (Character.isSurrogate(c) || (c < 0x20) || c == 0xFFFE || c == 0xFFFF) steady = false;
+                }
+            } catch (RuntimeException e) {
+                steady = false;
+            }
+        }
+        check("vitest names: any code units give a name without a lone surrogate or a character XML forbids, or none, and never an error", steady);
+        // a backslash is a folder's separator only on Windows: elsewhere it is part of a name, and another file is not taken for this one
+        Files.writeString(xml, "<testsuites><testsuite name=\"dir\\app.test.js\"><testcase classname=\"dir\\app.test.js\" name=\"t\"/></testsuite></testsuites>");
+        String other = sdlc.check.Runners.vitestReport(xml, none, "dir/app.test.js");
+        check("vitest names: a report of dir\\app.test.js is of dir/app.test.js on Windows only", Proc.WINDOWS ? other.startsWith("PASSED t") : other.startsWith("no result"));
     }
 
     private static void reactor(Path repo) throws IOException {

@@ -313,11 +313,20 @@ that writes for each test its file, its name as the JUnit reporter writes it, it
 many times Vitest ran it again (`result.retryCount`), to a file in that folder. It runs in Vitest's
 own process, which runs your configuration and tests already, so it can do nothing they cannot;
 what it writes is read as untrusted input (a regular file, at most 50 MB, strict JSON in its shape;
-nothing in it is used as a path). A test Vitest ran again is then read as Surefire's
+nothing in it is used as a path). Its names are compared with the JUnit report's as that report
+gives them once read: Vitest writes a name into an XML attribute and takes out what XML 1.0 does
+not allow or discourages (control characters, a lone surrogate, and with a lone low surrogate the
+character before it), and reading an attribute makes each line end and tab a space. The check
+makes the same change to each name before it compares, so a title with a line break
+(`test.each(['a\nb'])`) is matched. Two titles that come out alike are one name, which is not told
+apart (see Limits). A title Vitest writes so that its report is not XML at all (an `&` or a `<`
+just before a lone low surrogate) leaves the run without a report: could not be judged, with why.
+A test Vitest ran again is then read as Surefire's
 reruns are. A test the JUnit report lists without a mark that Vitest did not run (after a
 `bail`) is read as skipped. Where a run does not say which tests passed at the first try (the
 reporter's file is missing or cannot be read, it does not name a test the JUnit report lists as
-passed, or a version of Vitest gives a test retries and does not count them), the file is judged by
+passed or names more tests of a name than the report lists, or a version of Vitest gives a test
+retries and does not count them), the file is judged by
 its failures alone: one line, could not be judged, with why, and every difference among its reports
 said beside it. Vitest keeps a cache of its own (the results of earlier runs, by which it orders the
 test files) under `node_modules/.vite` of the folder it runs in, which for the copies is the
