@@ -209,6 +209,23 @@ final class JavaGuardTests {
         expect("git config into a chosen file, short", shell("git config -f .git/sdlc/mandate-approvals.json probe.value yes"), Decision.Kind.DENY);
         expect("git config into a chosen file, shortened option", shell("git config --fil x.cfg probe.value yes"), Decision.Kind.DENY);
         expect("git config read of a chosen file ok", shell("git config --file x.cfg --get probe.value"), Decision.Kind.ALLOW);
+        // an action taken back by its negation leaves git's default, which sets: only known options, written in full, each action once
+        expect("git config read taken back", shell("git config --get --no-get core.hooksPath /dev/null"), Decision.Kind.DENY);
+        expect("git config list taken back, into a file", shell("git config --list --no-list --file .agent/proof.cfg proof.value changed"), Decision.Kind.DENY);
+        expect("git config unset taken back", shell("git config --unset --no-unset core.fsmonitor /tmp/program"), Decision.Kind.DENY);
+        // the operand of an option is not the subcommand
+        expect("git config file named get", shell("git config --file get --file .git/config core.hooksPath /tmp/replacement"), Decision.Kind.DENY);
+        expect("git config file named list", shell("git config --file list --file .agent/proof.cfg proof.value changed"), Decision.Kind.DENY);
+        expect("git config default named get", shell("git config --default get core.hooksPath /tmp/replacement"), Decision.Kind.DENY);
+        expect("git config two actions", shell("git config --get --add core.hooksPath /tmp/x"), Decision.Kind.DENY);
+        expect("git config shortened read option", shell("git config --ge core.hooksPath"), Decision.Kind.DENY);
+        expect("git config unknown option", shell("git config --fixed-value core.hooksPath /tmp/x"), Decision.Kind.DENY);
+        expect("git config subcommand set of a protected key", shell("git config set core.hooksPath /tmp/x"), Decision.Kind.DENY);
+        expect("git config subcommand get ok", shell("git config get core.hooksPath"), Decision.Kind.ALLOW);
+        expect("git config list ok", shell("git config --list --show-origin"), Decision.Kind.ALLOW);
+        expect("git config plain set ok", shell("git config --local core.autocrlf false"), Decision.Kind.ALLOW);
+        expect("git config unset of a plain key ok", shell("git config --unset branch.x.merge"), Decision.Kind.ALLOW);
+        expect("git config unset of a protected key", shell("git config --unset core.hooksPath"), Decision.Kind.DENY);
         // the files of the index written under a folder of the command's choosing: the approval record in the git folder
         expect("git checkout-index with a prefix", shell("git checkout-index -f --prefix=.git/sdlc/ -- mandate-approvals.json"), Decision.Kind.DENY);
         expect("git checkout-index with a shortened prefix", shell("git checkout-index --pre=out/ -a"), Decision.Kind.DENY);

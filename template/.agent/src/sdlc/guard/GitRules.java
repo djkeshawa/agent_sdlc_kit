@@ -143,38 +143,69 @@ final class GitRules {
         return name.length() > 2 && name.startsWith("--") && option.startsWith(name);
     }
 
+    // git config, by a list of what is allowed. A list of what is refused cannot be complete: git takes options in any
+    // order, shortened, negated (--get --no-get sets), grouped, and with operands that look like other things (--file get).
+    // So only these options, written out in full, are known; anything else is refused.
+    private static final Set<String> CONFIG_SCOPE = Set.of("--local", "--global", "--system", "--worktree");
+    private static final Set<String> CONFIG_READ = Set.of("--get", "--get-all", "--get-regexp", "--list", "-l");
+    private static final Set<String> CONFIG_WRITE = Set.of("--add", "--unset", "--unset-all", "--replace-all");
+    private static final Set<String> CONFIG_SHOW = Set.of("--show-origin", "--show-scope", "--name-only", "-z", "--null", "--bool", "--int", "--bool-or-int", "--path",
+            "--expiry-date", "--includes");
+    private static final Decision CONFIG_UNKNOWN = Decision.deny("uses a form of `git config` the guard does not know, so it cannot tell a read from a change. "
+            + "Write the options out in full, each once: `git config --get <key>`, `git config --list`, `git config <key> <value>`.");
+
     private static Decision config(List<String> rest) {
-        // git reads options up to "--" only: what follows are the key and its value, whatever they look like
-        // (git config -- core.hooksPath --get sets the key to the text "--get")
-        int end = rest.indexOf("--");
-        List<String> before = end < 0 ? rest : rest.subList(0, end);
-        List<String> flags = before.stream().filter(a -> a.startsWith("-")).toList();
-        List<String> words = new ArrayList<>(before.stream().filter(a -> !a.startsWith("-")).toList());
-        if (end >= 0) words.addAll(rest.subList(end + 1, rest.size()));
-        String first = before.stream().filter(a -> !a.startsWith("-")).findFirst().orElse("");
-        boolean read = first.equals("get") || first.equals("list") || flags.stream().anyMatch(a -> a.equals("--get") || a.equals("--list") || a.equals("-l") || a.equals("--get-all") || a.equals("--get-regexp"));
-        boolean unset = first.equals("unset") || flags.stream().anyMatch(a -> a.startsWith("--unset"));
-        if (flags.stream().anyMatch(a -> longOption(a, "--global") || longOption(a, "--system"))) return read ? Decision.allow() : Decision.deny("changes git settings outside this repository.");
+        List<String> words = new ArrayList<>(); // the subcommand, the key, the value: never an option or an option's operand
+        boolean file = false, outside = false, subcommandPossible = true;
+        int reads = 0, writes = 0;
+        String subcommand = "";
+        for (int i = 0; i < rest.size(); i++) {
+            String a = rest.get(i);
+            if (a.equals("--")) { // git reads options up to here only: what follows are the key and its value, whatever they look like
+                words.addAll(rest.subList(i + 1, rest.size()));
+                break;
+            }
+            if (!a.startsWith("-") || a.equals("-")) {
+                // the first word, before any key, may be a subcommand of newer git (get, list, set, unset, ...)
+                if (subcommandPossible && words.isEmpty() && Set.of("get", "list", "set", "unset", "edit", "remove-section", "rename-section").contains(a)) subcommand = a;
+                words.add(a);
+                continue;
+            }
+            if (CONFIG_SCOPE.contains(a)) outside |= a.equals("--global") || a.equals("--system");
+            else if (CONFIG_READ.contains(a)) reads++;
+            else if (CONFIG_WRITE.contains(a)) writes++;
+            else if (CONFIG_SHOW.contains(a) || a.startsWith("--type=")) continue;
+            else if (a.equals("--file") || a.equals("-f") || a.equals("--default") || a.equals("--type")) {
+                if (i + 1 >= rest.size()) return CONFIG_UNKNOWN;
+                file |= !a.equals("--default") && !a.equals("--type");
+                i++; // its operand is a file name or a value, never the subcommand or the key
+            } else if (a.startsWith("--file=") || a.startsWith("--default=")) file |= a.startsWith("--file=");
+            else if (a.equals("-lz") || a.equals("-zl")) reads++;
+            else return CONFIG_UNKNOWN; // shortened, negated, grouped, or an option that edits or removes: not known, refused
+        }
+        if (subcommand.equals("edit") || subcommand.equals("remove-section") || subcommand.equals("rename-section")) {
+            return Decision.deny("opens git settings in an editor, or removes or renames a whole section of them, protected keys included. Set single keys instead.");
+        }
+        if (subcommand.equals("get") || subcommand.equals("list")) reads++;
+        if (subcommand.equals("set") || subcommand.equals("unset")) writes++;
+        if (reads > 1 || reads > 0 && writes > 0) return CONFIG_UNKNOWN; // which of the two git would do is not for the guard to guess
+        boolean read = reads == 1;
+        if (read) return Decision.allow();
+        if (outside) return Decision.deny("changes git settings outside this repository.");
         // a file of the command's choosing is written like any git settings file, and may be a file the guard protects
-        if (!read && flags.stream().anyMatch(a -> longOption(a, "--file") || a.matches("-[A-Za-z]*f.*"))) {
-            return Decision.deny("writes git settings into a file of the command's choosing, which the guard does not check. Set the key in the repository's own settings.");
-        }
-        // a whole section at once takes its protected keys with it (core.hooksPath lives in [core]); an editor can write anything
-        if (first.equals("remove-section") || first.equals("rename-section") || flags.stream().anyMatch(a -> longOption(a, "--remove-section") || longOption(a, "--rename-section"))) {
-            return Decision.deny("removes or renames a whole section of git settings, protected keys included. Change single keys instead.");
-        }
-        if (first.equals("edit") || flags.stream().anyMatch(a -> longOption(a, "--edit") || a.matches("-[A-Za-z]*e[A-Za-z]*"))) {
-            return Decision.deny("opens git settings in an editor, where the guard cannot see what is written. Set single keys instead.");
-        }
-        for (int i = 0; i < words.size(); i++) {
-            String a = words.get(i);
+        if (file) return Decision.deny("writes git settings into a file of the command's choosing, which the guard does not check. Set the key in the repository's own settings.");
+        boolean unset = subcommand.equals("unset") || rest.stream().anyMatch(a -> a.equals("--unset") || a.equals("--unset-all"));
+        List<String> keys = subcommand.isEmpty() ? words : words.subList(1, words.size());
+        boolean oneKeyRead = writes == 0 && keys.size() == 1; // git config <key> prints the key
+        for (int i = 0; i < keys.size(); i++) {
+            String a = keys.get(i);
             String k = a.toLowerCase(Locale.ROOT);
-            if (runsProgram(k) && !read && !unset && i + 1 < words.size() && !harmlessProgram(words.get(i + 1))) {
+            if (runsProgram(k) && !unset && i + 1 < keys.size() && !harmlessProgram(keys.get(i + 1))) {
                 return Decision.deny("`" + a + "` makes git run a program the guard cannot check.");
             }
             if (k.startsWith("core.hookspath") || k.startsWith("user.") || k.startsWith("credential") || k.startsWith("url.") || k.startsWith("remote.")
                     || k.startsWith("alias.") || k.startsWith("include.") || k.startsWith("includeif.")) {
-                return read || rest.size() == 1 ? Decision.allow() : Decision.deny("changes git hooks, identity, credentials, remotes, aliases or config includes.");
+                return oneKeyRead ? Decision.allow() : Decision.deny("changes git hooks, identity, credentials, remotes, aliases or config includes.");
             }
         }
         return Decision.allow();
