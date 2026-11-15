@@ -580,7 +580,15 @@ Claude Code, in `.claude/settings.json`:
     assumption, `pytestmark` or a pending test at the start of its statement (the line's start,
     or after `;`, `{`, `}` or the end of a comment), not an argument, a value or a lambda's body
     (`f(it.skip('x', ...))`, `x = @Disabled`, `() -> assumeTrue(false)`, `assertThrows(...,
-    () -> assumeTrue(false))` are notes); `pytest.param(..., marks=...)` at the start of its line,
+    () -> assumeTrue(false))` are notes), and at the line's own level: read from the line's start,
+    outside every parenthesis or bracket the line opened and after none it closes that it did not
+    open, outside a brace it opened for a value (after `->`, `=>`, `=` or `return`), and outside
+    every string, character literal, text block, template literal, regular expression or comment
+    the line opened (`String fixture = "{ @Disabled class Example {} }";`, `assertThrows(...,
+    () -> { assumeTrue(false); })`, `runInSandbox(function () { it.skip('x', ...) })` and
+    `Runnable r = () -> { assumeTrue(false); };` are notes; `@Test void t() { assumeTrue(false); }`
+    is sure). A line that begins inside something an earlier line opened does not show it: what
+    the line opens, read alone, decides; `pytest.param(..., marks=...)` at the start of its line,
     or after `[`, a comma or a `(` that opens no call (an element of a list or a tuple); an
     assumption also ends its statement (`;`, `}`, a comment or the line's end after its closing
     parenthesis);
@@ -638,8 +646,10 @@ Claude Code, in `.claude/settings.json`:
     (`skip_slow = pytest.mark.skip(...)`, `item.add_marker(pytest.mark.skip(...))`), or in a string;
   - a sure form that does not stand on its own: an argument, a value or a lambda's body
     (`f(it.skip('x', ...))`, `x = @Disabled`, `Runnable later = () -> assumeTrue(false)`,
-    `assertThrows(TestAbortedException.class, () -> assumeTrue(false))`), or after a word or a
-    quote on its statement (`see @Disabled`, `"it.skip('a', ...)"` in a string);
+    `assertThrows(TestAbortedException.class, () -> assumeTrue(false))`), inside a parenthesis, a
+    bracket, a value's brace, a literal or a comment the line opened, though a `{` or a `;` stands
+    before it there (`"{ @Disabled class Example {} }"`, `f(() -> { assumeTrue(false); })`), or
+    after a word or a quote on its statement (`see @Disabled`, `"it.skip('a', ...)"` in a string);
   - a sure form after a condition on its line (`if (x) assumeTrue(false)`, `cond && it.skip('x',
     ...)`; the text as written decides, so a condition's word in a string or a comment before it
     counts too: `describe('when signed in', () => { it.skip('x', ...) })` on one line is a note), or

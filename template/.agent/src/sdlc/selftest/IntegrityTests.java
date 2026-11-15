@@ -329,7 +329,9 @@ final class IntegrityTests {
         check("integrity: @Disabled after a comment on the same line is still found", count(scan(repo), "test switched off") == 1);
         reset(repo);
         write(repo, "src/app.test.ts", "it('a', () => { expect(1).toBe(1) })\nconst s = `${it.skip('b', () => {})}`\n");
-        check("integrity: it.skip( inside the ${...} of a template string is code", count(scan(repo), "test switched off") == 1);
+        // it is a value inside a literal the line opens, no statement of its own (see the gate): found, as a note
+        check("integrity: it.skip( inside the ${...} of a template string is read: a note, not hidden", count(scan(repo), "may switch a test off") == 1
+                && count(scan(repo), "test switched off") == 0);
         Files.delete(repo.resolve("src/app.test.ts"));
         reset(repo);
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("    private int helper", "    // a note about @Disabled and it.skip( in a comment\n    private int helper"));
@@ -459,9 +461,10 @@ final class IntegrityTests {
                 Integrity.lintedSwitch("const r = /'/; it.skip('a', () => { expect(false).toBe(true); }); const x = 'ok';")
                 && Integrity.lintedSwitch("const r = /x\\//; it.skip('b', () => {})")
                 && Integrity.lintedSwitch("* 2; it.skip('c', () => {})")
-                && Integrity.lintedSwitch("`; it.skip('d', () => {}); const y = `")
-                && Integrity.lintedSwitch("#f = 1; it.skip('e', () => {})")
-                && Integrity.lintedSwitch("    String t = \"\"\"; @Disabled class X {} //\""));
+                && Integrity.lintedSwitch("#f = 1; it.skip('e', () => {})"));
+        // a line that begins inside a literal an earlier line opened does not show it: what it opens, as read alone, is a literal to it (see the gate)
+        check("integrity: a switch after a quote that opens a literal on the line, as read alone, is found as a note",
+                Integrity.lintedNote("`; it.skip('d', () => {}); const y = `") && Integrity.lintedNote("    String t = \"\"\"; @Disabled class X {} //\""));
         // audit round 6: the written reading decides what is sure; a comment between a switch's words is seen by the code only: a note
         check("integrity: a comment between @ and the name, and a declaration assigned to a name, are found as notes",
                 Integrity.lintedNote("@/* a */Disabled") && Integrity.lintedNote("#f = it.skip('e', () => {})"));
@@ -839,6 +842,7 @@ final class IntegrityTests {
             {"@§", "Disabled(\"x\")"}, {"@§", "org.junit.Ignore"}, {"@§", "pytest.mark.skip(reason='x')"}, {"@§", "pytest.mark.skipif"}, {"@§", "unittest.skip('x')"}, {"pytestmark = §", "pytest.mark.skip"},
             {"    pytest.param(1, marks=§),", "pytest.mark.skip"}, {"pytestmark = [pytest.mark.slow, §]", "pytest.mark.skip"}, {"it(§);", "'x'"}};
         List<String> grown = List.of("§ || X", "§ && X", "§ if X else Y", "§ ? a : b", "§ === X", "(§ or X)", "f(§)", "§.with_args(x)");
+        List<String> blocks = new java.util.ArrayList<>();
         for (String[] form : forms) {
             String plain = form[0].replace("§", form[1]);
             int cut = form[0].indexOf('§') + form[1].length();
@@ -856,6 +860,17 @@ final class IntegrityTests {
             }
             // audit round 6: a form that is a deferred body, an argument or a value is not a statement of its own
             for (String around : List.of("() -> %s", "() => %s", "f(%s)", "x = %s", "return %s")) variants.add(List.of(String.format(around, plain.strip())));
+            // the closing review: nor is one in a literal, or in a block that is an argument or a value, though a brace or a semicolon stands before it there
+            String q = !plain.contains("\"") ? "\"" : !plain.contains("'") ? "'" : "`";
+            for (String around : List.of(q + "{ §; }" + q, "String fixture = " + q + "{ § }" + q + ";", "const t = `${x} { § }`;", "f(() -> { §; })", "x(function () { § })",
+                    "assertThrows(TestAbortedException.class, () -> { §; });", "Runnable r = () -> { §; };", "const later = () => { § };", "return { § };", "// { § }",
+                    "/* { § } */", "# { § }")) {
+                variants.add(List.of(around.replace("§", plain.strip())));
+            }
+            // and a block at the reading's own level is one: the form after { is a statement there, as it was
+            if (!placed && !plain.startsWith("pytestmark") && !plain.startsWith("it(")) {
+                for (String around : List.of("{ § }", "@Test void t() { § }", "  } { § }")) blocks.add(around.replace("§", plain.strip()));
+            }
             // a comment, a quoted operator or a quoted override inside what the proof reads changes what it means as written
             variants.add(List.of(placed && form[0].equals("@§") ? "@/* || X */" + form[1] : form[0].replace("§", form[1] + " /* || X */")));
             if (!form[1].startsWith("'")) { // a title in quotes with an operator inside is still a title
@@ -878,6 +893,18 @@ final class IntegrityTests {
             check("integrity: " + plain + " is sure, on one, two or three lines, and no variant of it that is not whole, or not a statement or a declaration of its own, is",
                     Integrity.lintedSwitch(plain) && stillSure.isEmpty() && notSure.isEmpty());
         }
+        List<String> blockNotSure = blocks.stream().filter(b -> !Integrity.lintedSwitch(b)).toList();
+        if (!blockNotSure.isEmpty()) System.out.println("    not sure in a block: " + blockNotSure);
+        check("integrity: each statement form is sure in a block of the reading's own level, a method's body among them (" + blocks.size() + " lines)",
+                blocks.size() == 45 && blockNotSure.isEmpty());
+        // the closing review's two shapes, through the lint and through the check: a fixture's text and an assumption an exception assertion catches
+        String fixture = "String fixture = \"{ @Disabled class Example {} }\";", caught = "assertThrows(TestAbortedException.class, () -> { assumeTrue(false); });";
+        check("integrity: a switch's words in a string with a brace before them, or in a lambda's block passed to a call, are a note, not sure",
+                Integrity.lint(List.of(fixture)).equals(noted(fixture)) && Integrity.lint(List.of(caught)).equals(noted(caught))
+                && Integrity.lint(List.of("@Test void t() {", "    " + fixture, "    " + caught, "}")).sure().isEmpty());
+        check("integrity: their neighbours, the annotation and the assumption as statements of their own, in a block or a method's body, are sure",
+                Integrity.lintedSwitch("String fixture = \"x\"; @Disabled class Example {}") && Integrity.lintedSwitch("@Test void t() { assumeTrue(false); }")
+                && Integrity.lintedSwitch("{ assumeTrue(false); }") && Integrity.lint(List.of("@Test void t() {", "    assumeTrue(false);")).sure().size() == 1);
     }
 
     /**
@@ -1183,6 +1210,21 @@ final class IntegrityTests {
         Files.delete(repo.resolve("src/test/java/demo/Round6Test.java"));
         Said held = checkWith(Map.of("selftest-runner", "true", "stop-hook", "true"));
         check("integrity, through the stop hook: those notes alone do not block", held.code() == 0 && held.err().isBlank());
+        reset(repo);
+        // the closing review: a fixture's text with a brace before a switch's words, and an assumption in a lambda's block an exception assertion
+        // catches, are notes through sdlc check --no-run and the stop hook, beside a plain one in a method's body, which fails
+        String fixture = "String fixture = \"{ @Disabled class Example {} }\";", caught = "assertThrows(TestAbortedException.class, () -> { assumeTrue(false); });";
+        write(repo, "src/test/java/demo/FixtureTest.java", "class FixtureTest {\n    @Test void reads() {\n        " + fixture + "\n        " + caught + "\n    }\n}\n");
+        Said honest = checkWith(Map.of("no-run", "true"));
+        Said honestHook = checkWith(Map.of("selftest-runner", "true", "stop-hook", "true"));
+        check("integrity, through sdlc check --no-run and the stop hook: a switch's words in a string after a brace, or in a lambda's block passed to a call, are 2 notes, exit 0",
+                honest.code() == 0 && honest.out().contains("note     may switch a test off: src/test/java/demo/FixtureTest.java  the run of the file judges it: " + fixture + "\n")
+                && honest.out().contains("note     may switch a test off: src/test/java/demo/FixtureTest.java  the run of the file judges it: " + caught + "\n")
+                && !honest.out().contains("PROBLEM") && honestHook.code() == 0 && honestHook.err().isBlank());
+        write(repo, "src/test/java/demo/FixtureTest.java", "class FixtureTest {\n    @Test void reads() { assumeTrue(false); }\n}\n");
+        Said plain = checkWith(Map.of("no-run", "true"));
+        check("integrity, through sdlc check --no-run: its neighbour, an assumption that is a statement of a method's body, is a problem, exit 1",
+                plain.code() == 1 && plain.out().contains("PROBLEM  test switched off: src/test/java/demo/FixtureTest.java  @Test void reads() { assumeTrue(false); }\n"));
         reset(repo);
     }
 

@@ -538,7 +538,9 @@ public final class Integrity {
      * The gate (see sure): declared, an annotation after nothing on its statement but complete
      * annotations and modifiers; decorated, a decorator after decorators only, from the start of
      * its reading; a statement, at the start of its statement (not an argument, a value or a
-     * lambda's body), and held by nothing: no condition before it on its reading (Read.held), nor
+     * lambda's body) and at the reading's own level (not inside a parenthesis or a bracket the
+     * reading opened, nor after one it closes that it did not open, nor inside a literal or a
+     * comment: see starts), and held by nothing: no condition before it on its reading (Read.held), nor
      * an added line just before the reading that opens a block or a statement under a condition,
      * or ends where an expression goes on (see holdsNext); an element likewise, or an element of a
      * list. Annotations and decorators take no condition, so they are not held.
@@ -802,8 +804,11 @@ public final class Integrity {
             K_PYTESTMARK = 8, K_PARAM = 9, K_MARK = 10, K_ASSUME = 11, K_BODY = 12, K_ABORT = 13;
     /** Where a form must stand to be sure (see sure). */
     private static final int AS_STATEMENT = 0, AS_ANNOTATION = 1, AS_DECORATOR = 2, AS_ELEMENT = 3;
-    /** What may stand before a token on its reading (see starts): nothing on its statement; annotations and modifiers; decorators from the start. */
-    private static final int AT_STATEMENT = 1, AT_DECLARATION = 2, AT_DECORATOR = 4;
+    /**
+     * What may stand before a token on its reading (see starts): nothing on its statement; annotations and modifiers; decorators from the start.
+     * OUTSIDE: the token is outside every literal and comment of the reading, at any depth.
+     */
+    private static final int AT_STATEMENT = 1, AT_DECLARATION = 2, AT_DECORATOR = 4, OUTSIDE = 8;
     private static final Set<String> MODIFIERS = Set.of("public", "protected", "private", "static", "final", "abstract", "default", "synchronized");
 
     /** One reading being judged: its text, the budget of its calls, the forms judged on it and the most any of them holds. */
@@ -859,9 +864,14 @@ public final class Integrity {
      *   a statement    (a declaration, an option, an assumption, pytestmark =, a pending test) at
      *                  the start of its statement: the reading's start, or after ;, {, } or the
      *                  end of a comment, nothing between (not after =, (, ->, =>, return, a word
-     *                  or a quote: an argument, a value, a deferred body);
+     *                  or a quote: an argument, a value, a deferred body), and at the reading's
+     *                  own level: outside every parenthesis or bracket it opened (not in a lambda
+     *                  or a block passed to a call: f(() -> { assumeTrue(false); })), after none it
+     *                  closes that it did not open, outside every literal it opened ("{ @Disabled
+     *                  class X {} }") and outside a comment (see starts);
      *   an element     (pytest.param with marks=) at the start of its statement, or an element of
-     *                  a list or a group that is no call's argument list;
+     *                  a list or a group that is no call's argument list, outside every literal
+     *                  and comment;
      * and, a statement and an element, held by nothing: no condition before it on its reading
      * (Read.held), and the added line before the reading's first one does not hold it (see
      * holdsNext). Annotations and decorators take no condition: Java has no conditional
@@ -885,16 +895,33 @@ public final class Integrity {
      * when nothing stands before it on its statement (the reading's start, or ;, {, } or the end
      * of a comment before it), AT_DECLARATION when only complete annotations and modifiers do,
      * AT_DECORATOR when only complete annotations do, from the reading's start. Any other token
-     * (a word, a quote, an operator) ends all three until the next ;, { or }. Strings are not
-     * skipped: a quote is a token like any other, since a reading cannot tell every quote for
-     * certain. Linear: each character is passed once, and the arguments of the annotations it
-     * reads are bounded by a budget of its own.
+     * (a word, a quote, an operator) ends all three until the next ;, { or }.
+     *
+     * Only where a statement of the reading's own level can stand: the reading read from its start
+     * shows where it is nested, and nothing else does (it does not know what an earlier line
+     * opened). So a token stands nowhere (none of the three) inside a parenthesis or a bracket the
+     * reading opened (an argument: a lambda's or a function's block passed to a call is inside its
+     * parentheses, so ;, { and } there start no statement of the reading's level), inside a brace
+     * it opened for a value (a lambda's block body, a value assigned or returned: see valueBrace), after a
+     * parenthesis or a bracket it closes that it did not open (it began inside a call an earlier
+     * line opened), inside a string, a character literal, a text block or a template literal the
+     * reading opened (to its end, or to the reading's end where it does not close there), and in a
+     * comment (// or a # that no name follows, to the reading's end; a block comment to its end).
+     * A regular expression where a value begins is a literal too (see regexEnd), so a quote in it
+     * opens none; a quote the reading cannot tell for certain otherwise makes what follows a
+     * literal: a note, never sure. OUTSIDE marks a token outside every literal and
+     * comment, at any depth (see element). Linear: each character is passed once, and the
+     * arguments of the annotations it reads are bounded by a budget of its own.
      */
     private static byte[] starts(CharSequence s) {
         int n = s.length();
         byte[] out = new byte[n + 1];
         Budget budget = new Budget(n);
         int state = AT_STATEMENT | AT_DECLARATION | AT_DECORATOR;
+        int depth = 0; // the parentheses, brackets and value braces the reading opened and has not closed
+        boolean lost = false; // the reading closed a parenthesis or a bracket it did not open: where its tokens stand is not known from it
+        StringBuilder braces = new StringBuilder(); // each brace the reading opened and has not closed: v for a value's (see valueBrace), b for a block's
+        boolean unclosed = false; // a regular expression did not end on the reading
         int i = 0;
         while (i < n) {
             char c = s.charAt(i);
@@ -902,9 +929,45 @@ public final class Integrity {
                 i++;
                 continue;
             }
-            out[i] = (byte) state;
             char next = i + 1 < n ? s.charAt(i + 1) : '\0';
-            if (c == ';' || c == '{' || c == '}') {
+            if (c == '/' && next == '/' || c == '#' && !Character.isJavaIdentifierStart(next)) break; // a comment to the reading's end: no token there stands anywhere
+            if (c == '/' && next == '*') {
+                int end = indexOf(s, "*/", i + 2);
+                if (end < 0) break;
+                i = end + 2;
+                state = AT_STATEMENT | AT_DECLARATION;
+                continue;
+            }
+            out[i] = (byte) (depth == 0 && !lost ? state | OUTSIDE : OUTSIDE);
+            // a regular expression is looked for until one does not end on the reading: then none after it is (each is read once, see regexEnd)
+            int regex = c == '/' && !unclosed ? regexEnd(s, i) : -1;
+            if (c == '/' && regex == UNCLOSED) unclosed = true;
+            if (c == '"' || c == '\'' || c == '`' || regex > 0) {
+                // a literal: what is inside it is no token of the reading
+                i = regex > 0 ? regex : literalEnd(s, i);
+                state = 0;
+            } else if (c == '(' || c == '[') {
+                depth++;
+                state = 0;
+                i++;
+            } else if (c == ')' || c == ']') {
+                if (depth == 0) lost = true;
+                else depth--;
+                state = 0;
+                i++;
+            } else if (c == '{') {
+                boolean value = valueBrace(s, i);
+                braces.append(value ? 'v' : 'b');
+                if (value) depth++;
+                state = AT_STATEMENT | AT_DECLARATION;
+                i++;
+            } else if (c == '}') {
+                // a brace an earlier line opened closes a block of its own: what follows starts a statement, as it does after any block
+                if (!braces.isEmpty() && braces.charAt(braces.length() - 1) == 'v') depth--;
+                if (!braces.isEmpty()) braces.setLength(braces.length() - 1);
+                state = AT_STATEMENT | AT_DECLARATION;
+                i++;
+            } else if (c == ';') {
                 state = AT_STATEMENT | AT_DECLARATION;
                 i++;
             } else if (c == '*' && next == '/') {
@@ -929,6 +992,105 @@ public final class Integrity {
             }
         }
         return out;
+    }
+
+    /**
+     * The index after a regular expression literal whose / is at at (JavaScript: a / where a
+     * value begins, after (, ,, =, :, [, !, &, |, ?, {, }, ;, return or the reading's start; read
+     * to the / that ends it, outside a character class, a backslash escaping the character after
+     * it), so that a quote in it opens no literal; -1 where no value begins there (a division),
+     * UNCLOSED where none ends on the reading: the caller then looks for none after it, so that a
+     * reading is passed once however many slashes it holds (a quote after them is a literal then:
+     * a note, never sure).
+     */
+    private static final int UNCLOSED = -2;
+
+    private static int regexEnd(CharSequence s, int at) {
+        int n = s.length(), p = at - 1;
+        while (p >= 0 && blank(s.charAt(p))) p--;
+        boolean value = p < 0 || "(,=:[!&|?{};".indexOf(s.charAt(p)) >= 0;
+        if (!value && p >= 5 && s.subSequence(p - 5, p + 1).toString().equals("return") && (p < 6 || !word(s.charAt(p - 6)))) value = true;
+        if (!value || at + 1 >= n || s.charAt(at + 1) == '/' || s.charAt(at + 1) == '*') return -1;
+        boolean inClass = false;
+        for (int i = at + 1; i < n; i++) {
+            char c = s.charAt(i);
+            if (c == '\\') i++;
+            else if (c == '[') inClass = true;
+            else if (c == ']') inClass = false;
+            else if (c == '/' && !inClass) return i + 1;
+        }
+        return UNCLOSED;
+    }
+
+    /**
+     * True when the brace at at opens a value, not a block of the reading's level: a lambda's
+     * block body (after -> or =>), a value assigned (after = that is no comparison) or returned.
+     * What stands in it is no statement of the reading's own level (see starts): Runnable r = ()
+     * -> { assumeTrue(false); } assumes nothing until r runs. A block after ) (a method's, an if's,
+     * a function's), after a word (else, try, a class) or after another brace is a block.
+     */
+    private static boolean valueBrace(CharSequence s, int at) {
+        int p = at - 1;
+        while (p >= 0 && blank(s.charAt(p))) p--;
+        if (p < 0) return false;
+        char c = s.charAt(p), before = p > 0 ? s.charAt(p - 1) : ' ';
+        if (c == '>') return before == '-' || before == '=';
+        if (c == '=') return "=!<>".indexOf(before) < 0;
+        int w = p;
+        while (w >= 0 && word(s.charAt(w))) w--;
+        return p - w == 6 && s.subSequence(w + 1, p + 1).toString().equals("return");
+    }
+
+    /**
+     * The index after the literal whose opening quote is at at, or the reading's end where it does
+     * not close on it: a string or a character literal ("...", '...'), a text block or a Python
+     * string in three quotes, a template literal (`...`, whose ${...} holds code, read with its
+     * own literals to its closing brace). A backslash escapes the character after it. Linear: the
+     * characters of a literal are passed once, those of a template's code too.
+     */
+    private static int literalEnd(CharSequence s, int at) {
+        int n = s.length();
+        char q = s.charAt(at);
+        if (q != '`' && at + 2 < n && s.charAt(at + 1) == q && s.charAt(at + 2) == q) {
+            int end = indexOf(s, String.valueOf(q).repeat(3), at + 3);
+            return end < 0 ? n : end + 3;
+        }
+        int i = at + 1;
+        while (i < n) {
+            char c = s.charAt(i);
+            if (c == '\\') i += 2;
+            else if (c == q) return i + 1;
+            else if (q == '`' && c == '$' && i + 1 < n && s.charAt(i + 1) == '{') i = templateCodeEnd(s, i + 2);
+            else i++;
+        }
+        return n;
+    }
+
+    /** The index after the closing brace of a template literal's ${...} whose code starts at at, its own literals and braces read; the reading's end where it does not close. */
+    private static int templateCodeEnd(CharSequence s, int at) {
+        int n = s.length(), braces = 1, i = at;
+        while (i < n) {
+            char c = s.charAt(i);
+            if (c == '"' || c == '\'' || c == '`') {
+                i = literalEnd(s, i);
+                continue;
+            }
+            if (c == '{') braces++;
+            else if (c == '}' && --braces == 0) return i + 1;
+            i++;
+        }
+        return n;
+    }
+
+    /** Where text first stands in s at or after from, or -1. */
+    private static int indexOf(CharSequence s, String text, int from) {
+        int n = s.length(), m = text.length();
+        outer:
+        for (int i = Math.max(0, from); i + m <= n; i++) {
+            for (int k = 0; k < m; k++) if (s.charAt(i + k) != text.charAt(k)) continue outer;
+            return i;
+        }
+        return -1;
     }
 
     /**
@@ -959,9 +1121,10 @@ public final class Integrity {
         }
     }
 
-    /** An element of a list (pytest.param in a parametrize list): at its statement's start, after [ or a comma, or in a group that is no call's. */
+    /** An element of a list (pytest.param in a parametrize list): at its statement's start, after [ or a comma, or in a group that is no call's; never inside a literal or a comment. */
     private static boolean element(Read r, int at) {
         if (r.startsAt(at, AT_STATEMENT)) return true;
+        if (!r.startsAt(at, OUTSIDE)) return false;
         CharSequence s = r.s;
         int p = at - 1;
         while (p >= 0 && blank(s.charAt(p))) p--;
