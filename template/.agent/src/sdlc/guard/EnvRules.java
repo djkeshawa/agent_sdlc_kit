@@ -13,7 +13,7 @@ import sdlc.core.Config;
 /** Shell rules about environment variables: setting the ones that steer the guard, git or the build, and printing them. */
 public final class EnvRules {
     private static final Set<String> ENV_DUMP = Set.of("env", "printenv", "set", "export", "declare", "compgen");
-    private static final Pattern GUARD_VAR = Pattern.compile("^(SDLC_|GIT_DIR=|GIT_WORK_TREE=|GIT_CONFIG|HUSKY=0|SKIP=)");
+    private static final Pattern GUARD_VAR = Pattern.compile("^(SDLC_|GIT_DIR=|GIT_WORK_TREE=|GIT_COMMON_DIR=|GIT_INDEX_FILE=|GIT_OBJECT_DIRECTORY=|GIT_CONFIG|HUSKY=0|SKIP=)");
     private static final Pattern IDENTITY_VAR = Pattern.compile("^(JIRA_|CONFLUENCE_|ATLASSIAN_|JENKINS_|SONAR_|GH_TOKEN|GITHUB_TOKEN|GH_HOST|GH_CONFIG_DIR|COPILOT_)");
     private static final Pattern PS_ENV = Pattern.compile("(?is)^\\$env:([A-Za-z_][A-Za-z0-9_]*)(?:=(.*))?$");
     private static final Pattern PROGRAM_VAR = Pattern.compile("^(GIT_SSH|GIT_SSH_COMMAND|GIT_EXTERNAL_DIFF|GIT_ASKPASS|SSH_ASKPASS|GIT_EDITOR|GIT_SEQUENCE_EDITOR|GIT_PAGER|GIT_EXEC_PATH"

@@ -226,6 +226,27 @@ final class JavaGuardTests {
         expect("git config plain set ok", shell("git config --local core.autocrlf false"), Decision.Kind.ALLOW);
         expect("git config unset of a plain key ok", shell("git config --unset branch.x.merge"), Decision.Kind.ALLOW);
         expect("git config unset of a protected key", shell("git config --unset core.hooksPath"), Decision.Kind.DENY);
+        // git stops reading options at the first key: what follows it is the value or a pattern, whatever it looks like
+        expect("git config value -l after the key", shell("git config core.hooksPath -l"), Decision.Kind.DENY);
+        expect("git config --list after key and value", shell("git config core.hooksPath /tmp/new-hooks -l"), Decision.Kind.DENY);
+        expect("git config into a file, -l after the value", shell("git config --file .agent/proof.cfg proof.value changed -l"), Decision.Kind.DENY);
+        expect("git config into the approval record, -l after the value", shell("git config --file .git/sdlc/mandate-approvals.json proof.value changed -l"), Decision.Kind.DENY);
+        expect("git config identity, --list after the value", shell("git config user.name somebody --list"), Decision.Kind.DENY);
+        expect("git config mixed case key, -l after it", shell("git config CoRe.HooKsPaTh /tmp/x -l"), Decision.Kind.DENY);
+        expect("git config program key, --unset after the value", shell("git config -- core.fsmonitor /tmp/program --unset"), Decision.Kind.DENY);
+        expect("git config program key, value --unset-all", shell("git config -- core.fsmonitor /tmp/program --unset-all"), Decision.Kind.DENY);
+        expect("git config program key, --get after the value", shell("git config core.pager ./x.sh --get"), Decision.Kind.DENY);
+        expect("git config set subcommand, -l after the value", shell("git config set core.hooksPath /tmp/x -l"), Decision.Kind.DENY);
+        // reads with no action: one key, in any scope or file
+        expect("git config read of a global key ok", shell("git config --global user.name"), Decision.Kind.ALLOW);
+        expect("git config read of a key in a file ok", shell("git config --file .git/config core.autocrlf"), Decision.Kind.ALLOW);
+        expect("git config global write", shell("git config --global user.name somebody"), Decision.Kind.DENY);
+        expect("git config subcommand get --all ok", shell("git config get --all remote.origin.url"), Decision.Kind.ALLOW);
+        expect("git config list of a file without includes ok", shell("git config --file .git/config --no-includes --list"), Decision.Kind.ALLOW);
+        expect("git config read with a value pattern ok", shell("git config --get core.pager -l"), Decision.Kind.ALLOW);
+        // git read from another repository's folders
+        expect("GIT_COMMON_DIR", shell("GIT_COMMON_DIR=/tmp/other.git git config proof.value changed"), Decision.Kind.DENY);
+        expect("GIT_INDEX_FILE", shell("GIT_INDEX_FILE=/tmp/other.index git status"), Decision.Kind.DENY);
         // the files of the index written under a folder of the command's choosing: the approval record in the git folder
         expect("git checkout-index with a prefix", shell("git checkout-index -f --prefix=.git/sdlc/ -- mandate-approvals.json"), Decision.Kind.DENY);
         expect("git checkout-index with a shortened prefix", shell("git checkout-index --pre=out/ -a"), Decision.Kind.DENY);
