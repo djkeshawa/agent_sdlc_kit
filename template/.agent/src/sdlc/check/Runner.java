@@ -41,18 +41,27 @@ interface Runner {
      * is the code itself (it does not compile, it does not load); otherwise the reason is the
      * surroundings (no build tool, a timeout, a name that cannot be passed on), and nothing is
      * known about the code.
+     *
+     * retriesUnknown: why the run does not say which of its passed cases passed at the first try
+     * and which only when the runner ran them again, or null when it says so of each (Case.retried).
+     * A run that does not say it still gives its cases: a failure is a failure whatever the retries,
+     * but no pass of it can be taken for a pass at the first try (see Witness.blind).
      */
-    record FileRun(List<JUnitXml.Case> cases, String problem, boolean broken) {
+    record FileRun(List<JUnitXml.Case> cases, String problem, boolean broken, String retriesUnknown) {
         FileRun(List<JUnitXml.Case> cases, String problem) {
-            this(cases, problem, false);
+            this(cases, problem, false, null);
+        }
+
+        FileRun(List<JUnitXml.Case> cases, String problem, boolean broken) {
+            this(cases, problem, broken, null);
         }
 
         static FileRun failed(String problem) {
-            return new FileRun(List.of(), problem, false);
+            return new FileRun(List.of(), problem, false, null);
         }
 
         static FileRun broken(String problem) {
-            return new FileRun(List.of(), problem, true);
+            return new FileRun(List.of(), problem, true, null);
         }
     }
 }

@@ -248,7 +248,7 @@ final class Witness {
         Map<String, FileRun> out = new LinkedHashMap<>();
         for (Map.Entry<String, FileRun> e : runner.run(dir, files, timeout).entrySet()) {
             FileRun r = e.getValue();
-            out.put(e.getKey(), r == null ? null : new FileRun(r.cases().stream().sorted(ORDER).toList(), r.problem(), r.broken()));
+            out.put(e.getKey(), r == null ? null : new FileRun(r.cases().stream().sorted(ORDER).toList(), r.problem(), r.broken(), r.retriesUnknown()));
         }
         return out;
     }
@@ -362,6 +362,8 @@ final class Witness {
             String shared = runner.sharedBySides(change, head.dir, f);
             sharedIn.put(f, shared);
             FileRun o = edited.contains(f) ? seen.of(Side.OLD, f).get(0) : null;
+            // a file whose runs do not say which passes were at the first try is judged by its failures alone (see blind): nothing to run again for
+            if (blind(seen, f) != null) continue;
             Map<String, Object> r = read(f, edited.contains(f), o, b, a, shared, shown(gave(o) ? o.cases() : List.of(), a.cases()), by);
             for (Map.Entry<String, Object> x : r.entrySet()) if (x.getValue() instanceof Verdict v && v.kind() == Kind.SENSITIVE) candidates.computeIfAbsent(f, k -> new LinkedHashSet<>()).add(x.getKey());
             if (edited.contains(f) && gave(o)) {
@@ -424,7 +426,48 @@ final class Witness {
         }
         Fourth fourth = fourth(change, runner, wanted, short1, sides, runs, timeout, seen);
         if (!alone.isEmpty() && runs > 1 && !sensitive.isEmpty()) restore(change, runner, base, files); // as the caller's other checks expect it
-        return decide(files, edited, ended, candidates, notAlone, named, skipsIn, sharedIn, switched, fourth, seen, by);
+        // a file of which a run, of any way, did not say which passes were at the first try is judged by its failures alone (see blind)
+        Set<String> blinded = new LinkedHashSet<>();
+        for (String f : files) if (!ended.containsKey(f) && blind(seen, f) != null) blinded.add(f);
+        named.keySet().removeAll(blinded);
+        skipsIn.keySet().removeAll(blinded);
+        switched.removeAll(blinded);
+        return decide(files, edited, ended, candidates, notAlone, blinded, named, skipsIn, sharedIn, switched, fourth, seen, by);
+    }
+
+    /**
+     * Why a file's runs do not say which of its passes were at the first try and which only when
+     * the runner ran them again (see FileRun.retriesUnknown), from any run of it of any way that
+     * gave a report, or null where each says it.
+     */
+    private static String blind(Seen seen, String f) {
+        for (Side s : Side.values()) for (FileRun r : seen.of(s, f)) if (gave(r) && r.retriesUnknown() != null) return r.retriesUnknown();
+        return null;
+    }
+
+    /**
+     * What is said of a file of which a run did not say which passes were at the first try (see
+     * blind): a pass there may be one only when the runner ran the test again, which every rule
+     * of the check reads as no result (it is not a pass before the change, nor after, nor a test
+     * that ran as it was), and nothing tells which pass it is. So no pass of the file is read:
+     * what is said is its failures after the change, which are failures whatever the retries (a
+     * test that failed in a run after the change, a file that did not compile or load there),
+     * and one line for the file, could not be judged, with why. That line answers for nothing:
+     * every difference among the file's reports is said beside it (see reconcile).
+     */
+    private static List<Verdict> blindly(String f, String why, List<FileRun> afters, Map<String, String> sh, String by) {
+        List<Verdict> out = new ArrayList<>();
+        Set<String> keys = new java.util.TreeSet<>();
+        for (FileRun a : afters) if (gave(a)) for (JUnitXml.Case c : a.cases()) keys.add(key(c));
+        for (String k : keys) {
+            Verdict fails = failsAfter(f, k, afters, sh, by);
+            if (fails != null) out.add(fails.with(Cover.of(List.of(k), Side.BEFORE, Side.AFTER)));
+        }
+        Verdict unbuilt = brokenAfter(f, afters, by);
+        if (unbuilt != null) out.add(unbuilt);
+        out.add(new Verdict(f, "", Kind.UNKNOWN, why + ": so it is not known whether a test of the file passed at the first try or only when it was run again, and nothing is "
+                + "said of the file but its failures after the change", by, Cover.NONE));
+        return out;
     }
 
     /**
@@ -449,7 +492,7 @@ final class Witness {
      * and last what no rule answered for (see reconcile).
      */
     private static List<Verdict> decide(List<String> files, Set<String> edited, Map<String, Verdict> ended, Map<String, Set<String>> candidates, Set<String> notAlone,
-            Map<String, Names> named, Map<String, Skips> skipsIn, Map<String, String> sharedIn, List<String> switched, Fourth fourth, Seen seen, String by) {
+            Set<String> blinded, Map<String, Names> named, Map<String, Skips> skipsIn, Map<String, String> sharedIn, List<String> switched, Fourth fourth, Seen seen, String by) {
         List<Verdict> out = new ArrayList<>();
         Map<String, Map<String, String>> shownIn = new LinkedHashMap<>();
         Map<String, Set<String>> passingIn = new LinkedHashMap<>(); // per file: the cases that pass on both sides in every combination (see broken)
@@ -467,6 +510,10 @@ final class Witness {
             shownIn.put(f, sh);
             Ledger ledger = ledger(f, ed, seen, sh);
             ledgers.put(f, ledger);
+            if (blinded.contains(f)) {
+                out.addAll(blindly(f, blind(seen, f), afters, sh, by));
+                continue;
+            }
             List<Map<String, Object>> reads = new ArrayList<>();
             List<Count> counts = new ArrayList<>();
             for (FileRun o : olds) {

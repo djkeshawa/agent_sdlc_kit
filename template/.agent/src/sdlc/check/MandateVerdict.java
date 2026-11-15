@@ -222,6 +222,7 @@ final class MandateVerdict {
         List<JUnitXml.Case> cases = cases(run, path, name);
         if (cases.isEmpty()) return State.UNKNOWN;
         if (cases.stream().anyMatch(c -> c.status() == Status.FAILED || c.status() == Status.ERRORED)) return State.VIOLATED;
+        if (run.retriesUnknown() != null) return State.UNKNOWN; // the run does not say which passes were at the first try
         return cases.stream().allMatch(c -> c.status() == Status.PASSED && !c.retried()) ? State.SATISFIED : State.UNKNOWN; // a pass only when run again is not one result
     }
 

@@ -137,7 +137,8 @@ final class CheckTests {
                     </testsuite>
                 </testsuites>
                 """);
-        check("check: vitest's entry for a file without tests stays a failed case", sdlc.check.Runners.vitestReport(xml, "src/app.test.ts").equals("ERRORED app"));
+        Path none = repo.resolve("no-retries.json"); // where the check's reporter wrote nothing
+        check("check: vitest's entry for a file without tests stays a failed case", sdlc.check.Runners.vitestReport(xml, none, "src/app.test.ts").equals("ERRORED app"));
         Files.writeString(xml, """
                 <?xml version="1.0" encoding="UTF-8" ?>
                 <testsuites name="vitest tests" tests="2" failures="1" errors="0" time="0.004">
@@ -153,9 +154,14 @@ final class CheckTests {
                     </testsuite>
                 </testsuites>
                 """);
+        Path retries = repo.resolve("retries.json");
+        Files.writeString(retries, "{\"tests\":[{\"file\":\"src/refund.test.ts\",\"name\":\"refunds > rejects\",\"state\":\"fail\",\"retryCount\":0,\"retry\":null},"
+                + "{\"file\":\"src/refund.test.ts\",\"name\":\"refunds > accepts\",\"state\":\"pass\",\"retryCount\":0,\"retry\":null}]}");
         check("check: a test whose failure starts with vitest's words for an empty file is still a failure",
-                sdlc.check.Runners.vitestReport(xml, "src/refund.test.ts").equals("ERRORED refunds > rejects; PASSED refunds > accepts"));
+                sdlc.check.Runners.vitestReport(xml, retries, "src/refund.test.ts").equals("ERRORED refunds > rejects; PASSED refunds > accepts"));
+        vitestRetries(repo, xml, retries, none);
         Files.delete(xml);
+        Files.delete(retries);
 
         // Maven: the build passes and no report names the class: the class ran and has no tests. A failed build says nothing.
         if (Proc.WINDOWS) return; // the stand-in for Maven below is a shell script
@@ -185,6 +191,88 @@ final class CheckTests {
         try (Stream<Path> s = Files.walk(m)) {
             for (Path p : s.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(p);
         }
+    }
+
+    /**
+     * CR5-1: vitest's JUnit report writes a test that failed and passed when vitest ran it again as
+     * an ordinary pass. The check's own reporter says, per test, how often vitest ran it again; a
+     * run whose account is missing, does not fit the report or does not count retries does not
+     * say which passes were at the first try, once for the file.
+     */
+    private static void vitestRetries(Path repo, Path xml, Path retries, Path none) throws IOException {
+        // the report Vitest 3.2.4 wrote for the old guard on the new code: it failed at the first try and passed when run again
+        Files.writeString(xml, """
+                <?xml version="1.0" encoding="UTF-8" ?>
+                <testsuites name="vitest tests" tests="2" failures="0" errors="0" time="0.009944472">
+                    <testsuite name="app.test.js" timestamp="2026-11-15T00:35:40.898Z" hostname="h" tests="2" failures="0" errors="0" skipped="0" time="0.009944472">
+                        <testcase classname="app.test.js" name="guard" time="0.008255058">
+                        </testcase>
+                        <testcase classname="app.test.js" name="group &gt; plain" time="0.001">
+                        </testcase>
+                    </testsuite>
+                </testsuites>
+                """);
+        java.util.function.Function<String, String> said = json -> {
+            try {
+                Files.writeString(retries, json);
+                return sdlc.check.Runners.vitestReport(xml, retries, "app.test.js");
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        };
+        String guard = "{\"file\":\"app.test.js\",\"name\":\"guard\",\"state\":\"pass\",\"retryCount\":%s,\"retry\":%s}";
+        String plain = "{\"file\":\"app.test.js\",\"name\":\"group > plain\",\"state\":\"pass\",\"retryCount\":0,\"retry\":null}";
+        check("vitest retries: a test vitest ran again before it passed is marked so, beside one that passed at the first try",
+                said.apply("{\"tests\":[" + guard.formatted("1", "1") + "," + plain + "]}").equals("PASSED guard (run again); PASSED group > plain"));
+        check("vitest retries: a test that passed at the first try is not marked, also where it was given retries",
+                said.apply("{\"tests\":[" + guard.formatted("0", "2") + "," + plain + "]}").equals("PASSED guard; PASSED group > plain"));
+        check("vitest retries: a version of vitest that does not count retries says nothing of a pass where none was given (no retries, no count)",
+                said.apply("{\"tests\":[" + guard.formatted("null", "null") + "," + plain + "]}").equals("PASSED guard; PASSED group > plain"));
+        check("vitest retries: where a test was given retries and vitest does not count them, the run says so, once for the file",
+                said.apply("{\"tests\":[" + guard.formatted("null", "1") + "," + plain + "]}")
+                        .equals("PASSED guard; PASSED group > plain [retries not known: this version of vitest does not say whether a test passed only when it ran it again]"));
+        check("vitest retries: where the check's reporter wrote nothing, no pass of the run is taken for one at the first try",
+                sdlc.check.Runners.vitestReport(xml, none, "app.test.js").equals("PASSED guard; PASSED group > plain [retries not known: vitest did not write the check's account of its "
+                        + "tests (its reporter did not load or did not finish)]"));
+        check("vitest retries: an account that does not name a passed test of the report does not say it either",
+                said.apply("{\"tests\":[" + plain + "]}").equals("PASSED guard; PASSED group > plain [retries not known: vitest's account of its tests does not name a test its JUnit "
+                        + "report lists as passed (guard)]"));
+        check("vitest retries: an account of another file says nothing of this one",
+                said.apply("{\"tests\":[" + guard.formatted("1", "1").replace("app.test.js", "other.test.js") + "," + plain + "]}").contains("[retries not known: vitest's account of its tests does not name"));
+        check("vitest retries: a test the JUnit report lists without a mark that vitest did not run (after a bail) is skipped",
+                said.apply("{\"tests\":[" + guard.formatted("null", "null").replace("\"pass\"", "null") + "," + plain + "]}").equals("SKIPPED guard; PASSED group > plain"));
+        check("vitest retries: one vitest says failed where the report says passed is not taken for a pass at the first try",
+                said.apply("{\"tests\":[" + guard.formatted("0", "null").replace("\"pass\"", "\"fail\"") + "," + plain + "]}").contains("[retries not known: vitest's account of its tests "
+                        + "and its JUnit report disagree about guard]"));
+        // what the reporter wrote is hostile input: anything but exactly its shape is not used, and says why
+        for (String bad : new String[] {"{\"tests\":[" + guard.formatted("1.5", "1") + "]}", "{\"tests\":[" + guard.formatted("-1", "1") + "]}", "{\"tests\":{}}", "[]", "{\"tests\":[1]}",
+                "{\"tests\":[{\"file\":\"app.test.js\",\"name\":7}]}", "{\"tests\":[], \"tests\":[]}", "{\"tests\":[]} trailing", "not json"}) {
+            check("vitest retries: an account that is not of the reporter's shape is not used: " + bad,
+                    said.apply(bad).startsWith("PASSED guard; PASSED group > plain [retries not known: vitest's account of its tests cannot be read ("));
+        }
+        if (!Proc.WINDOWS) {
+            Path elsewhere = repo.resolve("elsewhere.json");
+            Files.writeString(elsewhere, "{\"tests\":[" + guard.formatted("0", "0") + "," + plain + "]}");
+            Files.delete(retries);
+            Files.createSymbolicLink(retries, elsewhere);
+            check("vitest retries: an account that is a link is not followed", sdlc.check.Runners.vitestReport(xml, retries, "app.test.js").contains("[retries not known: vitest did not write"));
+            Files.delete(retries);
+            Files.delete(elsewhere);
+        }
+        // a test that failed every time vitest ran it fails, marked as run again; a skipped one needs no account
+        Files.writeString(xml, """
+                <testsuites><testsuite name="app.test.js">
+                    <testcase classname="app.test.js" name="guard"><failure message="expected 0 to be 1" type="AssertionError">x</failure></testcase>
+                    <testcase classname="app.test.js" name="off"><skipped/></testcase>
+                </testsuite></testsuites>
+                """);
+        check("vitest retries: a test that failed every time vitest ran it fails, and a run with no pass needs no account",
+                said.apply("{\"tests\":[" + guard.formatted("1", "1").replace("\"pass\"", "\"fail\"") + "]}").equals("FAILED guard (run again); SKIPPED off")
+                && sdlc.check.Runners.vitestReport(xml, none, "app.test.js").equals("FAILED guard; SKIPPED off"));
+        String reporter = sdlc.check.Runners.vitestReporter();
+        check("vitest retries: the check's reporter is a fixed text that writes vitest's own retry count where the check says, and names the tests as the JUnit reporter does",
+                reporter.contains("process.env.SDLC_VITEST_RETRIES") && reporter.contains("r.retryCount") && reporter.contains("base + ' > ' + t.name")
+                && reporter.contains("onFinished") && reporter.contains("onTestRunEnd") && !reporter.contains("${"));
     }
 
     private static void reactor(Path repo) throws IOException {
@@ -238,6 +326,8 @@ final class CheckTests {
         write(repo, "checks/inv.t", INV);
         write(repo, "checks/wob.t", WOB);
         write(repo, "checks/code.t", CODE);
+        write(repo, "checks/guarded.t", GUARDED);
+        write(repo, "checks/r4.t", R4);
         write(repo, ".gitignore", "ignored/\n");
         git(repo, "init", "-q", "-b", "main");
         commit(repo, "base");
@@ -654,6 +744,7 @@ final class CheckTests {
         unlisted(repo);
         lost(repo);
         everyDifference(repo);
+        retries(repo);
 
         // a test that went to another changed file: each file is judged by its own counts, and a title is not read to pair them
         write(repo, "checks/judged.t", JUDGED.replace("goes too: pass\n", ""));
@@ -1752,6 +1843,58 @@ final class CheckTests {
                 laterOnly.contains(unsteadyLine) && !laterOnly.contains("(after the change: passed, failed)") && laterAlone.contains(unsteadyLine)
                 && laterAlone.contains("the file was reported differently from run to run, in ways " + NO_RULE + ": goes (after the change: passed, failed)"));
         write(repo, "checks/judged.t", JUDGED);
+    }
+
+    /** A test file of the base whose guard, on the code of the fix, fails at the first try and passes when the runner runs it again (vitest's retry). */
+    private static final String GUARDED = "guard: retried-with fixed\n";
+
+    /** A test file of the base with two tests; on the code of the fix the second passes only when the runner runs it again. */
+    private static final String R4 = "a: pass\nb: retried-with fixed\n";
+
+    /**
+     * The fifth audit: retries a runner does not report (CR5-1).
+     */
+    private static void retries(Path repo) throws IOException {
+        // CR5-1: the guard replaced by a vacuous test beside a sensitive one. Its old version fails at the first try on the code of the fix and passes
+        // when run again: not a clean pass. The fourth run's own line says the old guard could not be judged
+        write(repo, "checks/guarded.t", "guard: pass\nnew feature: needs fixed\n");
+        String replaced = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("retries: a guard replaced beside a sensitive test, whose old version passes on the change only when run again, is not a clean pass",
+                replaced.contains("      checks/guarded.t  [self test]\n        the old tests could not all be judged on the code after the change: there the file as it was gave no clean "
+                        + "result, passed or failed, for one of them (not reported, reported more than once, skipped, or run again by the build with another result), so it is not known "
+                        + "whether the change broke the old test that passed before it (guard)")
+                && replaced.contains("        new feature\n") && code == 0);
+        write(repo, "checks/guarded.t", GUARDED);
+        // an honest new test that passes before the change only when run again: not said to pass before and after
+        write(repo, "tests/honest.t", "fix: retried-without fixed\n");
+        String honest = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("retries: a new test that passes before the change only when run again is not said to pass before and after",
+                honest.contains("      tests/honest.t  [self test]\n        fix: before the change the build ran it again and got another result\n")
+                && !honest.contains("so it does not test the change") && code == 0);
+        Files.delete(repo.resolve("tests/honest.t"));
+        // a run that does not say which passes were at the first try (a vitest that does not count retries): the file is judged by its failures only,
+        // with one line for the file, and a new test that passes on both sides there is not accused
+        write(repo, "tests/blind.t", "idle: pass\nalso idle: pass\nretries not said\n");
+        String blind = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("retries: a file whose runs do not say which passes were at the first try is not judged by its passes: one line for the file, and the check passes",
+                blind.contains("      tests/blind.t  [self test]\n        the stand-in runner does not say whether a test passed only when it ran it again: so it is not known whether a "
+                        + "test of the file passed at the first try or only when it was run again, and nothing is said of the file but its failures after the change\n")
+                && !blind.contains("so it does not test the change") && !blind.contains("        idle") && code == 0);
+        write(repo, "tests/blind.t", "idle: pass\nbroken: fail\nretries not said\n");
+        String blindFails = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("retries: a failure after the change in such a file is a failure all the same, and the check fails",
+                blindFails.contains("1 fails after the change\n      tests/blind.t  [self test]\n        broken: fails: expected something else\n")
+                && blindFails.contains("nothing is said of the file but its failures after the change") && code == 1);
+        Files.delete(repo.resolve("tests/blind.t"));
+        // the same for an edited file whose old version says it and whose new one does not: a test deleted is said by what no rule judged, not passed in silence
+        write(repo, "checks/r4.t", "a: pass\nretries not said\n");
+        String blindEdited = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("retries: in an edited file judged by its failures only, a test that is no longer reported is still said",
+                blindEdited.contains("nothing is said of the file but its failures after the change") && blindEdited.contains("b (as it was: passed; after the change: not reported)")
+                && !lostSaid(blindEdited) && code == 0);
+        write(repo, "checks/r4.t", R4);
+
+        write(repo, "prod.txt", "v1\nfixed\n");
     }
 
     /** A test file of the base with two nested classes that have a method of one name, the first of which the fix breaks. */

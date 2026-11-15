@@ -167,6 +167,11 @@ final class MandateFlowTests {
         String again = verdict();
         check("mandate: a scenario that passed only when the build ran it again is unknown, not passed",
                 again.contains("unknown   scenarios found, ran and passed: 0 of 1") && again.contains("gave different results when the build ran it again"));
+        // a run that does not say which passes were at the first try (a vitest that does not count retries): a pass there is not one result either
+        write(repo, "tests/fix.t", "fixed: needs fixed\nretries not said\n");
+        String untold = verdict();
+        check("mandate: a scenario that passed in a run that does not say whether it passed at the first try is unknown, not passed",
+                untold.contains("unknown   scenarios found, ran and passed: 0 of 1") && code == 0);
         // two tests whose names end alike are two tests, wherever a bracket stands in their names
         write(repo, "tests/fix.t", "one(a) > fixed: needs fixed\none(b) > fixed: needs fixed\n");
         String twoHomes = verdict();

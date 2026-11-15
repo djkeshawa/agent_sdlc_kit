@@ -28,17 +28,31 @@ public final class Runners {
         return said(new Maven().run(checkout, List.of(file), 120).get(file));
     }
 
-    /** For the self test: what the Vitest runner makes of a report vitest wrote and exited with 1, for one test file (its path in the project). */
-    public static String vitestReport(Path report, String file) throws IOException {
-        return said(Vitest.result(JUnitXml.read(report), file, null, 1, false, ""));
+    /**
+     * For the self test: what the Vitest runner makes of a report vitest wrote and exited with 1, for
+     * one test file (its path in the project), with what the check's own reporter wrote beside it
+     * (retries; a path that does not exist where it wrote nothing).
+     */
+    public static String vitestReport(Path report, Path retries, String file) throws IOException {
+        return said(Vitest.result(JUnitXml.read(report), file, null, 1, false, "", Vitest.Retries.read(retries)));
     }
 
-    /** A file's run in words: "no result: why", "ran, no tests", or each case as "STATUS name", joined by "; ". */
+    /** For the self test: the text of the check's own reporter for vitest (see Vitest.REPORTER). */
+    public static String vitestReporter() {
+        return Vitest.REPORTER;
+    }
+
+    /**
+     * A file's run in words: "no result: why", "ran, no tests", or each case as "STATUS name", with
+     * " (run again)" where the runner ran it again, joined by "; "; then, where the run does not say
+     * which passes were at the first try, " [retries not known: why]".
+     */
     private static String said(Runner.FileRun run) {
         if (run == null) return "no result";
         if (run.problem() != null) return "no result: " + run.problem();
         if (run.cases().isEmpty()) return "ran, no tests";
-        return String.join("; ", run.cases().stream().map(c -> c.status() + " " + c.name()).toList());
+        return String.join("; ", run.cases().stream().map(c -> c.status() + " " + c.name() + (c.retried() ? " (run again)" : "")).toList())
+                + (run.retriesUnknown() == null ? "" : " [retries not known: " + run.retriesUnknown() + "]");
     }
 
     static List<Runner> all() {
@@ -331,9 +345,9 @@ public final class Runners {
          * exactly as it writes a test's own failure, and no message or name tells the two apart, as a
          * test's author may write any of them.
          */
-        static FileRun result(List<JUnitXml.Case> cases, String name, String unreadable, int exit, boolean didNotLoad, String said) {
+        static FileRun result(List<JUnitXml.Case> cases, String name, String unreadable, int exit, boolean didNotLoad, String said, Retries retries) {
             List<JUnitXml.Case> mine = cases.stream().filter(c -> c.suite().replace('\\', '/').equals(name)).map(Runners::assertionOrError).toList();
-            if (!mine.isEmpty()) return new FileRun(mine, null);
+            if (!mine.isEmpty()) return retries.apply(mine, name);
             if (unreadable != null) return FileRun.failed("its report cannot be read (" + unreadable + ")");
             if (exit == 127) return FileRun.failed("node could not be started (is Node.js on the PATH?)");
             // vitest gave this file no result. That is broken code only when vitest says it could not load the file;
@@ -341,6 +355,164 @@ public final class Runners {
             // (and says so about this file: another file's syntax error says nothing about this one)
             if (didNotLoad) return FileRun.broken("did not load (vitest exit " + exit + ": " + said + ")");
             return FileRun.failed("gave no result (vitest exit " + exit + ": " + said + ")");
+        }
+
+        /** The environment variable that tells the check's reporter where to write. */
+        private static final String RETRIES_TO = "SDLC_VITEST_RETRIES";
+
+        /**
+         * The check's own reporter, run by vitest beside its JUnit reporter. Vitest's JUnit report
+         * writes a test that failed and then passed when vitest ran it again (the retry option of
+         * the test, of its group, or of the configuration: per test it wins over the configuration
+         * and the command line) as an ordinary passed case, and nothing in the report tells the
+         * two apart. Vitest itself knows: a test's result counts its retries (result.retryCount).
+         * This reporter writes, for each test of each file vitest ran, the file and the name as
+         * the JUnit reporter writes them (the path from the project's root; the names of the groups
+         * and the test joined by " > "), the test's state, how often vitest ran it again, and the
+         * retries it was given, as JSON, to the file named by SDLC_VITEST_RETRIES. It answers to the
+         * reporter calls of vitest 3 and earlier (onFinished) and of later versions
+         * (onTestRunEnd); what both write is the same.
+         *
+         * Its text is fixed: nothing of the repository goes into it, and it is written to a folder of
+         * the check's own outside the checkout. It runs in vitest's process, which already runs the
+         * project's configuration and the change's tests, so it can do nothing they cannot; what it
+         * writes is read as hostile input all the same (see Retries.read).
+         */
+        static final String REPORTER = """
+                // sdlc check: for each test vitest ran, its file, its name as the JUnit reporter writes it, its state and its retries
+                import { writeFileSync } from 'node:fs';
+                import { relative } from 'node:path';
+                export default class {
+                  onInit(ctx) { this.ctx = ctx; }
+                  onFinished(files) { this.write(files); }
+                  onTestRunEnd(modules) { this.write((modules || []).map((m) => (m && m.task) || m)); }
+                  write(files) {
+                    const to = process.env.SDLC_VITEST_RETRIES;
+                    if (!to) return;
+                    const root = this.ctx && this.ctx.config ? this.ctx.config.root : undefined;
+                    const tests = [];
+                    const count = (n) => (typeof n === 'number' ? n : null);
+                    const walk = (t, base, file) => {
+                      if (!t) return;
+                      const name = base ? base + ' > ' + t.name : String(t.name);
+                      if (t.type === 'suite') { for (const c of t.tasks || []) walk(c, name, file); return; }
+                      const r = t.result || {};
+                      tests.push({ file, name, state: typeof r.state === 'string' ? r.state : null, retryCount: count(r.retryCount), retry: count(t.retry) });
+                    };
+                    for (const f of files || []) {
+                      if (!f) continue;
+                      const file = root && f.filepath ? relative(root, f.filepath) : String(f.name);
+                      for (const t of f.tasks || []) walk(t, '', file);
+                    }
+                    writeFileSync(to, JSON.stringify({ tests }));
+                  }
+                }
+                """;
+
+        /** Why nothing of a run can be taken for a pass at the first try where vitest's own account of it is missing. */
+        private static final String NOT_WRITTEN = "vitest did not write the check's account of its tests (its reporter did not load or did not finish)";
+
+        /** The largest account of the retries that is read: it is written in a process that runs the change's code. */
+        private static final long MAX_RETRIES_BYTES = 50L * 1024 * 1024;
+
+        /**
+         * What the check's reporter wrote (see REPORTER): per file, per name, each test of that
+         * name as vitest ran it; or why it cannot be used (why), in which case no pass of the run is
+         * taken for a pass at the first try.
+         */
+        record Retries(Map<String, Map<String, List<Ran>>> files, String why) {
+            /** One test as vitest ran it: its state ("pass", "fail", "skip", "todo", or null where it did not run), how often it was run again, the retries it was given (null where vitest does not say). */
+            record Ran(String state, Long retryCount, Long retry) {}
+
+            static Retries unknown(String why) {
+                return new Retries(Map.of(), why);
+            }
+
+            /**
+             * Reads the account a run of the reporter wrote. It is hostile input: a regular file
+             * (a link is not followed), at most MAX_RETRIES_BYTES, strict JSON of exactly the shape
+             * the reporter writes, or it is not used. Nothing in it is used as a path or a command:
+             * its file names and test names are only compared with those of the JUnit report.
+             */
+            static Retries read(Path json) {
+                try {
+                    if (!Files.isRegularFile(json, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return unknown(NOT_WRITTEN);
+                    if (Files.size(json) > MAX_RETRIES_BYTES) return unknown("vitest's account of its tests is larger than " + (MAX_RETRIES_BYTES >> 20) + " MB");
+                    Object root = sdlc.util.Json.parseStrict(Files.readString(json));
+                    if (!(root instanceof Map<?, ?> top) || !(top.get("tests") instanceof List<?> tests)) throw new IllegalArgumentException("no list of tests");
+                    Map<String, Map<String, List<Ran>>> files = new LinkedHashMap<>();
+                    for (Object t : tests) {
+                        if (!(t instanceof Map<?, ?> m) || !(m.get("file") instanceof String file) || !(m.get("name") instanceof String name)) throw new IllegalArgumentException("a test without its file or name");
+                        Object state = m.get("state");
+                        if (state != null && !(state instanceof String)) throw new IllegalArgumentException("a state that is not a word");
+                        files.computeIfAbsent(file.replace('\\', '/'), k -> new LinkedHashMap<>()).computeIfAbsent(name, k -> new ArrayList<>())
+                                .add(new Ran((String) state, count(m.get("retryCount")), count(m.get("retry"))));
+                    }
+                    return new Retries(files, null);
+                } catch (IOException | RuntimeException e) {
+                    return unknown("vitest's account of its tests cannot be read (" + e.getMessage() + ")");
+                }
+            }
+
+            /** A count: null, or a whole number from 0 up. */
+            private static Long count(Object o) {
+                if (o == null) return null;
+                if (!(o instanceof Double d) || d < 0 || d > 1e9 || d != Math.floor(d)) throw new IllegalArgumentException("a count that is not a whole number");
+                return d.longValue();
+            }
+
+            /**
+             * The cases of one file (name: its path in the project) with what vitest said of each.
+             * A case vitest ran again is marked so (Case.retried), whatever its result. A case the
+             * JUnit report lists as passed is taken for a pass at the first try only where vitest
+             * says of it, by name, that it passed and how often it ran it again: where vitest
+             * gave a test retries and does not count them (a version without retryCount), or its
+             * account is missing or does not name the case, the run says why (retriesUnknown), once
+             * for the file. One the JUnit report lists without a mark that vitest did not run
+             * (skipped, a to-do, no result: a test after a bail) is skipped: it did not run.
+             */
+            FileRun apply(List<JUnitXml.Case> mine, String file) {
+                String unknown = null;
+                Map<String, List<Ran>> ran = why == null ? files.getOrDefault(file, Map.of()) : null;
+                List<JUnitXml.Case> out = new ArrayList<>();
+                for (JUnitXml.Case c : mine) {
+                    if (c.status() == JUnitXml.Status.SKIPPED) {
+                        out.add(c);
+                        continue;
+                    }
+                    if (ran == null) {
+                        if (c.status() == JUnitXml.Status.PASSED && unknown == null) unknown = why;
+                        out.add(c);
+                        continue;
+                    }
+                    List<Ran> same = ran.getOrDefault(c.name(), List.of());
+                    boolean again = same.stream().anyMatch(r -> r.retryCount() != null && r.retryCount() > 0);
+                    if (c.status() != JUnitXml.Status.PASSED) {
+                        out.add(again ? with(c, c.status(), true) : c);
+                        continue;
+                    }
+                    if (same.isEmpty()) {
+                        if (unknown == null) unknown = "vitest's account of its tests does not name a test its JUnit report lists as passed (" + c.name() + ")";
+                        out.add(c);
+                    } else if (same.stream().noneMatch(r -> "pass".equals(r.state()))) {
+                        if (same.stream().allMatch(r -> r.state() == null || r.state().equals("skip") || r.state().equals("todo"))) out.add(with(c, JUnitXml.Status.SKIPPED, again));
+                        else {
+                            if (unknown == null) unknown = "vitest's account of its tests and its JUnit report disagree about " + c.name();
+                            out.add(c);
+                        }
+                    } else {
+                        if (unknown == null && same.stream().anyMatch(r -> "pass".equals(r.state()) && r.retryCount() == null && r.retry() != null && r.retry() > 0)) {
+                            unknown = "this version of vitest does not say whether a test passed only when it ran it again";
+                        }
+                        out.add(again ? with(c, c.status(), true) : c);
+                    }
+                }
+                return new FileRun(out, null, false, unknown);
+            }
+
+            private static JUnitXml.Case with(JUnitXml.Case c, JUnitXml.Status status, boolean retried) {
+                return new JUnitXml.Case(c.suite(), c.name(), status, status == JUnitXml.Status.SKIPPED ? "" : c.type(), status == JUnitXml.Status.SKIPPED ? "" : c.message(), retried);
+            }
         }
 
         private static final Pattern SUPPORT_DIR = Pattern.compile("(^|.*/)(__tests__|__mocks__|__fixtures__|__snapshots__|fixtures|tests?)/.*");
@@ -455,15 +627,20 @@ public final class Runners {
                     for (String f : e.getValue()) out.put(f, FileRun.failed("vitest is not installed in the repository (run npm install there first)"));
                     continue;
                 }
-                Path report;
+                // a folder of the check's own, outside the checkout: the JUnit report, the check's reporter and what that reporter writes
+                Path tmp, report, retries;
                 try {
-                    report = Files.createTempFile("sdlc-vitest", ".xml");
+                    tmp = Files.createTempDirectory("sdlc-vitest");
+                    report = tmp.resolve("report.xml");
+                    retries = tmp.resolve("retries.json");
+                    Files.writeString(tmp.resolve("retries.mjs"), REPORTER);
                 } catch (IOException ex) {
                     for (String f : e.getValue()) out.put(f, FileRun.failed("no temporary file: " + ex.getMessage()));
                     continue;
                 }
                 try {
-                    List<String> cmd = new ArrayList<>(List.of("node", entry.toString(), "run", "--reporter=junit", "--outputFile=" + report));
+                    List<String> cmd = new ArrayList<>(List.of("node", entry.toString(), "run", "--reporter=junit", "--reporter=" + tmp.resolve("retries.mjs"),
+                            "--outputFile=" + report));
                     List<String> rel = e.getValue().stream().map(f -> e.getKey().isEmpty() ? f : f.substring(e.getKey().length() + 1)).toList();
                     if (rel.stream().anyMatch(r -> r.startsWith("-"))) {
                         // vitest would read such a name as an option
@@ -473,7 +650,7 @@ public final class Runners {
                     cmd.addAll(rel);
                     Set<String> didNotLoad = java.util.concurrent.ConcurrentHashMap.newKeySet();
                     LoadFailures reader = new LoadFailures(rel, didNotLoad); // one for both streams: vitest may name the file on one and the error on the other
-                    Proc p = Proc.runBuild(project, Map.of("CI", "1"), timeoutSeconds, reader, reader, cmd.toArray(new String[0]));
+                    Proc p = Proc.runBuild(project, Map.of("CI", "1", RETRIES_TO, retries.toString()), timeoutSeconds, reader, reader, cmd.toArray(new String[0]));
                     List<JUnitXml.Case> cases = new ArrayList<>();
                     String unreadable = null;
                     if (p.code() == 124) {
@@ -481,20 +658,17 @@ public final class Runners {
                         continue;
                     }
                     try {
-                        if (Files.size(report) > 0) cases.addAll(JUnitXml.read(report));
+                        if (Files.exists(report) && Files.size(report) > 0) cases.addAll(JUnitXml.read(report));
                     } catch (IOException ex) {
                         unreadable = ex.getMessage();
                     }
+                    Retries again = Retries.read(retries);
                     String said = tail(p.out() + "\n" + p.err(), 3).replaceAll("\\s+", " ");
                     for (int i = 0; i < rel.size(); i++) {
-                        out.put(e.getValue().get(i), result(cases, rel.get(i), unreadable, p.code(), didNotLoad.contains(rel.get(i)), said));
+                        out.put(e.getValue().get(i), result(cases, rel.get(i), unreadable, p.code(), didNotLoad.contains(rel.get(i)), said, again));
                     }
                 } finally {
-                    try {
-                        Files.deleteIfExists(report);
-                    } catch (IOException ignored) {
-                        // a stray temp file
-                    }
+                    deleteTree(tmp); // a stray folder at worst
                 }
             }
             return out;

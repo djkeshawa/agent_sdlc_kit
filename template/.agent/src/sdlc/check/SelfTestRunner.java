@@ -38,6 +38,10 @@ import sdlc.check.JUnitXml.Status;
  *   compile-later WORD  as needs WORD; where prod.txt holds the word, no file of the run compiles from the second run in that checkout on
  *   timeout-later WORD  as needs WORD; where prod.txt holds the word, the whole file gives no result from the second run in that checkout on
  *   error-varies WORD   passes where prod.txt holds the word; else throws, IllegalStateException in the first, third, ... run in that checkout and UnsupportedOperationException in the others
+ *   retried-with WORD   passes; where prod.txt holds the word, only when the runner ran it again (vitest's retry: a test that fails at the first try on that code)
+ *   retried-without WORD  passes; where prod.txt lacks the word, only when the runner ran it again
+ * A line "retries not said" (no ": ") makes the file's runs not say which passes were at the first try,
+ * as a version of vitest that does not count retries.
  * A name is reported as a script's string would give it: \' is a quote. A name with %i in it is
  * reported twice, with 1 and with 2 in its place (it.each, a parameterized method). A line
  * without ": " is not a case: it stands for the test's body. A name is reported as it is written,
@@ -148,7 +152,7 @@ final class SelfTestRunner implements Runner {
                     if (how[0].equals("pass-without") && has) continue; // a row the code no longer gives where it holds the word
                     if (how[0].equals("gone-later") && has && call > 1) continue;
                     Status s = switch (how[0]) {
-                        case "pass", "pass-with", "pass-later", "pass-without", "gone-later", "pass-retried" -> Status.PASSED;
+                        case "pass", "pass-with", "pass-later", "pass-without", "gone-later", "pass-retried", "retried-with", "retried-without" -> Status.PASSED;
                         case "fail", "fail-retried" -> Status.FAILED;
                         case "error-retried" -> Status.ERRORED;
                         case "fails-later" -> has && call > 1 ? Status.FAILED : Status.PASSED;
@@ -173,7 +177,7 @@ final class SelfTestRunner implements Runner {
                         suite = shown.substring(0, shown.indexOf("::"));
                         shown = shown.substring(shown.indexOf("::") + 2);
                     }
-                    boolean retried = how[0].endsWith("-retried");
+                    boolean retried = how[0].endsWith("-retried") || how[0].equals("retried-with") && has || how[0].equals("retried-without") && !has;
                     for (String one : shown.contains("%i") ? List.of(shown.replace("%i", "1"), shown.replace("%i", "2")) : List.of(shown)) {
                         String thrown = how[0].equals("error-varies") && call % 2 == 0 ? "java.lang.UnsupportedOperationException" : "java.lang.IllegalStateException";
                         cases.add(new JUnitXml.Case(suite, one, s, s == Status.ERRORED ? thrown : s == Status.FAILED ? "AssertionError" : "",
@@ -181,7 +185,8 @@ final class SelfTestRunner implements Runner {
                     }
                 }
                 if (order == 1 && call % 2 == 0 || order == 2 && call % 2 == 1) java.util.Collections.reverse(cases);
-                out.put(f, new FileRun(cases, null));
+                boolean untold = Files.readAllLines(checkout.resolve(f)).contains("retries not said");
+                out.put(f, new FileRun(cases, null, false, untold ? "the stand-in runner does not say whether a test passed only when it ran it again" : null));
             } catch (IOException e) {
                 out.put(f, FileRun.failed("cannot be read"));
             }
