@@ -21,6 +21,7 @@ import sdlc.check.JUnitXml.Status;
  *   leans-on FILE       passes when the checkout holds that file or an earlier run built it, else fails by assertion
  *   timeout             the whole file gives no result, as a run cut off by the time limit
  *   skip-without WORD   skipped where prod.txt lacks the word; where it holds it, the case does not exist
+ *   skip-unless WORD    passes where prod.txt holds the word, skipped where it lacks it
  *   skip-once WORD      where it holds the word, skipped in the first run in that checkout and passes in later ones; else passes
  *   skip-odd WORD       where it holds the word, skipped in the first, third, ... run in that checkout and passes in the others; else passes
  *   pass-once           passes in the first run in that checkout, skipped in later ones
@@ -53,7 +54,11 @@ import sdlc.check.JUnitXml.Status;
  * without ": " is not a case: it stands for the test's body. A name is reported as it is written,
  * brackets and all: what a name means is never read from its shape. A name
  * "demo.Outer$A::works" is the case "works" of the class demo.Outer$A, as Surefire reports a
- * method of a nested class; any other case's suite is its file.
+ * method of a nested class; any other case's suite is its file. A ".java" file under a folder
+ * jvm/ is run too, as a JUnit class: its cases' suite is its package (from its line "package
+ * NAME;") and its file's name, as a JUnit report names a class, and each line "import NAME;" of
+ * it makes NAME a word its cases see as though prod.txt held it (an import that decides what the
+ * tests run against).
  * A changed shared.lock in a test's folder or above it is a setup both sides share. Like a build,
  * a run leaves something behind for each file it ran (.built/), until forgetBuilt removes it.
  */
@@ -90,7 +95,30 @@ final class SelfTestRunner implements Runner {
 
     @Override
     public boolean support(String path) {
-        return path.endsWith(".t") && path.startsWith(under);
+        return (path.endsWith(".t") || path.endsWith(".java") && ("/" + path).contains("/jvm/")) && path.startsWith(under);
+    }
+
+    private static final java.util.regex.Pattern PACKAGE = java.util.regex.Pattern.compile("package ([\\w.]+);"), IMPORT = java.util.regex.Pattern.compile("import ([\\w.]+);");
+
+    /** The suite of a file's cases: its path, or for a ".java" file its package and class name, as a JUnit report names it. */
+    private static String suite(String f, List<String> lines) {
+        if (!f.endsWith(".java")) return f;
+        String cls = f.substring(f.lastIndexOf('/') + 1, f.length() - ".java".length());
+        for (String line : lines) {
+            java.util.regex.Matcher m = PACKAGE.matcher(line.strip());
+            if (m.matches()) return m.group(1) + "." + cls;
+        }
+        return cls;
+    }
+
+    /** The words a file's cases see: prod.txt's, and the names the file imports. */
+    private static String words(String prod, List<String> lines) {
+        StringBuilder out = new StringBuilder(prod);
+        for (String line : lines) {
+            java.util.regex.Matcher m = IMPORT.matcher(line.strip());
+            if (m.matches()) out.append('\n').append(m.group(1));
+        }
+        return out.toString();
     }
 
     @Override
@@ -147,11 +175,13 @@ final class SelfTestRunner implements Runner {
                     out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
                     continue;
                 }
-                for (String line : Files.readAllLines(checkout.resolve(f))) {
+                List<String> all = Files.readAllLines(checkout.resolve(f));
+                String sees = words(prod, all), fileSuite = suite(f, all);
+                for (String line : all) {
                     if (!line.contains(": ")) continue;
                     String name = line.substring(0, line.indexOf(": "));
                     String[] how = line.substring(line.indexOf(": ") + 2).trim().split(" ");
-                    boolean has = how.length > 1 && prod.contains(how[1]);
+                    boolean has = how.length > 1 && sees.contains(how[1]);
                     if (how[0].equals("skip-without") && has) continue; // a test declared only where the word is missing
                     if (how[0].equals("skip-later") && call == 1) continue; // a case a provider gives only from the second run on
                     if (how[0].equals("pass-later") && call == 1) continue;
@@ -165,6 +195,7 @@ final class SelfTestRunner implements Runner {
                         case "error-retried" -> Status.ERRORED;
                         case "fails-later" -> has && call > 1 ? Status.FAILED : Status.PASSED;
                         case "skip", "skip-without", "skip-later" -> Status.SKIPPED;
+                        case "skip-unless" -> has ? Status.PASSED : Status.SKIPPED;
                         case "skip-once" -> has && call == 1 ? Status.SKIPPED : Status.PASSED; // with the word: skipped only the first time
                         case "skip-odd" -> has && call % 2 == 1 ? Status.SKIPPED : Status.PASSED; // with the word: skipped every other time, from the first
                         case "pass-once" -> call == 1 ? Status.PASSED : Status.SKIPPED;
@@ -182,7 +213,7 @@ final class SelfTestRunner implements Runner {
                         default -> Status.ERRORED;
                     };
                     String shown = name.replace("\\'", "'");
-                    String suite = f;
+                    String suite = fileSuite;
                     if (shown.contains("::")) {
                         suite = shown.substring(0, shown.indexOf("::"));
                         shown = shown.substring(shown.indexOf("::") + 2);

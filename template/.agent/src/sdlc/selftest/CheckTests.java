@@ -536,6 +536,12 @@ final class CheckTests {
         write(repo, "checks/cut2.t", CUT.replace("cut-later", "cut-once"));
         write(repo, "checks/pa.t", PA);
         write(repo, "checks/pb.t", PB);
+        // test files for the moves (see moves): named like test files, so that the text check calls a deleted one a problem
+        write(repo, "tests/jvm/a/CalcTest.java", CALC);
+        write(repo, "tests/a/move.test.t", MOVE);
+        write(repo, "tests/a/twin.test.t", MOVE);
+        write(repo, "tests/a/fix.test.t", FIX);
+        write(repo, "tests/a/odd.test.t", ODD);
         write(repo, ".gitignore", "ignored/\n");
         git(repo, "init", "-q", "-b", "main");
         commit(repo, "base");
@@ -769,6 +775,150 @@ final class CheckTests {
         check("check: commits on the branch and uncommitted edits are one change", branch.contains("2 files changed against main") && branch.contains("1 fails before the change and passes after it"));
     }
 
+    /** A JVM test class of the base (see SelfTestRunner): one test that passes, one that runs only with real.Calc imported, one that fails with other.Calc imported. */
+    private static final String CALC = "package a;\n\nimport real.Calc;\n\nadds: pass\nrounds: skip-unless real.Calc\nguards: fails-with other.Calc\n";
+    /** A script test file of the base, and a copy of it. */
+    private static final String MOVE = "kept: pass\nalso: pass\n";
+    /** A test file of the base whose first test fails there: the change that writes "mended" into the code makes it pass. */
+    private static final String FIX = "repairs: needs mended\nkept: pass\n";
+    /** As FIX, with a test skipped in every other run on the code that holds "mended". */
+    private static final String ODD = "repairs: needs mended\nsways: skip-odd mended\n";
+
+    /**
+     * A test file that is only moved is a deleted file and an added one. Where the text check's
+     * rule says it moved (Integrity.moves) and the runner that runs it now ran it where it was, its
+     * tests are the tests it had: none is new, and the file as it was is compared with it by
+     * counts only, as its names changed with the move (a JUnit class name holds its package, a
+     * Vitest suite is its path). Comes in with the fix and a sensitive test in tests/old.t.
+     */
+    private static void moves(Path repo) throws IOException {
+        String sensitiveOld = "  1 fails before the change and passes after it\n      tests/old.t  [self test]\n        sensitive\n";
+        // a JVM class moved to another package, its package line alone changed
+        Files.delete(repo.resolve("tests/jvm/a/CalcTest.java"));
+        write(repo, "tests/jvm/b/CalcTest.java", CALC.replace("package a;", "package b;"));
+        String repackaged = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("moves: a JVM class moved to another package is a moved file: its tests are the tests it had, none new, nothing lost, nothing that could not be judged, exit 0",
+                code == 0 && repackaged.contains(sensitiveOld + "  1 test file moved (not counted)\n      tests/jvm/b/CalcTest.java  [self test]\n        "
+                        + movedLine("tests/jvm/a/CalcTest.java", "its lines are the same but for its package line") + "\n"
+                        + "  4 tests that were already in the edited or moved files pass before and after (not counted)\n")
+                && repackaged.contains("note     test file moved: tests/jvm/a/CalcTest.java  the same file is now at tests/jvm/b/CalcTest.java, in another package") && clean(repackaged));
+        // the same with its imports changed, every test still running and passing
+        write(repo, "tests/jvm/b/CalcTest.java", CALC.replace("package a;", "package b;").replace("import real.Calc;", "import real.Calc;\nimport real.Extra;"));
+        String reimported = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("moves: moved with its imports changed, every test still running and passing: a moved file, whose line says what no run shows, exit 0",
+                code == 0 && reimported.contains("  1 test file moved (not counted)\n      tests/jvm/b/CalcTest.java  [self test]\n        "
+                        + movedLine("tests/jvm/a/CalcTest.java", "its lines are the same but for its package and import lines")
+                        + ". Its imports changed: an import may change what a test tests while it passes, which no run shows\n")
+                && reimported.contains("  4 tests that were already in the edited or moved files pass before and after (not counted)\n")
+                && reimported.contains("note     test file moved and its imports changed: tests/jvm/a/CalcTest.java  the same tests are now at tests/jvm/b/CalcTest.java, with other "
+                        + "imports: its run judges it") && clean(reimported));
+        // an import swapped, under which a test is skipped: fewer tests run
+        write(repo, "tests/jvm/b/CalcTest.java", CALC.replace("package a;", "package b;").replace("import real.Calc;", "import lite.Calc;"));
+        String fewer = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("moves: a move whose import skips a test runs fewer tests than the file as it was passed: said by the counts, definite, and the check fails",
+                code == 1 && fewer.contains(L1 + "      tests/jvm/b/CalcTest.java  [self test]\n        the file as it was passed 3 of its tests, and after the change it runs 2: at "
+                        + "least 1 test that ran before the change does not run now. The file moved from tests/jvm/a/CalcTest.java and is not run as it was on the code after the change, "
+                        + "so whether the move or the change of the code took them is not known; either way they ran before the change and do not run now\n")
+                && fewer.contains("  1 is skipped\n      tests/jvm/b/CalcTest.java  [self test]\n        rounds\n") && fewer.contains("  1 test file moved (not counted)\n")
+                && !fewer.contains("could not be judged") && !fewer.contains("new test pass"));
+        // an import added, under which a test fails
+        write(repo, "tests/jvm/b/CalcTest.java", CALC.replace("package a;", "package b;").replace("import real.Calc;", "import real.Calc;\nimport other.Calc;"));
+        String failing = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("moves: a move whose import makes a test fail fails the check, as any failure after the change",
+                code == 1 && failing.contains("  1 fails after the change\n      tests/jvm/b/CalcTest.java  [self test]\n        guards: fails: expected something else\n")
+                && failing.contains("  1 test file moved (not counted)\n") && !failing.contains("could not be judged") && !failing.contains("new test pass") && !lostSaid(failing));
+        // a test file deleted and another added with other lines: no move. The deletion is a problem and the new test is judged as new
+        Files.delete(repo.resolve("tests/jvm/b/CalcTest.java"));
+        write(repo, "tests/jvm/b/OtherTest.java", "package b;\n\nidle: pass\n");
+        String unrelated = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("moves: a test file deleted and an unrelated one added is no move: the deletion is a problem and the new test does not test the change",
+                code == 1 && !unrelated.contains("moved") && unrelated.contains("  1 new test passes before and after, so it does not test the change\n"
+                        + "      tests/jvm/b/OtherTest.java  [self test]\n        idle\n")
+                && unrelated.contains("PROBLEM  test file deleted: tests/jvm/a/CalcTest.java  the file is gone"));
+        Files.delete(repo.resolve("tests/jvm/b/OtherTest.java"));
+        write(repo, "tests/jvm/a/CalcTest.java", CALC);
+
+        // a script test file moved to another folder, its lines the same: its suite is its path, so every name changed
+        Files.delete(repo.resolve("tests/a/move.test.t"));
+        write(repo, "tests/b/move.test.t", MOVE);
+        String script = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("moves: a script test file moved to another folder with the same lines is a moved file, exit 0",
+                code == 0 && script.contains(sensitiveOld + "  1 test file moved (not counted)\n      tests/b/move.test.t  [self test]\n        "
+                        + movedLine("tests/a/move.test.t", "its lines are the same") + "\n  3 tests that were already in the edited or moved files pass before and after (not counted)\n")
+                && script.contains("note     test file moved: tests/a/move.test.t  the same file is now at tests/b/move.test.t") && clean(script));
+        // ordinary work stays quiet: a pure move, in three runs, the reports in another order from run to run
+        for (int order = 0; order <= 2; order++) {
+            Check.order(order);
+            String calm = report(Map.of("selftest-runner", "true", "runs", "3"));
+            Check.order(0);
+            check("moves: a pure move prints nothing that could not be judged and nothing unstable, in three runs" + (order == 0 ? "" : ", in report order " + order),
+                    code == 0 && calm.contains("  1 test file moved (not counted)\n") && clean(calm) && !calm.contains("from run to run"));
+        }
+        // moved and edited on the way: a deleted file and an added one, as before this rule
+        write(repo, "tests/b/move.test.t", MOVE.replace("also: pass", "also changed: pass"));
+        String edited = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("moves: a file moved and edited on the way is a deleted test file (a problem) and an added one whose tests are new",
+                code == 1 && !edited.contains("moved") && edited.contains("  2 new tests pass before and after, so they do not test the change\n      tests/b/move.test.t  [self test]\n"
+                        + "        also changed\n        kept\n") && edited.contains("PROBLEM  test file deleted: tests/a/move.test.t  the file is gone"));
+        // two deleted copies, one added: one moved, the other is deleted
+        write(repo, "tests/b/move.test.t", MOVE);
+        Files.delete(repo.resolve("tests/a/twin.test.t"));
+        String twoGone = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("moves: of two deleted copies and one added, the first by path moved and the other is a test file deleted",
+                code == 1 && twoGone.contains("      tests/b/move.test.t  [self test]\n        " + movedLine("tests/a/move.test.t", "its lines are the same") + "\n")
+                && twoGone.contains("PROBLEM  test file deleted: tests/a/twin.test.t  the file is gone") && !twoGone.contains("moved from tests/a/twin.test.t"));
+        write(repo, "tests/a/twin.test.t", MOVE);
+        // one deleted, two added copies: one moved, the other is new
+        write(repo, "tests/c/move.test.t", MOVE);
+        String twoAdded = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("moves: of one deleted file and two added copies, the first by path is the moved file and the other's tests are new",
+                code == 1 && twoAdded.contains("  2 new tests pass before and after, so they do not test the change\n      tests/c/move.test.t  [self test]\n        also\n        kept\n")
+                && twoAdded.contains("  1 test file moved (not counted)\n      tests/b/move.test.t  [self test]\n") && !twoAdded.contains("PROBLEM"));
+        Files.delete(repo.resolve("tests/c/move.test.t"));
+        // moved to where its runner does not run it: no move for the run (the text check's rule calls it one; see the guide's limits)
+        Files.delete(repo.resolve("tests/b/move.test.t"));
+        write(repo, "tests/b/move.test.txt", MOVE);
+        String away = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("moves: a test file moved to where no runner runs it is no move for the run: the added file is listed as not checked",
+                code == 0 && !away.contains("test file moved (not counted)") && away.contains("the test file tests/b/move.test.txt: no runner for it")
+                && away.contains("note     test file moved: tests/a/move.test.t  the same file is now at tests/b/move.test.txt"));
+        Files.delete(repo.resolve("tests/b/move.test.txt"));
+        write(repo, "tests/a/move.test.t", MOVE);
+
+        // moved, and the code changed so that a test of it that failed before passes now: sensitive
+        write(repo, "prod.txt", "v1\nfixed\nmended\n");
+        Files.delete(repo.resolve("tests/a/fix.test.t"));
+        write(repo, "tests/b/fix.test.t", FIX);
+        String sensitive = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("moves: a moved file's test that fails before the change and passes after it is sensitive",
+                code == 0 && sensitive.contains("  2 fail before the change and pass after it\n      tests/b/fix.test.t  [self test]\n        repairs\n      tests/old.t  [self test]\n"
+                        + "        sensitive\n") && sensitive.contains("  1 test file moved (not counted)\n") && clean(sensitive));
+        Files.delete(repo.resolve("tests/b/fix.test.t"));
+        write(repo, "tests/a/fix.test.t", FIX);
+        // a moved file whose runs after the change differ from run to run: said
+        Files.delete(repo.resolve("tests/a/odd.test.t"));
+        write(repo, "tests/b/odd.test.t", ODD);
+        String odd = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("moves: a moved file reported otherwise from run to run after the change is said to be unstable",
+                code == 0 && odd.contains("  1 gave different results from run to run\n      tests/b/odd.test.t  [self test]\n        the file was reported differently from run to run, "
+                        + "in ways no rule of the check judged: sways (after the change: skipped, passed)\n")
+                && odd.contains("      tests/b/odd.test.t  [self test]\n        repairs\n") && !odd.contains("could not be judged"));
+        Files.delete(repo.resolve("tests/b/odd.test.t"));
+        write(repo, "tests/a/odd.test.t", ODD);
+        write(repo, "prod.txt", "v1\nfixed\n");
+    }
+
+    /** The line of a moved file (see Witness.moved). */
+    private static String movedLine(String from, String how) {
+        return "moved from " + from + " (" + how + "): its tests are the tests it had, none of them new. Their names changed with the move, so the file as it was is compared with it "
+                + "by how many of its tests run, not by their names";
+    }
+
+    /** True when a report says nothing uncertain, of new tests, or of tests that do not run now. */
+    private static boolean clean(String report) {
+        return !report.contains("could not be judged") && !report.contains("new test pass") && !report.contains("new tests pass") && !lostSaid(report) && !report.contains("removed");
+    }
+
     /** A test file of the base, for what only a run of it as it was can tell: which tests it had and which of them ran. */
     private static final String JUDGED = "stays: pass\nturned off: pass\nwas off: skip\ngoes: pass\ngoes too: pass\n";
 
@@ -953,6 +1103,7 @@ final class CheckTests {
         lost(repo);
         everyDifference(repo);
         retriesAndCompanions(repo);
+        moves(repo);
 
         // a test that went to another changed file: each file is judged by its own counts, and a title is not read to pair them
         write(repo, "checks/judged.t", JUDGED.replace("goes too: pass\n", ""));

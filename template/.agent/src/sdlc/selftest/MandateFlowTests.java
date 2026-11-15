@@ -312,6 +312,29 @@ final class MandateFlowTests {
         Files.delete(repo.resolve("tests/fx.t"));
         write(repo, "tests/fx.t", "old shape: pass\n");
 
+        // a test file only moved: its tests are neither new nor removed, so the line of the change's own tests is not violated for it
+        write(repo, "tests/mv/a.t", "stays: pass\n");
+        commit(repo, "a test file to move");
+        write(repo, "docs/mandates/move.json", """
+                {
+                  "mandate": "v0",
+                  "id": "move",
+                  "intent": "A test file is moved",
+                  "scope": { "paths": ["tests/**", "prod.txt", "docs/mandates/prodonly.json"] },
+                  "oracle": { "scenarios": ["tests/reg.t"] }
+                }
+                """);
+        Files.delete(repo.resolve("tests/mv/a.t"));
+        write(repo, "tests/mv/b/a.t", "stays: pass\n");
+        String movedOnly = report(Map.of("mandate", "move", "selftest-runner", "true", "runs", "1"));
+        check("mandate: a test file only moved is said, and counts neither as new tests nor as tests that do not run now: the line is unknown (no sensitive test), not violated",
+                movedOnly.contains("unknown   the change's own tests: 0 fail before it and pass after it   [from the change's own test run]")
+                && movedOnly.contains("              tests/mv/b/a.t: moved from tests/mv/a.t (its lines are the same): its tests are the tests it had")
+                && !movedOnly.contains("violated  the change's own tests"));
+        Files.delete(repo.resolve("tests/mv/b/a.t"));
+        Files.delete(repo.resolve("docs/mandates/move.json"));
+        write(repo, "tests/mv/a.t", "stays: pass\n");
+
         // a link in the base that the change turns into a folder: what the link leads to is never touched
         Path elsewhere = Files.createTempDirectory("sdlc-elsewhere").toRealPath();
         Path sentinel = elsewhere.resolve("sub");

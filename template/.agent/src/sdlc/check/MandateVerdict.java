@@ -175,6 +175,7 @@ final class MandateVerdict {
                 if (v.kind() == Kind.PASSES_ON_BOTH) detail.add(v.file() + (whole ? ": " + v.detail() : "  " + v.name() + ": passes before and after, so it does not test the change"));
                 else if (v.kind() == Kind.FAILS_AFTER || v.kind() == Kind.OLD_FAILS_AFTER) detail.add(v.file() + (whole ? "" : "  " + v.name()) + ": " + v.detail());
                 else if (v.kind() == Kind.NOT_RUN_NOW) detail.add(v.file() + ": " + v.detail());
+                else if (v.kind() == Kind.MOVED) detail.add(v.file() + ": " + v.detail()); // neither new tests nor tests removed: said, counted nowhere
             }
             for (Witness.Verdict v : w.verdicts()) {
                 if (v.kind() == Kind.SENSITIVE) detail.add(v.file() + "  " + v.name() + ": fails before, passes after (" + (m.locked().containsKey(v.file()) ? "a test approved with the mandate" : "a test written with the change") + ")");

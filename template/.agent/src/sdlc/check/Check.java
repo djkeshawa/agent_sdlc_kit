@@ -62,8 +62,10 @@ public final class Check {
                 out.println("      A test of code that did not exist before the change cannot fail there for the right reason, so it is not counted either way.");
             }
             section(out, w, Kind.SKIPPED, n -> n + (n == 1 ? " is" : " are") + " skipped", false);
+            section(out, w, Kind.MOVED, n -> n + (n == 1 ? " test file moved" : " test files moved") + " (not counted)", true);
             long old = w.count(Kind.EXISTING_PASSES_ON_BOTH);
-            if (old > 0) out.println("  " + old + " test" + (old == 1 ? "" : "s") + " that " + (old == 1 ? "was" : "were") + " already in the edited files " + (old == 1 ? "passes" : "pass") + " before and after (not counted)");
+            String files = w.count(Kind.MOVED) > 0 ? "edited or moved files" : "edited files";
+            if (old > 0) out.println("  " + old + " test" + (old == 1 ? "" : "s") + " that " + (old == 1 ? "was" : "were") + " already in the " + files + " " + (old == 1 ? "passes" : "pass") + " before and after (not counted)");
             long off = w.count(Kind.EXISTING_SKIPPED);
             if (off > 0) out.println("  " + off + (off == 1 ? " test is skipped as before the change: the file skipped a test of its name before it too"
                     : " tests are skipped as before the change: the file skipped tests of their names before it too") + " (not counted)");
