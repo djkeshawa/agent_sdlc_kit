@@ -11,16 +11,10 @@ import sdlc.core.UsageException;
 import sdlc.util.Json;
 import sdlc.util.Proc;
 
-/**
- * Approval of a mandate by the person at the keyboard. The record lives in the repository's git
- * folder, outside the working tree: it is not part of any commit, so it cannot be mistaken for
- * an approval by someone else, and a clone does not carry it. It names the blob that was
- * approved; a mandate edited afterwards is another blob, and is not approved.
- */
+// The record lives in the git folder, outside the working tree: no commit or clone carries it, so it is never someone else's approval.
 public final class SelfApproval {
     private SelfApproval() {}
 
-    /** covers is the scenario the approver said covers the "this fails if" sentence, or "" for none. */
     public record Record(String blob, String by, String at, String covers) {}
 
     static Path store(Path root) {
@@ -29,7 +23,6 @@ public final class SelfApproval {
         return root.resolve(p.out().strip());
     }
 
-    /** The approval recorded for a mandate, or null. */
     public static Record of(Path root, String id) {
         Object entry = all(root).get(id);
         if (!(entry instanceof Map<?, ?>)) return null;

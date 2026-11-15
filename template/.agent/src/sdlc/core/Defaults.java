@@ -1,10 +1,5 @@
 package sdlc.core;
 
-/**
- * Built-in configuration. Order of precedence: COMMON, then the stack preset, then
- * .agent/sdlc.yml. A key ending in "+" in sdlc.yml appends to a list instead of replacing it
- * (for example  protected+: [docs/legal/**]).
- */
 public final class Defaults {
     private Defaults() {}
 
@@ -275,7 +270,6 @@ public final class Defaults {
               disabledPatterns: ["\\\\b(it|test|describe|context|suite)\\\\.(skip|only|todo)\\\\s*\\\\(", "\\\\bx(it|test|describe|context)\\\\s*\\\\(", "\\\\bf(it|describe)\\\\s*\\\\(", "@ts-nocheck", "eslint-disable(?!-next-line)"]
             """;
 
-    /** The Node preset's build.verify; with a pnpm or yarn lock file the tool swaps the package manager in (Config.verifyCommand). */
     public static final String NODE_VERIFY = "npm run lint --if-present && npm test && npm run build --if-present";
 
     static String preset(String stack) {

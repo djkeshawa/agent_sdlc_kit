@@ -18,10 +18,6 @@ import sdlc.core.Trusted;
 import sdlc.util.Proc;
 import sdlc.workflow.Checks;
 
-/**
- * Self test: what check-pr trusts in a pull request build. A repository of its own, with a base
- * branch and branches that try to be judged by their own rules.
- */
 final class TrustTests {
     private TrustTests() {}
 
@@ -78,7 +74,6 @@ final class TrustTests {
         env(Map.of());
     }
 
-    /** main: a commit without rules (origin/bare), then one with the strict rules (origin/main). */
     private static void repository(Path repo) throws IOException {
         write(repo, "src/main/java/A.java", "class A {}\n");
         write(repo, "src/test/java/ATest.java", "class ATest { /* TS-01 */ }\n");
@@ -137,7 +132,6 @@ final class TrustTests {
 
     private static void locksAddedOnTheBase(Path repo) throws IOException {
         String test = "src/test/java/ATest.java";
-        // two branches leave main before QE locks the test
         git(repo, "switch", "-q", "-c", "feature/PROJ-7-touches-the-test", "origin/main");
         write(repo, test, "class ATest { /* TS-01, weakened */ }\n");
         commit(repo, "fix(PROJ-7): change the acceptance test");
@@ -145,7 +139,6 @@ final class TrustTests {
         write(repo, "src/main/java/A.java", "class A { int y; }\n");
         write(repo, "src/test/java/BTest.java", "class BTest {}\n");
         commit(repo, "feat(PROJ-8): another change");
-        // QE locks the test on main
         git(repo, "switch", "-q", "-c", "qe", "origin/main");
         String hash = Locks.hash(Files.readAllBytes(repo.resolve(test)));
         write(repo, Locks.DIR + "/PROJ-9.json", "{\"story\": \"PROJ-9\", \"files\": {\"" + test + "\": \"" + hash + "\"}}\n");
@@ -162,7 +155,6 @@ final class TrustTests {
         Ctx.init(repo);
         Checks.Result untouched = Checks.prPolicy(null, false);
         check("trust: a branch that is only behind the base is not blamed for the new lock", untouched.fails().isEmpty());
-        // QE's own pull request: the test and a lock that names its new content, nothing else
         git(repo, "switch", "-q", "-c", "chore/PROJ-9-relock", "feature/PROJ-7-touches-the-test");
         String relocked = Locks.hash(Files.readAllBytes(repo.resolve(test)));
         write(repo, Locks.DIR + "/PROJ-9.json", "{\"story\": \"PROJ-9\", \"files\": {\"" + test + "\": \"" + relocked + "\"}}\n");
@@ -175,7 +167,6 @@ final class TrustTests {
         commit(repo, "feat(PROJ-9): and some code");
         Checks.Result mixed = Checks.prPolicy(null, false);
         check("trust: the same beside production code fails", mixed.fails().stream().anyMatch(f -> f.contains("has locked since the branch was made")));
-        // a pull request of only the lock file and its test that takes the lock away and deletes the test
         git(repo, "switch", "-q", "-c", "chore/PROJ-9-unlock", "origin/main");
         Files.delete(repo.resolve(Locks.DIR + "/PROJ-9.json"));
         Files.delete(repo.resolve(test));
@@ -193,10 +184,8 @@ final class TrustTests {
         env(Map.of());
     }
 
-    /** Things a pull request can do to blind the check, each on a branch from the base. */
     private static void blinding(Path repo) throws IOException {
         env(Map.of("GITHUB_BASE_REF", "main"));
-        // local state committed into the pull request names another story and its own scopes
         git(repo, "switch", "-q", "-c", "feature/PROJ-11-state", "origin/main");
         write(repo, ".sdlc/current.json", "{\"story\": \"PROJ-99\", \"task\": \"PROJ-100\"}\n");
         write(repo, "src/main/java/A.java", "class A { int s; }\n");
@@ -207,7 +196,6 @@ final class TrustTests {
         check("trust: local state committed into a pull request fails the check", state.fails().stream().anyMatch(f -> f.contains("No local state (.sdlc/) is committed")));
         check("trust: and the story it names is not used", state.passes().stream().noneMatch(p -> p.contains("PROJ-99")) && state.fails().stream().noneMatch(f -> f.contains("PROJ-99")));
 
-        // .gitattributes marks the tests as binary, so a plain diff shows no lines to scan
         git(repo, "switch", "-q", "-c", "feature/PROJ-12-binary", "origin/main");
         write(repo, ".gitattributes", "*.java -diff\n");
         write(repo, "src/test/java/DTest.java", "import org.junit.jupiter.api.Disabled;\nclass DTest { @Disabled void off() {} }\n");
@@ -217,7 +205,6 @@ final class TrustTests {
         Checks.Result binary = Checks.prPolicy(null, false);
         check("trust: lines of a file the pull request marks as binary are still scanned", binary.fails().stream().anyMatch(f -> f.contains("No switch that turns a test off or focuses one was found")));
 
-        // the same, written so that no added line shows it
         git(repo, "switch", "-q", "-c", "feature/PROJ-15-spread", "origin/main");
         write(repo, "src/test/java/WebTest.java", "class WebTest {\n  @\n  Disabled\n  @Test void later() {}\n}\n");
         write(repo, "src/main/java/A.java", "class A { int c; }\n");
@@ -226,7 +213,6 @@ final class TrustTests {
         check("trust: a test switched off by a call written over two lines is still found",
                 Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No switch that turns a test off or focuses one was found") && f.contains("WebTest.java")));
 
-        // a script test file is linted by the lines the change adds; its run is the judge
         git(repo, "switch", "-q", "-c", "feature/PROJ-17-script", "origin/main");
         write(repo, "src/test/java/web.test.ts", "it.skip('later', () => {})\nit\n  .skip('sooner', () => {})\nconst r = /'/; it.skip('a', () => { expect(false).toBe(true); }); const x = 'ok';\n");
         write(repo, "src/main/java/A.java", "class A { int e; }\n");
@@ -236,7 +222,6 @@ final class TrustTests {
                 Checks.prPolicy(null, false).fails().stream().anyMatch(f -> f.contains("No switch that turns a test off or focuses one was found") && f.contains("web.test.ts: it.skip('later'") && f.contains("web.test.ts: it .skip('sooner'")
                         && f.contains("web.test.ts: const r = /'/; it.skip('a'")));
 
-        // a line made to drive a configured pattern deep does not crash check-pr: it is not read, and a warning says so
         git(repo, "switch", "-q", "-c", "feature/PROJ-19-deep", "origin/main");
         write(repo, "src/test/java/DeepTest.java", "class DeepTest {\n  @" + "a.".repeat(10000) + "Disabled\n  @Test void t() {}\n}\n");
         write(repo, "src/main/java/A.java", "class A { int g; }\n");
@@ -248,7 +233,6 @@ final class TrustTests {
         check("trust: a configured pattern that overflows on a text is taken as a hit, not as clean",
                 Checks.containsDisabled("@" + "a.".repeat(200000) + "Disabled"));
 
-        // a Java test file is linted by the lines the change adds, as a script test file is
         git(repo, "switch", "-q", "-c", "feature/PROJ-18-java", "origin/main");
         write(repo, "src/test/java/OffTest.java", "class OffTest {\n  @Disabled(\"later\")\n  @Test void later() {}\n  @Test void sooner() {\n    assumeTrue(false);\n  }\n  @Test void never() { Assumptions.<Void>abort(\"later\"); }\n}\n");
         write(repo, "src/main/java/A.java", "class A { int f; }\n");
@@ -258,16 +242,12 @@ final class TrustTests {
         check("trust: a Java test switched off on an added line fails, by the line",
                 offJava.fails().stream().anyMatch(f -> f.contains("No switch that turns a test off or focuses one was found") && f.contains("OffTest.java: @Disabled(\"later\")")
                         && !f.contains("assumeTrue(false)") && !f.contains("Assumptions.<Void>abort(")));
-        // an assumption that never holds is the lint's to judge, also where the Java default pattern (assume(True|That)\s*\(\s*false\s*\))
-        // matches it: check-pr reads the configured patterns on the line with the built-in switches taken out
         check("trust: Assumptions.abort, which a condition on another line may hold, and an assumption on a line of its own in a test method are warnings, not failures",
                 offJava.warns().stream().anyMatch(w -> w.contains("OffTest.java: may switch a test off") && w.contains("Assumptions.<Void>abort(\"later\")")
                         && w.contains("assumeTrue(false);")));
-        // the git hook reads the configured patterns on the added line as it is: there the Java default refuses it
         check("trust: the commit hook's check, the configured patterns on the added lines, still finds assumeTrue(false); with the Java defaults",
                 Checks.disabledTests(Map.of("src/test/java/OffTest.java", List.of("    assumeTrue(false);"))).equals(List.of("src/test/java/OffTest.java: assumeTrue(false);")));
 
-        // text that looks like a skipped test, inside a text block over several lines: the lint reads lines, so it fails (on the safe side)
         git(repo, "switch", "-q", "-c", "feature/PROJ-16-example", "origin/main");
         write(repo, "src/test/java/DocsTest.java", "class DocsTest {\n  String example = \"\"\"\n      @Disabled\n      \"\"\";\n  @Test void real() { assertNotNull(example); }\n}\n");
         write(repo, "src/main/java/A.java", "class A { int d; }\n");
@@ -277,7 +257,6 @@ final class TrustTests {
         check("trust: a skip inside a text block of a test file fails the pull request, by its line: the lint does not know a text over several lines",
                 example.fails().stream().anyMatch(f -> f.contains("No switch that turns a test off or focuses one was found") && f.contains("DocsTest.java: @Disabled")));
 
-        // a conditional skip passes; an added line longer than the lint reads is said as not read, a warning
         git(repo, "switch", "-q", "-c", "feature/PROJ-19-conditional", "origin/main");
         write(repo, "src/test/java/browser.spec.ts", "test.skip(browserName === 'webkit', 'not on Safari');\ntest('x', async () => {})\nconst data = '" + "x".repeat(3000) + "';\n");
         write(repo, "src/main/java/A.java", "class A { int g; }\n");
@@ -291,7 +270,6 @@ final class TrustTests {
                 conditional.warns().stream().anyMatch(w -> w.contains("browser.spec.ts: may switch a test off") && w.contains("sdlc check shows whether a test stopped running")
                         && w.contains("test.skip(browserName === 'webkit', 'not on Safari');")));
 
-        // audit round 4: what the lint cannot know to be unconditional does not fail the pull request; a call over lines is judged whole
         git(repo, "switch", "-q", "-c", "feature/PROJ-20-honest", "origin/main");
         write(repo, "src/test/java/ready.spec.ts", "test.skip(\n  false,\n  'supported');\ntest('a', async function () {\n  if (!ready) {\n    log.info('not ready');\n    this.skip();\n  }\n});\n"
                 + "test.fixme(isMobile, ISSUE_REASON);\n");
@@ -306,8 +284,6 @@ final class TrustTests {
                 && honest.warns().stream().anyMatch(w -> w.contains("ready.spec.ts: may switch a test off") && w.contains("this.skip();") && w.contains("test.fixme(isMobile, ISSUE_REASON);")
                         && !w.contains("false,")));
 
-        // audit round 5: only what the lint proves whole fails; a title cut by the line, an option a spread may change, a computed
-        // annotation element, a .each kept for later and a mark inside a decorator expression are warnings
         git(repo, "switch", "-q", "-c", "feature/PROJ-21-gate", "origin/main");
         write(repo, "src/test/java/gate.spec.ts", "test.skip('webkit'\n  === browserName, 'webkit only');\ntest('x', { skip: true, ...options }, fn);\n"
                 + "const testEachIf = isWindows ? test.skip.each : test.each;\n");
@@ -327,8 +303,6 @@ final class TrustTests {
                 && gate.warns().stream().anyMatch(w -> w.contains("GateTest.java: may switch a test off") && w.contains("@Test(enabled = false || RUN_TESTS)"))
                 && gate.warns().stream().anyMatch(w -> w.contains("test_gate.py: may switch a test off") && w.contains("@(pytest.mark.skip if IS_CI else identity)")));
 
-        // audit round 6, finding 6: check-pr lints the test files sdlc check lints, by their built-in names and folders too, not
-        // only those under the configured paths.test (src/test/** for this Java stack)
         git(repo, "switch", "-q", "-c", "feature/PROJ-22-outside", "origin/main");
         write(repo, "web/disabled.test.ts", "it.skip('x', () => {});\n");
         write(repo, "web/__tests__/cases.ts", "describe.only('y', () => {});\n");
@@ -342,8 +316,6 @@ final class TrustTests {
                 outside.contains("web/disabled.test.ts: it.skip('x', () => {});") && outside.contains("web/__tests__/cases.ts: describe.only('y', () => {});")
                         && !outside.contains("web/helpers.ts"));
 
-        // audit round 6, findings 2 to 5 and 7, through check-pr: only what the lint proves from the text as written, standing on its
-        // own, fails; a quoted override, a condition on the line before a joined declaration and a caught assumption are warnings
         git(repo, "switch", "-q", "-c", "feature/PROJ-23-round6", "origin/main");
         write(repo, "src/test/java/round6.test.ts", "test('x', { skip: true, 'skip': false }, fn);\nif (isCI) {\n  describe.skip(\n    'database', () => {});\n}\n");
         write(repo, "src/test/java/Round6Test.java", "class Round6Test {\n    @Test @Disabled void off() {}\n    @DisabledIf(\"false\") @Test void on() {}\n"
@@ -360,7 +332,6 @@ final class TrustTests {
                         && w.contains("if (isCI) { describe.skip( 'database', () => {});"))
                 && round6.warns().stream().anyMatch(w -> w.contains("Round6Test.java: may switch a test off") && w.contains("assumeTrue(false)") && !w.contains("DisabledIf")));
 
-        // a branch with no commit in common with the base: every diff would be empty or fail
         git(repo, "switch", "-q", "--orphan", "feature/PROJ-13-orphan");
         write(repo, "src/main/java/A.java", "class A { int o; }\n");
         commit(repo, "feat(PROJ-13): unrelated history");
@@ -368,8 +339,6 @@ final class TrustTests {
         Checks.Result orphan = Checks.prPolicy(null, false);
         check("trust: no commit in common with the base fails, it does not pass on an empty diff", orphan.fails().stream().anyMatch(f -> f.contains("no commit in common with origin/main")));
 
-        // a file name git would quote: the lock names it exactly
-        // only where the file system and this JVM agree on such a name (Linux with a UTF-8 locale)
         boolean utf8Names = "UTF-8".equalsIgnoreCase(System.getProperty("sun.jnu.encoding", ""));
         if (utf8Names && System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("linux")) {
             String odd = "src/test/java/\u00c9Test.java";

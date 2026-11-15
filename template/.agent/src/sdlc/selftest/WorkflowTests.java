@@ -22,7 +22,6 @@ import sdlc.workflow.Approvals;
 import sdlc.workflow.Wiki;
 import sdlc.workflow.Workflow;
 
-/** Self test: the workflow against an issue tracker and a wiki in memory: no network, no mock server. */
 final class WorkflowTests {
     private WorkflowTests() {}
 
@@ -77,13 +76,13 @@ final class WorkflowTests {
             check("offline: task start refused once the LLD changed", w.tasks.start(t1) == 1);
             Store.write(Ctx.work("current.json"), Store.map());
 
-            Repo onMain = new Repo() { // the guard rules with git answered from memory
+            Repo onMain = new Repo() {
                 public String branch() { return "main"; }
                 public boolean inHead(String rel) { return !rel.equals("new.py"); }
                 public boolean changedSinceHead(String rel) { return false; }
                 public String alias(String name) { return name.equals("pf") ? "push --force" : ""; }
             };
-            Gate closed = new Gate() { // and the workflow's gates too
+            Gate closed = new Gate() {
                 public Decision push() { return Decision.deny("closed"); }
                 public Decision openPullRequest() { return Decision.deny("closed"); }
                 public Decision anotherFixRound() { return Decision.allow(); }

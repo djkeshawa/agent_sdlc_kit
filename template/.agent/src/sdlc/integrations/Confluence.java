@@ -12,7 +12,6 @@ import sdlc.util.Http;
 import sdlc.util.Json;
 import sdlc.workflow.Wiki;
 
-/** The wiki on Confluence Cloud (REST v2 for pages, v1 for search and attachments) and Data Center (REST v1). */
 public final class Confluence implements Wiki {
     private final Config cfg;
 
@@ -61,7 +60,6 @@ public final class Confluence implements Wiki {
         search("type = space", 1);
     }
 
-    /** CQL search. */
     private List<Ref> search(String cql, int limit) {
         List<Ref> out = new ArrayList<>();
         if (cfg.cloud()) {
@@ -96,7 +94,6 @@ public final class Confluence implements Wiki {
         return new Ref(Json.str(p, "id"), Json.str(p, "title"), spaceKey, Json.str(p, "version.number"), base() + Json.str(p, "_links.webui"));
     }
 
-    /** Creates the page, or a new version of the page with the same title in the space. */
     @Override
     public Page publish(String spaceKey, String parentId, String title, String storage) {
         Page result = cfg.cloud() ? publishCloud(spaceKey, parentId, title, storage) : publishDc(spaceKey, parentId, title, storage);
@@ -140,7 +137,6 @@ public final class Confluence implements Wiki {
         return new Page(Json.str(r, "id"), title, spaceKey, (int) Double.parseDouble(Json.str(r, "version.number")), storage, base() + Json.str(r, "_links.webui"), "");
     }
 
-    /** Adds or replaces an attachment (e.g. the mind map image). */
     @Override
     public void attach(String pageId, String fileName, byte[] data, String mime) {
         String path = "/rest/api/content/" + Http.enc(pageId) + "/child/attachment";

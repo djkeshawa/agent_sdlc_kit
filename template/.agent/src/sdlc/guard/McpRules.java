@@ -8,7 +8,6 @@ import java.util.Set;
 
 import sdlc.util.Json;
 
-/** Rules for MCP tools (Jira, Confluence, GitHub, SonarQube servers) and subagent calls. */
 public final class McpRules {
     private static final Set<String> READ_VERBS = Set.of("get", "search", "list", "fetch", "read", "lookup", "find", "query", "view", "show", "describe", "download", "discover", "whoami", "info", "analyze", "analyse", "check");
     private static final Set<String> WRITE_VERBS = Set.of("create", "update", "edit", "delete", "remove", "transition", "add", "post", "upload", "link", "move", "assign", "set", "write", "publish", "merge", "push", "close", "approve", "submit", "archive", "rename", "destructive", "comment", "reply", "resolve", "dismiss", "fork", "request", "change", "toggle", "mark",
@@ -29,11 +28,6 @@ public final class McpRules {
         return false;
     }
 
-    /**
-     * The action is the first verb in the tool name (get_pull_request: "request" is a noun), plus every
-     * verb joined to it with "or"/"and" (get_or_create_branch). A write action denies, a read action
-     * allows, and a name with no known verb asks a human (fail closed: run_workflow must not slip through).
-     */
     public Decision check(String tool) {
         if (g.cfg.bool("mcp.allowWrites", false)) return Decision.allow();
         List<String> words = words(tool);
@@ -55,7 +49,6 @@ public final class McpRules {
                 + "e.g. java .agent/Sdlc.java jira comment <KEY> --file <file>, or gh pr create for pull requests.");
     }
 
-    /** Name words; executeRead (Atlassian's read entry point) is a read, not an execute. */
     static List<String> words(String tool) {
         List<String> w = rawWords(tool);
         int i = w.indexOf("execute");
@@ -70,7 +63,6 @@ public final class McpRules {
         return out;
     }
 
-    /** runSubagent / agent tools: stop starting implementers once the review loop is exhausted. */
     public Decision subagent(String tool, Map<String, Object> args) {
         String lower = tool.toLowerCase(Locale.ROOT);
         if (!lower.contains("subagent") && !lower.equals("agent") && !lower.equals("task")) return null;

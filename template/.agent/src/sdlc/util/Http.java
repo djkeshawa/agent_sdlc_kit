@@ -13,12 +13,9 @@ import java.util.Base64;
 import java.util.Map;
 import java.util.UUID;
 
-/** HTTP calls to Jira, Confluence, Jenkins and SonarQube with readable errors. */
 public final class Http {
     private static HttpClient client;
-    /** The proxy to use ("host:port" or a URL), or blank for the system's. Set once at start, before the first call. */
     public static java.util.function.Supplier<String> proxy = () -> "";
-    /** True when a token may travel over plain http to a host that is not this machine (guard.allowPlainHttp). */
     public static boolean allowPlainHttp;
     private static final int MAX_REDIRECTS = 5;
 
@@ -35,7 +32,7 @@ public final class Http {
 
     static HttpClient client() {
         if (client == null) {
-            HttpClient.Builder b = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).followRedirects(HttpClient.Redirect.NEVER); // send() follows them itself, never to another address
+            HttpClient.Builder b = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).followRedirects(HttpClient.Redirect.NEVER);
             String via = proxy.get();
             if (!via.isBlank()) {
                 URI u = URI.create(via.contains("://") ? via : "http://" + via);
@@ -69,7 +66,6 @@ public final class Http {
         return send(rb.build(), url);
     }
 
-    /** multipart/form-data upload of one file (Confluence attachments). */
     public static String upload(String method, String url, String auth, String fileName, byte[] data, String mime) {
         encrypted(url);
         String boundary = "sdlc" + UUID.randomUUID().toString().replace("-", "");
@@ -87,7 +83,6 @@ public final class Http {
         return send(req, url);
     }
 
-    /** A token is sent only over https, or to this machine (a mock, a tunnel). */
     private static void encrypted(String url) {
         URI u = URI.create(url);
         String host = u.getHost() == null ? "" : u.getHost().toLowerCase(java.util.Locale.ROOT);
@@ -121,8 +116,7 @@ public final class Http {
         int s = r.statusCode();
         String where = shortUrl(url);
         if (s >= 300 && s < 400 && s != 304) {
-            // A redirect is followed only to the same scheme, host and port, and only for a read:
-            // the token must not go to wherever a server (or someone in between) points.
+            // A redirect is followed only to the same scheme, host and port, and only for a read: the token must not go elsewhere.
             URI from = URI.create(url);
             URI to = r.headers().firstValue("Location").map(from::resolve).orElse(null);
             if (to != null && to.getHost() != null && req.method().equals("GET") && hops < MAX_REDIRECTS && sameAddress(from, to)) {

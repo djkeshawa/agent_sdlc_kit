@@ -5,7 +5,6 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
-/** Path globs: ** any folders, * any characters but '/', ? one character, {a,b} alternatives. */
 public final class Glob {
     private static final Map<String, Pattern> CACHE = new ConcurrentHashMap<>();
 
@@ -27,7 +26,7 @@ public final class Glob {
 
     private static Pattern toRegex(String glob) {
         String s = normalize(glob);
-        if (s.endsWith("/**")) s = s.substring(0, s.length() - 3); // "dir/**" also matches "dir"
+        if (s.endsWith("/**")) s = s.substring(0, s.length() - 3);
         StringBuilder re = new StringBuilder();
         int braces = 0;
         for (int i = 0; i < s.length(); i++) {

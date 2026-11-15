@@ -8,11 +8,9 @@ import java.util.Map;
 import sdlc.core.Console;
 import sdlc.workflow.IssueTracker;
 
-/** An issue tracker, a wiki and a console in memory, for the workflow self tests. */
 final class Fakes {
     private Fakes() {}
 
-    /** A console that keeps what the steps say, so a test can read it and the test run stays quiet. */
     static final class Recorder implements Console {
         final List<String> out = new ArrayList<>(), err = new ArrayList<>();
 
@@ -21,7 +19,6 @@ final class Fakes {
         public void err(String line) { err.add(line); }
     }
 
-    /** An issue tracker in memory. */
     static final class Tracker implements IssueTracker {
         final Map<String, List<Comment>> comments = new LinkedHashMap<>();
         final Map<String, String> status = new LinkedHashMap<>();
@@ -64,7 +61,6 @@ final class Fakes {
         }
     }
 
-    /** A wiki in memory. */
     static final class Wiki implements sdlc.workflow.Wiki {
         final Map<String, sdlc.workflow.Wiki.Page> pages = new LinkedHashMap<>();
 

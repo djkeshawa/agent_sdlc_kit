@@ -16,23 +16,6 @@ import sdlc.util.Json;
 import sdlc.util.Markdown;
 import sdlc.util.Yaml;
 
-/**
- * The solution design's machine-readable block, on the epic's "Solution design" page:
- *
- *   # sdlc-solution
- *   requirements: [R-01, R-02]
- *   components:
- *     - {name: payments-service, role: provider, change: ..., requirements: [R-01], evidence: [...]}
- *   ruledOut:  [{name: notification-service, reason: ...}]
- *   disputed:  []
- *   contracts:
- *     - {provider: payments-service, api: payments-api, add: ["POST /refunds"], remove: [], compatibility: additive}
- *   order: [payments-service, orders-service]
- *
- * Each component gets a slice (its entry, the contracts it provides and may consume, its
- * requirements) with a hash: an LLD names the slice hash it was written from, so a changed slice
- * re-opens only the LLDs it touches.
- */
 public final class Solution {
     public record Component(String name, String role, String change, List<String> requirements, List<String> evidence) {}
 
@@ -48,7 +31,6 @@ public final class Solution {
     public final List<String> disputed;
     public final List<Contract> contracts;
     public final List<String> order;
-    /** R-01 -> its text, from the page's requirement lines (when the page has them). */
     public final Map<String, String> requirementText;
 
     private Solution(Map<String, Object> root, Map<String, String> requirementText) {
@@ -82,14 +64,12 @@ public final class Solution {
     private static final Pattern FENCED = Pattern.compile("(?s)```ya?ml\\s*\\n(#\\s*sdlc-solution.*?)```");
     private static final Pattern REQ_LINE = Pattern.compile("(?m)^\\s*(?:[-*|]\\s*)?\\**(R-[0-9]+)\\**\\s*[:|.)-]\\s*(.+?)\\s*\\|?\\s*$");
 
-    /** From a Markdown draft. */
     public static Solution parse(String markdown) {
         Matcher m = FENCED.matcher(markdown);
         if (!m.find()) throw new UsageException("the solution design has no '# sdlc-solution' block: a ```yaml code block starting with '# sdlc-solution' (see .agent/templates/solution-design.md)");
         return fromYaml(m.group(1), requirementLines(markdown));
     }
 
-    /** From a Confluence page (storage format). */
     public static Solution parseStorage(String storage) {
         for (String[] b : Markdown.codeBlocks(storage)) {
             if (b[1].stripLeading().startsWith("# sdlc-solution")) return fromYaml(b[1], requirementLines(Markdown.toMarkdown(storage)));
@@ -116,7 +96,6 @@ public final class Solution {
         return out;
     }
 
-    /** Problems that block publishing (and approving) the solution. An empty catalog skips the catalog checks. */
     public List<String> problems(Catalog catalog) {
         List<String> p = new ArrayList<>();
         if (components.isEmpty()) p.add("no components");
@@ -152,7 +131,6 @@ public final class Solution {
         return p;
     }
 
-    /** What one component's team gets: its entry, its requirements, the contracts it provides, the ones it may consume. */
     public String slice(String component) {
         Component c = components.get(component);
         if (c == null) throw new UsageException(component + " is not in the solution");
@@ -179,7 +157,6 @@ public final class Solution {
         return Verify.sha256(slice(component)).substring(0, 12);
     }
 
-    /** Operations of an API this solution allows to be added (normalized), for the contract check. */
     public Set<String> allowedAdds(String api) {
         Set<String> out = new LinkedHashSet<>();
         for (Contract k : contracts) if (k.api().equals(api)) for (String op : k.add()) out.add(Contracts.normalize(op));

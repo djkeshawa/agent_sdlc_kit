@@ -19,13 +19,6 @@ import sdlc.core.Work;
 import sdlc.integrations.GitHub;
 import sdlc.util.Json;
 
-/**
- * Coupling the catalog does not show. `catalog cochange <EPIC>...` finds, through GitHub commit
- * search by Jira key, which components changed together for each past epic; a pair that changes
- * together again and again with no declared or scanned dependency is usually a hidden coupling
- * (a shared table, library or copied DTO). `catalog import-traces --file <json>` adds the calls
- * your tracing system saw between services (Jaeger's dependencies format, or a plain list).
- */
 public final class CoChange {
     private final Workflow w;
 
@@ -33,7 +26,6 @@ public final class CoChange {
         this.w = w;
     }
 
-    /** A pair of components, how often and in which epics they changed together, and what explains it. */
     public record Pair(String a, String b, int count, List<String> epics, String known) {}
 
     public int run(List<String> epics, int min) {
@@ -63,7 +55,6 @@ public final class CoChange {
         return 0;
     }
 
-    /** Every pair of components that changed in the same epic, most frequent first. */
     public static List<Pair> pairs(Map<String, Set<String>> byEpic, Set<String> declared, Set<String> seen) {
         Map<String, List<String>> together = new TreeMap<>();
         for (Map.Entry<String, Set<String>> e : byEpic.entrySet()) {
@@ -84,7 +75,6 @@ public final class CoChange {
         return a.compareTo(b) <= 0 ? a + "|" + b : b + "|" + a;
     }
 
-    /** Pairs the catalog declares: consumesApis of an API another component provides, and dependsOn. */
     static Set<String> declared(Catalog c) {
         Set<String> out = new TreeSet<>();
         for (Catalog.Component comp : c.components.values()) {
@@ -98,7 +88,6 @@ public final class CoChange {
         return out;
     }
 
-    /** Pairs scans and traces saw. */
     static Set<String> seen(Catalog c) {
         Set<String> out = new TreeSet<>();
         for (CatalogScan.Edge e : CatalogScan.allEdges()) {
@@ -109,9 +98,6 @@ public final class CoChange {
         return out;
     }
 
-    // ---------------- runtime traces ----------------
-
-    /** sdlc catalog import-traces --file <json>: Jaeger's /api/dependencies ({data: [{parent, child, callCount}]}) or [{from, to, calls}]. */
     public static int importTraces(Path file) throws IOException {
         Object root = Json.parse(Files.readString(file));
         List<Object> rows = root instanceof Map<?, ?> m ? Json.list(m.get("data")) : Json.list(root);

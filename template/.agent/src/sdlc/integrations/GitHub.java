@@ -12,18 +12,11 @@ import sdlc.core.UsageException;
 import sdlc.util.Json;
 import sdlc.util.Proc;
 
-/**
- * Read-only GitHub queries through the gh CLI (it already holds the person's login, so the
- * tool needs no GitHub token of its own). Used for cross-repository facts: which repositories
- * had commits for a Jira key, and the content of a file in another repository.
- */
 public final class GitHub {
     private GitHub() {}
 
-    /** One commit found by search: the repository (owner/name), the sha and the first line of its message. */
     public record Commit(String repo, String sha, String subject) {}
 
-    /** Commits whose message mentions the key, in the configured organisation (github.org) when set. */
     public static List<Commit> commitsFor(String key) {
         String org = Ctx.cfg.str("github.org");
         String q = "\"" + key + "\"" + (org.isBlank() ? "" : " org:" + org);
@@ -33,18 +26,12 @@ public final class GitHub {
         java.util.regex.Pattern exact = java.util.regex.Pattern.compile("(^|[^A-Z0-9-])" + java.util.regex.Pattern.quote(key) + "([^0-9]|$)");
         for (Object item : Json.list(Json.at(Json.parse(r.out()), "items"))) {
             String message = Json.str(item, "commit.message");
-            if (!exact.matcher(message).find()) continue; // the search is fuzzy: PAY-10 also finds PAY-100
+            if (!exact.matcher(message).find()) continue;
             out.add(new Commit(Json.str(item, "repository.full_name"), Json.str(item, "sha"), message.lines().findFirst().orElse("")));
         }
         return out;
     }
 
-    /**
-     * Repositories (owner/name) with commits for any of the keys, with the number of commits each.
-     * Two sources, because GitHub's commit search covers default branches only and often has
-     * nothing for private repositories: the search, and the commit lists of every branch of the
-     * known repositories (this one, github.relatedRepos, catalog.repos).
-     */
     public static Map<String, Integer> reposFor(List<String> keys, List<String> knownRepos) {
         Map<String, Integer> repos = new LinkedHashMap<>();
         Set<String> seen = new LinkedHashSet<>();
@@ -53,7 +40,6 @@ public final class GitHub {
             try {
                 found.addAll(commitsFor(k));
             } catch (UsageException e) {
-                // the search may be unavailable (rate limit, GitHub Enterprise without it): the listing below still answers
             }
             java.util.regex.Pattern exact = java.util.regex.Pattern.compile("(^|[^A-Z0-9-])" + java.util.regex.Pattern.quote(k) + "([^0-9]|$)");
             for (String repo : knownRepos) for (Commit c : commitsIn(repo)) if (exact.matcher(c.subject()).find()) found.add(c);
@@ -64,7 +50,6 @@ public final class GitHub {
 
     private static final Map<String, List<Commit>> LISTED = new LinkedHashMap<>();
 
-    /** The commits of every branch of a repository (first line of each message), newest github.commitPages x 100 per branch. */
     static List<Commit> commitsIn(String repo) {
         List<Commit> cached = LISTED.get(repo);
         if (cached != null) return cached;
@@ -93,7 +78,6 @@ public final class GitHub {
         return out;
     }
 
-    /** owner/name of this repository's origin on the configured GitHub host, or "" when it has none. */
     public static String originRepo() {
         Proc r = Proc.run(Ctx.root, "git", "remote", "get-url", "origin");
         if (r.code() != 0) return "";
@@ -101,7 +85,6 @@ public final class GitHub {
         return m.find() && !r.out().strip().startsWith("/") && !r.out().strip().startsWith("file:") ? m.group(1) : "";
     }
 
-    /** The text of a file in another repository's default branch, or null when it has none. */
     public static String file(String repo, String path) {
         Proc r = Proc.run(Ctx.root, "gh", "api", "-H", "Accept: application/vnd.github.raw", "repos/" + repo + "/contents/" + path);
         return r.code() == 0 ? r.out() : null;

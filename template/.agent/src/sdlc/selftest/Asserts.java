@@ -9,11 +9,9 @@ import sdlc.core.UsageException;
 import sdlc.guard.Decision;
 import sdlc.util.Json;
 
-/** What the self test classes share: the pass and fail counters and short ways to ask the guard for a decision. */
 final class Asserts {
     private Asserts() {}
 
-    /** Where failures are reported, kept from the start: a test may silence System.out around a noisy command. */
     private static final java.io.PrintStream REPORT = System.out;
 
     static int passed;
@@ -32,12 +30,10 @@ final class Asserts {
         return Hooks.decide("run_in_terminal", Json.obj(Json.parse("{\"command\":" + Json.quote(command) + "}")));
     }
 
-    /** A shell command with the agent's shell in the given folder (the hook payload's cwd). */
     static Decision shellIn(Path folder, String command) {
         return Hooks.decide("run_in_terminal", Json.obj(Json.parse("{\"command\":" + Json.quote(command) + "}")), folder);
     }
 
-    /** A path as it stands inside a JSON string: a Windows path's backslashes must be escaped, as a host escapes them. */
     static String json(Path path) {
         String quoted = Json.quote(path.toString());
         return quoted.substring(1, quoted.length() - 1);

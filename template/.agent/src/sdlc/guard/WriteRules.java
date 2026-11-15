@@ -11,11 +11,6 @@ import java.util.Set;
 import sdlc.util.Glob;
 import sdlc.util.ShellWords;
 
-/**
- * Shell rules about commands that change files: redirections and file commands (rm, mv, cp,
- * sed -i, Set-Content ...), patches, archives and deletes. The files they would touch are
- * held to the same rules as an edit tool: no guardrail files, code only inside the task scope.
- */
 final class WriteRules {
     private static final Set<String> WRITERS = Set.of("rm", "rmdir", "mv", "tee", "truncate", "touch", "chmod", "ln", "unlink", "shred",
             "set-content", "add-content", "out-file", "remove-item", "move-item", "new-item", "rename-item", "clear-content",
@@ -28,7 +23,6 @@ final class WriteRules {
         this.g = g;
     }
 
-    /** Shell writes (redirections, rm/mv/cp/sed -i/Set-Content ...) into guardrail files or code outside the task scope. */
     Decision targets(ShellCommand c) {
         String name = c.name();
         List<String> args = c.args(), raw = c.raw();
@@ -44,7 +38,7 @@ final class WriteRules {
         if (name.equals("git") && !args.isEmpty() && Set.of("rm", "mv", "checkout", "restore").contains(args.get(0))) {
             targets.addAll(args.subList(1, args.size()).stream().filter(a -> !a.startsWith("-")).toList());
         }
-        List<String> expanded = new ArrayList<>(); // the files the shell will really touch: braces and globs expanded
+        List<String> expanded = new ArrayList<>();
         for (String t : targets) {
             for (String b : ShellWords.braces(t)) {
                 expanded.add(b);
@@ -56,10 +50,10 @@ final class WriteRules {
         }
         for (String t : expanded) {
             if (t.isBlank() || t.equals("/dev/null") || t.equalsIgnoreCase("nul")) continue;
-            for (String alt : g.files.otherReadings(t)) { // the same words read from another folder the shell may be in
+            for (String alt : g.files.otherReadings(t)) {
                 if (g.files.isProtected(alt)) return Decision.deny("`" + t + "` may name `" + alt + "`, a guardrail or state file. Only a human or the sdlc tool changes it.");
             }
-            for (String rel : g.files.writeTargets(t)) { // the path, and the file a symbolic link on the way leads to
+            for (String rel : g.files.writeTargets(t)) {
                 if (g.files.isProtected(rel)) return Decision.deny("`" + rel + "` is a guardrail or state file. Only a human or the sdlc tool changes it.");
                 if (rel.startsWith("..") || !Glob.any(g.cfg.list("paths.code"), rel) || Glob.any(g.cfg.list("paths.agentWritable"), rel)) continue;
                 Decision scope = g.files.scope(rel);
@@ -69,7 +63,6 @@ final class WriteRules {
         return null;
     }
 
-    /** Commands that write files the guard cannot name from the command line: patches and archives. */
     Decision patchOrArchive(ShellCommand c) {
         String name = c.name();
         List<String> args = c.args();
@@ -97,7 +90,6 @@ final class WriteRules {
         return Decision.ask("`" + name + "` unpacks files the guard cannot list into `" + dest + "`. Approve only if nothing lands outside the task scope or on a guardrail file.");
     }
 
-    /** git apply / git am / patch: the files named in the patch are checked like edits; an unreadable patch needs a human. */
     private Decision patch(String name, List<String> args) {
         List<String> rest = name.equals("git") ? args.subList(1, args.size()) : args;
         if (rest.stream().anyMatch(a -> Set.of("--check", "--stat", "--numstat", "--summary", "--dry-run").contains(a))) return null;
@@ -120,7 +112,6 @@ final class WriteRules {
                 Path p = g.folders.base().resolve(ShellRules.expandHome(f));
                 if (Files.isRegularFile(p) && Files.size(p) < 5_000_000) targets.addAll(FileRules.diffTargets(Files.readString(p), strip));
             } catch (IOException | RuntimeException e) {
-                // unreadable: handled below
             }
         }
         String what = name.equals("git") ? "git " + args.get(0) : name;
@@ -129,7 +120,6 @@ final class WriteRules {
         return g.files.checkEdit(targets.stream().map(t -> prefix + t).toList());
     }
 
-    /** rm and friends: never outside the project, the whole project or .git; a recursive delete outside build output needs a human. */
     Decision remove(ShellCommand c) {
         if (!REMOVERS.contains(c.name())) return null;
         List<String> args = c.args();

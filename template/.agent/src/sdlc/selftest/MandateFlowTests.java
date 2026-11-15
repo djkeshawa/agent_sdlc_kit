@@ -24,10 +24,6 @@ import sdlc.mandate.MandateCli;
 import sdlc.mandate.SelfApproval;
 import sdlc.util.Proc;
 
-/**
- * Self test: approving a mandate and checking a change against it (sdlc mandate approve,
- * sdlc check --mandate), in a repository of its own with the stand-in test runner.
- */
 final class MandateFlowTests {
     private MandateFlowTests() {}
 
@@ -87,9 +83,7 @@ final class MandateFlowTests {
                 && first.contains("1 fails before it and passes after it (0 approved with the mandate, 1 written with the change)"));
         check("mandate: every verdict says what it does not say", first.contains("that the change is correct") && first.contains("approved before the work"));
 
-        // approval: the sentence first, then the card
         ByteArrayOutputStream said = new ByteArrayOutputStream();
-        // a draft swapped in while the person is deciding is not approved
         String draftText = Files.readString(repo.resolve("docs/mandates/fix.json"));
         Deque<String> slow = new ArrayDeque<>(List.of("it breaks", "1", "fix"));
         ByteArrayOutputStream swapped = new ByteArrayOutputStream();
@@ -124,26 +118,22 @@ final class MandateFlowTests {
         String inside = verdict();
         check("mandate: an approved mandate and a change inside it give scope INSIDE", inside.contains("Scope     INSIDE") && inside.contains("their own approval, recorded on this machine") && code == 0);
 
-        // outside the paths
         write(repo, "elsewhere.txt", "x\n");
         String outside = verdict();
         check("mandate: a file outside the paths gives scope OUTSIDE and fails", outside.contains("Scope     OUTSIDE") && outside.contains("            elsewhere.txt") && code == 1);
         Files.delete(repo.resolve("elsewhere.txt"));
 
-        // the mandate edited after approval
         String approvedText = Files.readString(repo.resolve("docs/mandates/fix.json"));
         write(repo, "docs/mandates/fix.json", approvedText.replace("The fix is applied", "The fix is applied, and more"));
         String edited = verdict();
         check("mandate: a mandate edited after approval is AMENDED", edited.contains("Scope     AMENDED") && edited.contains("edited since it was approved"));
         write(repo, "docs/mandates/fix.json", approvedText);
 
-        // a locked test changed
         write(repo, "tests/keep.t", "stays: pass\nextra: pass\n");
         String locked = verdict();
         check("mandate: a changed locked test violates the first obligation", locked.contains("violated  locked tests are the files the mandate names") && locked.contains("tests/keep.t is not the file the mandate names") && code == 1);
         write(repo, "tests/keep.t", "stays: pass\n");
 
-        // the build changed: no test result counts
         write(repo, "tests/package.json", "{}\n");
         String build = verdict();
         check("mandate: a changed build file violates the second obligation and makes the test results unknown",
@@ -155,11 +145,9 @@ final class MandateFlowTests {
         Files.delete(repo.resolve("web/vite.config.ts"));
         Files.delete(repo.resolve("web"));
 
-        // a scenario that fails, and one that is not there
         write(repo, "tests/fix.t", "fixed: fail\n");
         String failing = verdict();
         check("mandate: a failing scenario is violated", failing.contains("violated  scenarios found, ran and passed: 0 of 1") && code == 1);
-        // the build ran the scenario again: where it failed every time it failed, and where it passed only when run again it is not one result
         write(repo, "tests/fix.t", "fixed: fail-retried\n");
         String spent = verdict();
         check("mandate: a scenario that failed every time the build ran it is violated", spent.contains("violated  scenarios found, ran and passed: 0 of 1") && code == 1);
@@ -167,12 +155,10 @@ final class MandateFlowTests {
         String again = verdict();
         check("mandate: a scenario that passed only when the build ran it again is unknown, not passed",
                 again.contains("unknown   scenarios found, ran and passed: 0 of 1") && again.contains("gave different results when the build ran it again"));
-        // a run that does not say which passes were at the first try (a vitest that does not count retries): a pass there is not one result either
         write(repo, "tests/fix.t", "fixed: needs fixed\nretries not said\n");
         String untold = verdict();
         check("mandate: a scenario that passed in a run that does not say whether it passed at the first try is unknown, not passed",
                 untold.contains("unknown   scenarios found, ran and passed: 0 of 1") && code == 0);
-        // two tests whose names end alike are two tests, wherever a bracket stands in their names
         write(repo, "tests/fix.t", "one(a) > fixed: needs fixed\none(b) > fixed: needs fixed\n");
         String twoHomes = verdict();
         check("mandate: a scenario name that fits two tests of one file names neither", twoHomes.contains("unknown   scenarios found, ran and passed: 0 of 1") && twoHomes.contains("more than one test has that name"));
@@ -184,7 +170,6 @@ final class MandateFlowTests {
         check("mandate: a scenario that is not found is unknown, not passed", missing.contains("unknown   scenarios found, ran and passed: 0 of 1") && missing.contains("was not found among the tests that ran"));
         write(repo, "tests/fix.t", "fixed: needs fixed\n");
 
-        // a test that ran before is switched off, another is gone: the witness is violated
         write(repo, "tests/other.t", "on: skip\n");
         String weakened = verdict();
         check("mandate: a test that ran before the change and is skipped now violates the witness, and so does the test gone beside it: both counted, in one line",
@@ -196,7 +181,6 @@ final class MandateFlowTests {
         String gone = verdict();
         check("mandate: a test that is gone, said of its file, violates the witness", gone.contains("violated  the change's own tests") && gone.contains("tests/other.t: the file as it "
                 + "was passed 2 of its tests, and after the change it runs 1: at least 1 test that ran before the change does not run now (no longer reported: goes)") && code == 1);
-        // one test gone and one new: a rename and a test deleted and another written look alike in the reports
         write(repo, "tests/other.t", "on: pass\nreturns: pass\n");
         String renamed = verdict();
         check("mandate: a test renamed leaves the witness unknown, not violated", renamed.contains("unknown   the change's own tests: 1 fails before it and passes after it")
@@ -206,12 +190,10 @@ final class MandateFlowTests {
         check("mandate: and so does a test deleted and another written in its stead", replaced.contains("unknown   the change's own tests: 1 fails before it and passes after it")
                 && replaced.contains("2 of the change's tests could not be judged") && !replaced.contains("does not test the change") && code == 0);
         write(repo, "tests/other.t", "on: pass\ngoes: pass\n");
-        // but an old test that passed before, fails as it was on the change, and is gone: violated
         write(repo, "tests/hurt.t", "guarded: pass\n");
         String hurt = verdict();
         check("mandate: an old test that the change breaks and takes out of the way violates the witness", hurt.contains("violated  the change's own tests")
                 && hurt.contains("tests/hurt.t  guards: passed before the change; as the test was, on the code after the change guards fails: expected something else") && code == 1);
-        // the same old test renamed and rewritten for the changed behaviour (the rewrite fails before and passes after): a full review decides
         write(repo, "tests/hurt.t", "guards anew: needs fixed\n");
         String rewritten = verdict();
         check("mandate: an old test the change breaks, renamed and rewritten as a sensitive test, leaves the witness unknown, not violated",
@@ -219,7 +201,6 @@ final class MandateFlowTests {
                 && !rewritten.contains("violated  the change's own tests") && code == 0);
         write(repo, "tests/hurt.t", "guards: fails-with fixed\n");
 
-        // each counted verdict of a file, with a least number above one, is counted by the tests it proves
         write(repo, "tests/three.t", "z: pass\n");
         String twoRemoved = verdict();
         check("mandate: two tests removed are counted as two", twoRemoved.contains("violated  the change's own tests: 1 fails before it and passes after it (0 approved with the mandate, "
@@ -238,13 +219,11 @@ final class MandateFlowTests {
                 && code == 1);
         write(repo, "tests/hurts.t", "a: fails-with fixed\nb: fails-with fixed\nc: fails-with fixed\nd: pass\n");
 
-        // what must stay true breaks
         write(repo, "prod.txt", "v1\nfixed\nbroken\n");
         Files.writeString(repo.resolve("docs/mandates/fix.json"), approvedText);
         String noRun = report(Map.of("mandate", "fix", "no-run", "true"));
         check("mandate: --no-run reads git only and marks the rest not run", noRun.contains("not run   scenarios found, ran and passed") && noRun.contains("satisfied locked tests"));
 
-        // approving with no covering test, and cancelling
         Deque<String> none = new ArrayDeque<>(List.of("it breaks search", "0", "fix"));
         check("mandate: approving with no covering test is allowed", MandateCli.approve(repo, "fix", q -> none.poll(), new PrintStream(new ByteArrayOutputStream())) == 0);
         check("mandate: and every verdict then says the sentence is unresolved", verdict().contains("unresolved \"this fails if it breaks search\": the approver named no test that covers it"));
@@ -256,7 +235,6 @@ final class MandateFlowTests {
                 MandateCli.approve(repo, "fix", q -> wrongId.poll(), new PrintStream(new ByteArrayOutputStream())) == 1 && Files.readString(repo.resolve("docs/mandates/fix.json")).equals(before));
         check("mandate: an id that is not a mandate is refused", Asserts.throwsUsage(() -> Check.run(Map.of("mandate", "../x"))));
 
-        // a change to production code only: "before" must be the real base, not the change laid over it
         write(repo, "tests/reg.t", "holds: needs more\n");
         commit(repo, "everything so far, and a test that the base does not pass");
         String reg = Proc.run(repo, "git", "hash-object", "--", "tests/reg.t").out().strip();
@@ -275,19 +253,16 @@ final class MandateFlowTests {
         check("mandate: with only production code changed, a test that fails on the base is seen to fail before the change",
                 prodOnly.contains("violated  what must stay true passes before and after: 0 of 1") && prodOnly.contains("fails before the change"));
 
-        // a mandate that is a link to a file elsewhere
         Path outsideFile = Files.createTempFile("sdlc-elsewhere", ".json");
         try {
             Files.writeString(outsideFile, Files.readString(repo.resolve("docs/mandates/prodonly.json")).replace("prodonly", "linked"));
             Files.createSymbolicLink(repo.resolve("docs/mandates/linked.json"), outsideFile);
             check("mandate: a mandate that is a link is refused", Asserts.throwsUsage(() -> Mandate.load(repo, "linked")));
         } catch (IOException | UnsupportedOperationException e) {
-            // no links on this file system: nothing to refuse
         } finally {
             Files.deleteIfExists(repo.resolve("docs/mandates/linked.json"));
             Files.deleteIfExists(outsideFile);
         }
-        // approval writes the file out again, with the sentence: it must still be a file the tool will read
         StringBuilder paths = new StringBuilder();
         for (int i = 0; i < 22_000; i++) paths.append(i == 0 ? "" : ",").append("\"p/").append(i).append('"');
         write(repo, "docs/mandates/sizey.json", "{\"mandate\":\"v0\",\"id\":\"sizey\",\"intent\":\"Many paths\",\"scope\":{\"paths\":[" + paths + "]},\"oracle\":{\"scenarios\":[\"tests/fix.t#fixed\"]}}");
@@ -301,7 +276,6 @@ final class MandateFlowTests {
                 && SelfApproval.of(repo, "sizey") == null);
         Files.delete(repo.resolve("docs/mandates/sizey.json"));
 
-        // a fixture file that the change turns into a folder of fixtures
         write(repo, "tests/fx.t", "old shape: pass\n");
         commit(repo, "a fixture as one file");
         Files.delete(repo.resolve("tests/fx.t"));
@@ -312,7 +286,6 @@ final class MandateFlowTests {
         Files.delete(repo.resolve("tests/fx.t"));
         write(repo, "tests/fx.t", "old shape: pass\n");
 
-        // a test file only moved, as many tests as it had: none of them is new or removed, so the line of the change's own tests is not violated for it
         write(repo, "tests/mv/a.t", "stays: pass\n");
         commit(repo, "a test file to move");
         write(repo, "docs/mandates/move.json", """
@@ -334,14 +307,12 @@ final class MandateFlowTests {
                 && !movedOnly.contains("violated  the change's own tests"));
         Files.delete(repo.resolve("tests/mv/b/a.t"));
         write(repo, "tests/mv/a.t", "stays: pass\n");
-        // a test file deleted, within the mandate's scope: the witness sees only files the change adds or edits, so the run says it
         Files.delete(repo.resolve("tests/mv/a.t"));
         String deletedOnly = report(Map.of("mandate", "move", "selftest-runner", "true", "runs", "1"));
         check("mandate: a test file deleted is a test that ran and does not run now: the witness line is violated, with the file and the count",
                 deletedOnly.contains("violated  the change's own tests") && deletedOnly.contains("tests/mv/a.t")
                 && deletedOnly.contains("the file passed 1 of its tests before the change and was deleted: at least 1 test that ran before the change does not run now"));
         write(repo, "tests/mv/a.t", "stays: pass\n");
-        // a test file moved whose new import gives it a row more, passing on both sides: a new test that does not test the change, as in any file
         String rows = "package a;\n\nimport real.Calc;\n\nadds: pass\nmore: pass-with real.Rows\n";
         write(repo, "tests/jvm/mv/a/RowsTest.java", rows);
         commit(repo, "a test class to move");
@@ -356,7 +327,6 @@ final class MandateFlowTests {
         write(repo, "tests/jvm/mv/a/RowsTest.java", rows);
         Files.delete(repo.resolve("docs/mandates/move.json"));
 
-        // a link in the base that the change turns into a folder: what the link leads to is never touched
         Path elsewhere = Files.createTempDirectory("sdlc-elsewhere").toRealPath();
         Path sentinel = elsewhere.resolve("sub");
         try {
@@ -372,13 +342,11 @@ final class MandateFlowTests {
             Files.delete(repo.resolve("tests/linked"));
             Files.createSymbolicLink(repo.resolve("tests/linked"), elsewhere);
         } catch (IOException | UnsupportedOperationException e) {
-            // no links on this file system: nothing to protect
         } finally {
             Files.deleteIfExists(sentinel);
             Files.deleteIfExists(elsewhere);
         }
 
-        // text of the repository that is printed without being a valid mandate
         write(repo, "docs/mandates/odd.json", "{\"mandate\": \"v0\", \"id\": \"odd\", \"intent\": \"All is \u202ellew\u001b[2J\"}");
         PrintStream console = System.out;
         ByteArrayOutputStream listed = new ByteArrayOutputStream();
@@ -394,7 +362,6 @@ final class MandateFlowTests {
                 shownList.contains("odd") && shownList.contains("not valid") && shownList.indexOf('\u202e') < 0 && shownList.indexOf('\u001b') < 0);
         Files.delete(repo.resolve("docs/mandates/odd.json"));
 
-        // a linked worktree keeps its git folder outside the checkout: the approval record and the hooks there are guarded all the same
         Path linked = Files.createTempDirectory("sdlc-linked").toRealPath();
         Files.delete(linked);
         git(repo, "worktree", "add", "-q", "--detach", linked.toString());

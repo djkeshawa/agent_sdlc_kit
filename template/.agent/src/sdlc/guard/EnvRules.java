@@ -10,7 +10,6 @@ import java.util.regex.Pattern;
 
 import sdlc.core.Config;
 
-/** Shell rules about environment variables: setting the ones that steer the guard, git or the build, and printing them. */
 public final class EnvRules {
     private static final Set<String> ENV_DUMP = Set.of("env", "printenv", "set", "export", "declare", "compgen");
     private static final Pattern GUARD_VAR = Pattern.compile("^(SDLC_|GIT_DIR=|GIT_WORK_TREE=|GIT_COMMON_DIR=|GIT_INDEX_FILE=|GIT_OBJECT_DIRECTORY=|GIT_CONFIG|HUSKY=0|SKIP=)");
@@ -20,10 +19,8 @@ public final class EnvRules {
             + "|GIT_TEMPLATE_DIR|GIT_PROXY_COMMAND|PAGER|EDITOR|VISUAL)$");
     private static final Pattern BUILD_ENV = Pattern.compile("^(MAVEN_OPTS|MAVEN_ARGS|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|JDK_JAVA_OPTIONS|JAVA_OPTS|GRADLE_OPTS|NODE_OPTIONS)$");
     private static final Pattern NPM_CONFIG = Pattern.compile("(?i)^npm_config_(.+)$");
-    /** Variables that load code into, or run a script before, every program the command starts. */
     private static final Pattern INJECT_VAR = Pattern.compile("^(LD_PRELOAD|LD_AUDIT|LD_LIBRARY_PATH|DYLD_[A-Z_]+|BASH_ENV|ENV|PROMPT_COMMAND|PERL5OPT|RUBYOPT|PYTHONSTARTUP)$");
     private static final Pattern JVM_VAR = Pattern.compile("^(MAVEN_OPTS|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|JDK_JAVA_OPTIONS|JAVA_OPTS|GRADLE_OPTS)$");
-    /** JVM options that load an agent or change which certificates, proxies and security settings Java trusts. */
     private static final Pattern JVM_INJECT = Pattern.compile("(?i)^(-javaagent|-agentlib|-agentpath|-Xbootclasspath|--patch-module|-Djava\\.security\\.|-Djavax\\.net\\.ssl\\.|-Dcom\\.sun\\.net\\.ssl\\."
             + "|-Dsdlc\\.|-D(https?|socks)\\.?proxy|-Djdk\\.internal\\.httpclient\\.).*");
     private static final Pattern NODE_INJECT = Pattern.compile("^(-r|--require|--import|--loader|--experimental-loader)(=.*)?$");
@@ -35,7 +32,6 @@ public final class EnvRules {
         this.g = g;
     }
 
-    /** NAME=value before a command, after export / set, or as $env:NAME = value. Null when harmless; a refusal, or a question for the human. */
     Decision variable(String assignment) {
         if (GUARD_VAR.matcher(assignment).find()) return Decision.deny("the command changes a variable that controls the guardrails or git.");
         if (IDENTITY_VAR.matcher(assignment).find()) return Decision.deny("the command changes the identity or token the tools run with.");
@@ -66,11 +62,10 @@ public final class EnvRules {
         return null;
     }
 
-    /** A PATH entry inside the repository, in a temporary folder or relative: a place an agent can put a program of its own. Null when there is none. */
     private String writablePathEntry(String value) {
         for (String entry : value.split("[:;]")) {
             String e = entry.strip();
-            if (e.isEmpty() || e.startsWith("$") || e.startsWith("%") || e.startsWith("~") || e.length() == 1) continue; // $PATH, $JAVA_HOME/bin, a drive letter
+            if (e.isEmpty() || e.startsWith("$") || e.startsWith("%") || e.startsWith("~") || e.length() == 1) continue;
             String clean = e.replace('\\', '/');
             boolean absolute = clean.startsWith("/");
             if (!absolute || clean.startsWith("/tmp") || clean.startsWith("/var/tmp") || clean.startsWith("/dev/shm")) return e;
@@ -83,10 +78,6 @@ public final class EnvRules {
         return null;
     }
 
-    /**
-     * Build options smuggled in through the environment (MAVEN_OPTS=-DskipTests, npm_config_ignore_scripts=true):
-     * the reason they are refused, or null. Also used by `sdlc verify` on its own environment.
-     */
     public static String buildEnvProblem(Config cfg, String name, String value) {
         List<String> tokens = new ArrayList<>();
         Matcher npm = NPM_CONFIG.matcher(name);
@@ -101,7 +92,6 @@ public final class EnvRules {
         return null;
     }
 
-    /** PowerShell: $env:MAVEN_OPTS = "-DskipTests". */
     Decision powershellAssignment(ShellCommand c) {
         List<String> words = c.words();
         Matcher ps = PS_ENV.matcher(c.cmd());
@@ -110,7 +100,6 @@ public final class EnvRules {
         return variable(ps.group(1) + "=" + value);
     }
 
-    /** env, printenv, set, export ...: printing every variable would expose tokens; export NAME=value is checked like NAME=value. */
     Decision dump(ShellCommand c) {
         String name = c.name();
         List<String> args = c.args();
@@ -125,7 +114,6 @@ public final class EnvRules {
             }
             if (question != null) return question;
         }
-        // ps e / ps eww (BSD style) and ps -E (macOS) print every process's environment
         if (name.equals("ps") && args.stream().anyMatch(a -> a.matches("^[A-Za-z]*e[A-Za-z]*$") || a.matches("^-[A-Za-z]*E[A-Za-z]*$"))) {
             return Decision.deny("`ps` with `e` prints the environment of running programs, tokens included.");
         }

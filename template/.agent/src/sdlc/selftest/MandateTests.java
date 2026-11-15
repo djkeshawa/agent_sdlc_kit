@@ -21,13 +21,11 @@ import sdlc.mandate.MandateCli;
 import sdlc.util.Json;
 import sdlc.util.Proc;
 
-/** Self test: the mandate format (spec/mandate-v0.md), its card, and the mandate commands. */
 final class MandateTests {
     private MandateTests() {}
 
     static final String REGRESSION = "src/test/java/com/acme/search/SearchRegressionTest.java";
 
-    /** The example of the specification. */
     static final String EXAMPLE = """
             {
               "mandate": "v0",
@@ -102,7 +100,6 @@ final class MandateTests {
         Mandate withApis = Mandate.parse("x", EXAMPLE.replace("fix-search", "x").replace("\"scope\": {", "\"feature\": {\"key\": \"SEARCH\"}, \"scope\": { \"apis\": {\"openapi\": \"api.yaml\", \"operations\": [\"GET /search\"]},"));
         check("mandate: scope.apis is kept as it is, and feature.key is read", withApis.apis().get("openapi").equals("api.yaml") && withApis.featureKey().equals("SEARCH"));
 
-        // each rule of the table
         rule("mandate: mandate must be v0", EXAMPLE.replace("\"v0\"", "\"v1\""), "mandate must be \"v0\", not \"v1\"");
         rule("mandate: mandate is required", EXAMPLE.replace("\"mandate\": \"v0\",", ""), "mandate is missing");
         rule("mandate: id is required", EXAMPLE.replace("\"id\": \"fix-search\",", ""), "id is missing");
@@ -143,7 +140,6 @@ final class MandateTests {
         rule("mandate: failsIf must be text", EXAMPLE.replace("\"an empty query reaches the database\"", "true"), "failsIf must be text, not true or false");
         rule("mandate: feature.key must be text", EXAMPLE.replace("\"scope\": {", "\"feature\": {\"key\": 3}, \"scope\": {"), "feature.key must be text");
 
-        // unknown keys at every level the table describes
         rule("mandate: an unknown key at the top level", EXAMPLE.replace("\"intent\":", "\"budget\": 3, \"intent\":"), "unknown key \"budget\" at the top level");
         rule("mandate: an unknown key under scope", EXAMPLE.replace("\"scope\": {", "\"scope\": { \"effects\": [],"), "scope has an unknown key \"effects\"");
         rule("mandate: an unknown key under oracle", EXAMPLE.replace("\"oracle\": {", "\"oracle\": { \"holdouts\": [],"), "oracle has an unknown key \"holdouts\"");
@@ -162,7 +158,6 @@ final class MandateTests {
                 sdlc.mandate.MandateCard.safe("a\u202eb\u200bc\u001bd\ud83d\ude00").equals("a?b?c?d\ud83d\ude00"));
         rule("mandate: half of a surrogate pair alone is refused", EXAMPLE.replace("returns an empty list", "returns an \\ud83d empty list"), "intent has a control character");
         rule("mandate: so is the other half alone, in a key", EXAMPLE.replace("\"scope\": {", "\"scope\": { \"apis\": {\"x\\ude00\": \"y\"},"), "a key under scope.apis has a control character");
-        // the pairs of a text are read once: a mandate of the largest size, all of it emoji, is read in well under a second
         String emoji = "😀".repeat(62_000);
         long t0 = System.nanoTime();
         String big = message("x", EXAMPLE.replace("fix-search", "x").replace("\"scope\": {", "\"scope\": { \"apis\": {\"openapi\": \"" + emoji + "\"},"));

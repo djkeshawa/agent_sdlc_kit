@@ -1,13 +1,3 @@
-/*
- * Bootstrap of the sdlc tool - the only command you need to remember:
- *
- *     java .agent/Sdlc.java <command>          (Windows, macOS, Linux; JDK 17+)
- *
- * It compiles .agent/src/** into .agent/.build when the sources changed (with the JDK's own
- * compiler, no javac on the PATH needed), then runs sdlc.Main in the same process.
- * The IDE hooks use the faster launchers in .agent/bin/, which skip this step.
- */
-
 import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.reflect.InvocationTargetException;
@@ -36,7 +26,6 @@ public class Sdlc {
         }
     }
 
-    /** The .agent folder of the repository we are in. */
     static Path agentDir() {
         for (Path p = Path.of("").toAbsolutePath(); p != null; p = p.getParent()) {
             if (Files.isDirectory(p.resolve(".agent/src/sdlc"))) return p.resolve(".agent");
@@ -49,11 +38,8 @@ public class Sdlc {
         return !Files.exists(stamp) || !Files.readString(stamp).trim().equals(fingerprint(src));
     }
 
-    /**
-     * SHA-256 over the path and content of every source file. Content, not timestamps: sources
-     * copied in with old timestamps (cp -p, rsync -a, an archive) still count as a change.
-     * sdlc.Main.fingerprint computes the same value for the fast launchers.
-     */
+    // Content, not timestamps: cp -p, rsync -a and archives keep old timestamps.
+    // sdlc.Main.fingerprint must compute the same value.
     static String fingerprint(Path src) throws IOException {
         try {
             java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
@@ -71,7 +57,6 @@ public class Sdlc {
         }
     }
 
-    /** Compiles into a temporary folder, then moves the classes into place and writes the stamp. */
     static boolean compile(Path src, Path build) throws IOException {
         var compiler = javax.tools.ToolProvider.getSystemJavaCompiler();
         if (compiler == null) {

@@ -9,11 +9,9 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-/** Runs child processes. */
 public record Proc(int code, String out, String err) {
     public static final boolean WINDOWS = System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("win");
 
-    /** Variables added to the environment of every child process of this run. */
     public static final java.util.Map<String, String> ENV = new java.util.concurrent.ConcurrentHashMap<>();
 
     public static Proc run(Path dir, String... cmd) {
@@ -24,46 +22,23 @@ public record Proc(int code, String out, String err) {
         return runWithEnv(dir, java.util.Map.of(), stdin, timeoutSeconds, cmd);
     }
 
-    /**
-     * The most one stream of a child may hold in memory. A command whose answer is read as a whole
-     * (git) fails beyond it: a cut-off answer must not pass for the whole one.
-     */
     public static final int MAX_OUTPUT = 64 << 20;
-    /** The limit in use. A test lowers it. */
     public static volatile int maxOutput = MAX_OUTPUT;
-    /** What is kept of each end of a build's output, which is read only for its messages. */
     public static final int BUILD_OUTPUT_END = 2 << 20;
-    /**
-     * Gets the output of a child line by line as it arrives. A line longer than 16 KB comes in
-     * pieces that overlap; endsLine is false for every piece but the last.
-     */
     public interface Lines {
         void accept(String text, boolean endsLine);
     }
 
-    /** The exit code of a run whose output was larger than MAX_OUTPUT. */
     public static final int TOO_MUCH_OUTPUT = 125;
 
-    /** As runWithInput, with environment variables added to (an empty value removes one from) the child's environment. */
     public static Proc runWithEnv(Path dir, java.util.Map<String, String> env, String stdin, int timeoutSeconds, String... cmd) {
         return exec(dir, env, stdin, timeoutSeconds, maxOutput, 0, null, null, cmd);
     }
 
-    /**
-     * Runs a build or a test run, whose output can be of any size: the start and the end of each
-     * stream are kept for messages and the middle is dropped, with a line that says how much.
-     * Every line of each stream, kept or not, is handed to its listener as it arrives: a result
-     * must be decided from what the listeners saw, never from the shortened text.
-     */
     public static Proc runBuild(Path dir, java.util.Map<String, String> env, int timeoutSeconds, Lines outLines, Lines errLines, String... cmd) {
         return exec(dir, env, null, timeoutSeconds, BUILD_OUTPUT_END, BUILD_OUTPUT_END, outLines, errLines, cmd);
     }
 
-    /**
-     * Runs a command and keeps at most head bytes of the start of each output stream and tail bytes
-     * of its end. With tail 0 a larger output is an error (TOO_MUCH_OUTPUT), not a shortened answer.
-     * A listener, when given, gets every line of its stream (a line longer than 16 KB in pieces that overlap).
-     */
     public static Proc exec(Path dir, java.util.Map<String, String> env, String stdin, int timeoutSeconds, int head, int tail,
             Lines outLines, Lines errLines, String... cmd) {
         try {
@@ -74,18 +49,16 @@ public record Proc(int code, String out, String err) {
                 else pb.environment().put(k, v);
             });
             Process p = pb.start();
-            // stdin on its own thread, so a large output cannot block the input
             Thread writer = new Thread(() -> {
                 try (OutputStream o = p.getOutputStream()) {
                     if (stdin != null) o.write(stdin.getBytes(StandardCharsets.UTF_8));
                 } catch (IOException ignored) {
-                    // the process closed its input early
                 }
             });
             Kept out = new Kept(head, tail, outLines);
             Kept err = new Kept(head, tail, errLines);
             Thread readErr = new Thread(() -> copy(p.getErrorStream(), err));
-            Thread readOut = new Thread(() -> copy(p.getInputStream(), out)); // on its own thread: reading here would wait for ever on a process that hangs
+            Thread readOut = new Thread(() -> copy(p.getInputStream(), out));
             for (Thread t : List.of(writer, readErr, readOut)) t.setDaemon(true);
             writer.start();
             readErr.start();
@@ -95,7 +68,6 @@ public record Proc(int code, String out, String err) {
                 p.destroyForcibly();
                 return new Proc(124, out.text(), "timeout after " + timeoutSeconds + " s");
             }
-            // a background child of the command may keep the pipes open after it exits: do not wait for it for ever
             readOut.join(5000);
             readErr.join(5000);
             writer.join(5000);
@@ -111,18 +83,16 @@ public record Proc(int code, String out, String err) {
         }
     }
 
-    /** Reads the stream to its end, also past what is kept: a child must never block on a full pipe. */
+    // Reads past what is kept: a child must never block on a full pipe.
     private static void copy(InputStream in, Kept out) {
         byte[] buf = new byte[8192];
         try {
             for (int n; (n = in.read(buf)) >= 0;) out.write(buf, n);
         } catch (IOException ignored) {
-            // the process ended
         }
         out.end();
     }
 
-    /** The first bytes of a stream and its last ones, with a count of what lay between. */
     static final class Kept {
         private final int head;
         private final byte[] ring;
@@ -137,14 +107,11 @@ public record Proc(int code, String out, String err) {
             this.listener = listener;
         }
 
-        /** Hands every finished line to the listener. */
         private void lines(byte[] buf, int n) {
             for (int i = 0; i < n; i++) {
                 if (buf[i] != '\n') {
                     line.write(buf[i]);
                     if (line.size() >= 16384) {
-                        // a very long line is handed over in pieces; each new piece starts with the end of the last one,
-                        // so a word the listener looks for is whole in one of them
                         byte[] piece = line.toByteArray();
                         listener.accept(new String(piece, StandardCharsets.UTF_8), false);
                         line.reset();
@@ -157,7 +124,6 @@ public record Proc(int code, String out, String err) {
             }
         }
 
-        /** The stream has ended: a last line without a line break is a line too. */
         synchronized void end() {
             if (listener != null && line.size() > 0) {
                 listener.accept(line.toString(StandardCharsets.UTF_8), true);
@@ -176,7 +142,6 @@ public record Proc(int code, String out, String err) {
             total += n;
         }
 
-        /** How many bytes are not in text(). */
         synchronized long dropped() {
             return Math.max(0, total - head - ring.length);
         }
@@ -192,7 +157,6 @@ public record Proc(int code, String out, String err) {
         }
     }
 
-    /** Runs a command line through the platform shell with the console attached. */
     public static int shell(Path dir, String line) {
         return inherit(dir, WINDOWS ? List.of("cmd", "/c", line) : List.of("sh", "-c", line));
     }

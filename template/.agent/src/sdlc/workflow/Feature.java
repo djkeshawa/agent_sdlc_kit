@@ -10,11 +10,6 @@ import java.util.regex.Pattern;
 import sdlc.core.UsageException;
 import sdlc.core.Work;
 
-/**
- * sdlc feature status <EPIC>: one view of a cross-component feature, read from what already
- * exists: the solution design and its approval (Confluence + Jira), the component stories (Jira),
- * each story's LLD and its approval, and whether that LLD was written from the current slice.
- */
 public final class Feature {
     private static final Pattern PREFIX = Pattern.compile("^\\[([a-z0-9][a-z0-9._-]*)\\]");
 

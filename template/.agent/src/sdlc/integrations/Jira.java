@@ -15,7 +15,6 @@ import sdlc.util.Http;
 import sdlc.util.Json;
 import sdlc.workflow.IssueTracker;
 
-/** The issue tracker on Jira Cloud and Data Center, through REST v2 (plus v3 search on Cloud). Every write is logged. */
 public final class Jira implements IssueTracker {
     private final Config cfg;
 
@@ -56,7 +55,6 @@ public final class Jira implements IssueTracker {
         return user instanceof Map<?, ?> m ? String.valueOf(m.get("displayName")) : "unassigned";
     }
 
-    /** The issue as text for agents, with its parent chain. */
     @Override
     public String text(String key, int maxComments) {
         Map<String, Object> i = issue(key, "summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,description,parent,subtasks,issuelinks,comment");
@@ -88,7 +86,6 @@ public final class Jira implements IssueTracker {
         return sb.toString();
     }
 
-    /** Parent keys, nearest first: sub-task -> story -> epic. */
     @Override
     public List<String> parents(String key) {
         List<String> out = new ArrayList<>();
@@ -145,7 +142,6 @@ public final class Jira implements IssueTracker {
         return out;
     }
 
-    /** Moves the issue to a status by name; agents may only use the configured statuses. */
     @Override
     public boolean transition(String key, String status, boolean fromAgent) {
         if (fromAgent) {
@@ -165,7 +161,6 @@ public final class Jira implements IssueTracker {
         return false;
     }
 
-    /** Moves forward only: To Do -> In Progress -> In Review -> Done. */
     @Override
     public boolean forward(String key, String target) {
         List<String> order = List.of(cfg.str("jira.statuses.inProgress"), cfg.str("jira.statuses.inReview"), cfg.str("jira.statuses.done"));
@@ -199,8 +194,8 @@ public final class Jira implements IssueTracker {
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("project", Store.map("key", parent.substring(0, parent.indexOf('-'))));
         String epicField = cfg.str("jira.epicLinkField");
-        if (epicField.isBlank()) fields.put("parent", Store.map("key", parent)); // Cloud: epics are parents
-        else fields.put(epicField, parent); // Data Center: the Epic Link field
+        if (epicField.isBlank()) fields.put("parent", Store.map("key", parent));
+        else fields.put(epicField, parent);
         fields.put("summary", summary);
         fields.put("issuetype", Store.map("name", type));
         fields.put("description", description);
@@ -223,7 +218,7 @@ public final class Jira implements IssueTracker {
     @Override
     public List<Issue> children(String parent) {
         java.util.regex.Matcher cf = java.util.regex.Pattern.compile("customfield_(\\d+)").matcher(cfg.str("jira.epicLinkField"));
-        return search("parent = " + parent + (cf.matches() ? " OR cf[" + cf.group(1) + "] = " + parent : ""), 200); // Data Center: stories hang on the Epic Link
+        return search("parent = " + parent + (cf.matches() ? " OR cf[" + cf.group(1) + "] = " + parent : ""), 200);
     }
 
     @Override

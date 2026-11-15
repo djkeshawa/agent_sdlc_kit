@@ -16,26 +16,17 @@ import java.util.stream.Stream;
 import sdlc.util.Json;
 import sdlc.util.Proc;
 
-/**
- * Locked acceptance tests. QE approves a story's acceptance tests by locking them:
- * docs/test-locks/<STORY>.json (committed, CODEOWNERS: QE) holds the SHA-256 of each file.
- * From then on no agent may edit them, and the pre-commit hook, verify, the PR gate and
- * check-pr in CI refuse a change that does not match the lock. The check is on content, not on
- * who edited, so it holds even where a hook cannot tell the implementer from the reviewer.
- */
 public final class Locks {
     private Locks() {}
 
     public static final String DIR = "docs/test-locks";
 
-    /** One locked file: its path, the hash it must have, and the story whose lock names it. */
     public record Entry(String path, String hash, String story) {}
 
     private static String signature = "";
     private static Map<String, Entry> cached = Map.of();
     private static List<String> cachedDamaged = List.of();
 
-    /** Every locked file of every story, by path. Re-read only when the lock folder changes. */
     public static synchronized Map<String, Entry> locked(Path root) {
         Path dir = root.resolve(DIR);
         if (!Files.isDirectory(dir)) {
@@ -61,7 +52,7 @@ public final class Locks {
             try {
                 out.putAll(parse(Files.readString(f)));
             } catch (IOException | RuntimeException e) {
-                // its tests cannot be checked, so it is reported as broken: a damaged lock must not switch the protection off
+                // a damaged lock must not switch the protection off
                 damaged.add(DIR + "/" + f.getFileName() + " (lock file): cannot be read");
             }
         }
@@ -71,7 +62,6 @@ public final class Locks {
         return out;
     }
 
-    /** Lock files that cannot be read or parsed, as "path (lock file): cannot be read". Every guard treats them as broken locks. */
     public static synchronized List<String> damaged(Path root) {
         locked(root);
         return cachedDamaged;
@@ -90,12 +80,10 @@ public final class Locks {
         return locked(root).containsKey(rel.replace('\\', '/'));
     }
 
-    /** The story has a lock file that can be read. */
     public static boolean hasStory(Path root, String story) {
         return Files.isRegularFile(root.resolve(DIR).resolve(story + ".json")) && damaged(root).stream().noneMatch(d -> d.startsWith(DIR + "/" + story + ".json "));
     }
 
-    /** Locked files whose content no longer matches the lock (or that are gone), as "path (STORY)", and lock files that cannot be read. */
     public static List<String> broken(Path root) {
         List<String> out = new ArrayList<>(damaged(root));
         for (Entry e : locked(root).values()) {
@@ -110,11 +98,7 @@ public final class Locks {
         return out;
     }
 
-    /**
-     * The locks as committed at a git ref, by path. check-pr in CI reads the base branch's locks:
-     * a pull request cannot loosen a lock by editing or deleting its own copy. Lock files that
-     * cannot be read there are added to {@code damaged}.
-     */
+    // Read at the base branch: a pull request cannot loosen a lock by editing or deleting its own copy.
     public static Map<String, Entry> lockedAt(Path root, String ref, List<String> damaged) {
         Map<String, Entry> out = new LinkedHashMap<>();
         Proc ls = Proc.run(root, "git", "ls-tree", "-z", "--name-only", ref, DIR + "/");
@@ -135,11 +119,6 @@ public final class Locks {
         return out;
     }
 
-    /**
-     * Locks that existed at {@code ref} and that the working tree's lock files removed or re-hashed,
-     * as "path (STORY): lock removed" or "path (STORY): lock changed". With the content check in
-     * {@link #broken}, this means every file locked on the base branch still has its base content.
-     */
     public static List<String> loosened(Path root, String ref) {
         List<String> out = new ArrayList<>();
         Map<String, Entry> now = locked(root);
@@ -151,7 +130,6 @@ public final class Locks {
         return out;
     }
 
-    /** SHA-256 of a file's content with line endings made equal (a checkout on Windows is the same file). */
     public static String hash(byte[] content) {
         try {
             String text = new String(content, StandardCharsets.UTF_8).replace("\r\n", "\n");

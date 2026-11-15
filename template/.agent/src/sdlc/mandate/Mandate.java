@@ -17,28 +17,14 @@ import sdlc.util.Glob;
 import sdlc.util.Json;
 import sdlc.util.Proc;
 
-/**
- * A mandate: what one change is authorised to do (spec/mandate-v0.md). One JSON file per change,
- * docs/mandates/<id>.json. Its identity is the git blob id of the file's bytes, so nothing here
- * rewrites or normalises it. Parsing is strict: every problem of the file is reported, one per
- * line, and a mandate with any problem is not used.
- *
- * @param version      the value of "mandate": always "v0"
- * @param failsIf      the approver's sentence, or null when the file has none yet
- * @param apis         scope.apis exactly as written, or null when the file has none (not checked in version 0)
- * @param locked       oracle.locked: test file path to the blob id it must have; empty when the file has none
- * @param featureKey   feature.key, or null when the file has none
- */
+// Its identity is the git blob id of the file's bytes, so nothing here may rewrite or normalise them.
 public record Mandate(String version, String id, String intent, List<Truth> mustStayTrue, String failsIf, List<String> scopePaths,
         Map<String, Object> apis, List<Scenario> scenarios, Map<String, String> locked, String featureKey) {
 
-    /** Where mandates live, relative to the repository root. */
     public static final String DIR = "docs/mandates";
 
-    /** One "must stay true" line: the sentence, and the locked test that keeps it true. */
     public record Truth(String is, String test) {}
 
-    /** A test that must pass: a test file, and one case in it, or every case when name is empty. */
     public record Scenario(String path, String name) {
         public boolean wholeFile() {
             return name.isEmpty();
@@ -59,48 +45,33 @@ public record Mandate(String version, String id, String intent, List<Truth> must
     private static final Set<String> TRUTH = Set.of("is", "test");
     private static final Set<String> FEATURE = Set.of("key");
 
-    /** True when the path matches one of scope.paths: "**" crosses folders, "*" stays in one. */
     public boolean inScope(String path) {
         for (String glob : scopePaths) if (matches(glob, path)) return true;
         return false;
     }
 
-    /**
-     * Glob also lets a pattern match every path below what it matches ("src/*" would match
-     * "src/a/b.java"), which is wider than the specification's "*" that stays in one folder. A
-     * character that cannot be in a path, put at the end of both, leaves only whole matches.
-     */
     static boolean matches(String glob, String path) {
         String end = "\u0001";
         if (path.contains(end) || glob.contains(end)) return false;
-        // a backslash or a control character in a file's name: no path of a mandate can name it, so it is outside
         if (path.indexOf('\\') >= 0 || control(path)) return false;
         return Glob.any(List.of(glob + end), path + end);
     }
 
-    /** docs/mandates/<id>.json under the repository root. The id is checked first. */
     public static Path file(Path root, String id) {
         requireId(id);
         return root.resolve(DIR).resolve(id + ".json");
     }
 
-    /** Refuses an id the specification does not allow, before it is ever part of a path. */
     public static void requireId(String id) {
         String problem = idProblem(id);
         if (problem != null) throw new UsageException("the mandate id " + problem);
     }
 
-    /** A mandate file may be this large and no larger: it is a page, not a document. */
     static final int MAX_BYTES = 256 * 1024;
 
-    /**
-     * A mandate as it was read: the parsed form, the text and the blob id, all of the same bytes.
-     * What is shown, what is approved and what is checked must be one thing; reading the file once
-     * and hashing those very bytes (no git filter in between) makes it so.
-     */
+    // Read once: what is shown, what is approved and what is checked are these same bytes.
     public record Loaded(Mandate mandate, String text, String blob) {}
 
-    /** Reads docs/mandates/<id>.json once and parses it. The message of the error names the file and lists every problem. */
     public static Loaded loaded(Path root, String id) {
         String rel = DIR + "/" + id + ".json";
         String json = read(root, file(root, id), rel);
@@ -113,12 +84,7 @@ public record Mandate(String version, String id, String intent, List<Truth> must
         return loaded(root, id).mandate();
     }
 
-    /**
-     * The file's text. Refused: a file that is not there, a link (it could name any file on the
-     * machine, and approving would rewrite that file), a path that leaves the repository through a
-     * linked folder, a file that is too large, and one that is not UTF-8 (its bytes would not mean
-     * what they show).
-     */
+    // Refused: a link (approving would rewrite the file it names), a path through a linked folder, bytes that are not UTF-8.
     static String read(Path root, Path f, String rel) {
         try {
             if (Files.isSymbolicLink(f)) throw new UsageException(rel + " is a link. A mandate is a file of its own.");
@@ -133,7 +99,6 @@ public record Mandate(String version, String id, String intent, List<Truth> must
         }
     }
 
-    /** The git blob id of the file's bytes as they are on disk. */
     public static String blobId(Path root, String id) {
         return loadedText(root, id).blob();
     }
@@ -143,28 +108,24 @@ public record Mandate(String version, String id, String intent, List<Truth> must
         return new Loaded(null, json, blobOf(root, json));
     }
 
-    /** git hash-object of a file of the working tree, as git would store it: what a locked test is compared with. */
     static String hashObject(Path root, String rel, Path f) {
         Proc p = Proc.run(root, "git", "hash-object", "--", f.toString());
         if (!p.ok()) throw new UsageException("cannot work out the blob id of " + rel + ": " + p.err().strip());
         return p.out().strip();
     }
 
-    /** The git blob id of a text's UTF-8 bytes, exactly as given: no line-ending or other filter of the repository is applied. */
     public static String blobOf(Path root, String text) {
         Proc p = Proc.runWithInput(root, text, 60, "git", "hash-object", "--stdin");
         if (!p.ok() || p.out().isBlank()) throw new UsageException("cannot work out a blob id: " + p.err().strip());
         return p.out().strip();
     }
 
-    /** Parses a mandate; the id is the one the file name gives. Every problem is in the message, one per line. */
     public static Mandate parse(String id, String json) {
         List<String> problems = problems(id, json);
         if (!problems.isEmpty()) throw new UsageException(String.join("\n", problems));
         return build(id, json);
     }
 
-    /** Every problem of the file, in plain words; empty when the mandate is valid. */
     public static List<String> problems(String id, String json) {
         List<String> out = new ArrayList<>();
         Object root;
@@ -253,7 +214,6 @@ public record Mandate(String version, String id, String intent, List<Truth> must
         return out;
     }
 
-    /** Builds the record from a file that has no problems. */
     private static Mandate build(String id, String json) {
         Map<String, Object> m = Json.obj(Json.parseStrict(json));
         Map<String, Object> scope = Json.obj(m.get("scope"));
@@ -355,12 +315,8 @@ public record Mandate(String version, String id, String intent, List<Truth> must
         }
     }
 
-    /**
-     * Rules for every value, wherever it sits. No numbers: nothing in a mandate is a quantity, and a
-     * number can change its spelling when the file is written again. No control characters in any
-     * text or key: a mandate is shown on a terminal, where a line break or an escape sequence could
-     * imitate the tool's own lines.
-     */
+    // No numbers: a number can change its spelling when the file is written again.
+    // No control characters: on a terminal they could imitate the tool's own lines.
     private static void values(List<String> out, Object v, String where) {
         if (v instanceof Number) {
             out.add((where.isEmpty() ? "the file" : where) + " holds a number; a mandate has none (write it as text)");
@@ -378,21 +334,13 @@ public record Mandate(String version, String id, String intent, List<Truth> must
     }
 
     private static boolean control(String s) {
-        // one pass for the pairs: a text without a surrogate is paired, so this is the same as asking it of each surrogate, without reading the text again for each
         return s.codePoints().anyMatch(Mandate::unprintable) || !paired(s);
     }
 
-    /**
-     * A character that must not reach a terminal or a card: a control character, a line or
-     * paragraph separator, and every "format" character. The last group holds the marks that
-     * turn the direction of text (so a path or a sentence reads in another order than it is
-     * stored) and the ones with no width (so two different paths look the same).
-     */
     public static boolean unprintable(int codePoint) {
         return sdlc.util.SafeOut.unprintable(codePoint);
     }
 
-    /** True when every surrogate of the text is half of a pair. */
     private static boolean paired(String s) {
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);
@@ -402,7 +350,6 @@ public record Mandate(String version, String id, String intent, List<Truth> must
         return true;
     }
 
-    /** The rules every path of the file follows: relative to the repository root, and never leaving it. */
     private static void path(List<String> out, String p, String where, boolean glob) {
         String shown = where.contains("\"") ? where : where + " \"" + p + "\"";
         if (p.isEmpty()) out.add(where + " is empty");
@@ -412,7 +359,6 @@ public record Mandate(String version, String id, String intent, List<Truth> must
         else if (("/" + p + "/").contains("/../") || p.equals("..")) out.add(shown + " leaves the repository");
         else if (control(p)) out.add(shown + " has a control character");
         if (!glob && !p.isEmpty() && p.endsWith("/")) out.add(shown + " ends with \"/\"; name a file");
-        // the specification has two wildcards and nothing else
         if (glob && p.chars().anyMatch(c -> "{}[]?".indexOf(c) >= 0)) out.add(shown + " uses a sign that is not part of a mandate's paths; only * and ** are");
     }
 

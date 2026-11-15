@@ -14,18 +14,9 @@ import sdlc.core.UsageException;
 import sdlc.util.Glob;
 import sdlc.util.Proc;
 
-/**
- * sdlc upgrade --from <kit> [--version <tag>] [--check]: brings this repository's copy of the kit
- * to a pinned version, so twenty repositories do not drift into twenty kits. <kit> is a local
- * checkout (the kit repository, or its template/ folder) or a git URL (cloned at --version).
- * Only kit-owned files are copied; .agent/sdlc.yml, local.env, CODEOWNERS and the pull request
- * template stay yours. Agent model lines are re-applied from sdlc.yml. --check only reports the
- * difference (exit 1 when out of date), e.g. as a CI stage. A human runs it; agents are refused.
- */
 public final class Upgrade {
     private Upgrade() {}
 
-    /** Kit-owned paths, relative to the template root. */
     static final List<String> OWNED = List.of(".agent/Sdlc.java", ".agent/src/**", ".agent/bin/**", ".agent/templates/**", ".agent/README.md", ".agent/org.yml",
             ".agent/local.env.example", ".githooks/**", ".github/agents/**", ".github/prompts/**", ".github/skills/**", ".github/instructions/**",
             ".github/hooks/**", ".github/copilot-instructions.md", "AGENTS.md");
@@ -55,14 +46,14 @@ public final class Upgrade {
                 Path to = Ctx.root.resolve(rel);
                 String want = expected(rel, Files.readString(root.resolve(rel)));
                 if (!Files.exists(to)) added.add(rel);
-                else if (!lf(Files.readString(to)).equals(lf(want))) changed.add(rel); // a checkout may turn *.cmd into CRLF (.gitattributes): same file
+                else if (!lf(Files.readString(to)).equals(lf(want))) changed.add(rel);
                 else continue;
                 if (check) continue;
                 Files.createDirectories(to.getParent());
                 Files.writeString(to, want);
                 if (rel.startsWith(".agent/bin/") || rel.startsWith(".githooks/")) to.toFile().setExecutable(true);
             }
-            for (String rel : ours) if (!theirs.contains(rel)) local.add(rel); // your own agents or skills, or files the kit dropped: kept, listed
+            for (String rel : ours) if (!theirs.contains(rel)) local.add(rel);
 
             String label = version.isBlank() ? describe(src) : version;
             changed.forEach(f -> System.out.println("changed  " + f));
@@ -83,7 +74,6 @@ public final class Upgrade {
         }
     }
 
-    /** The file as this repository should have it: agent files carry this repository's model choice. */
     private static String expected(String rel, String text) {
         if (!rel.startsWith(".github/agents/") || !rel.endsWith(".agent.md")) return text;
         String name = rel.substring(".github/agents/".length(), rel.length() - ".agent.md".length());

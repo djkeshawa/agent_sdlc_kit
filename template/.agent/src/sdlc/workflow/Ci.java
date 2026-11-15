@@ -20,12 +20,6 @@ import sdlc.util.Http;
 import sdlc.util.Json;
 import sdlc.util.Proc;
 
-/**
- * Reads the existing CI of a pull request without changing it: the PR's checks from GitHub (gh),
- * the failed Jenkins build's stage, failed tests and error lines (Jenkins REST API), and the
- * SonarQube quality gate and new issues of the PR (SonarQube Web API). Writes a digest for the
- * ci-fixer agent, counts CI rounds and logs each failure in the mistakes log.
- */
 public final class Ci {
     private static final Pattern ERROR_LINE = Pattern.compile("(?i)(\\[ERROR\\]|BUILD FAILURE|FAILED|Tests run:.*(Failures: [1-9]|Errors: [1-9])|^ERROR:|npm ERR!|error TS\\d+|Error:|✕|● |FAIL |Exception|COMPILATION ERROR|Quality Gate|exit code [1-9])");
     private static final Pattern STAGE = Pattern.compile("\\[Pipeline\\] \\{ \\((.+?)\\)");
@@ -56,7 +50,6 @@ public final class Ci {
         return Json.str(pr, "number");
     }
 
-    /** sdlc ci wait: polls until no check is pending, then digests. Exit 0 green, 1 failed, 2 still pending. */
     public static int waitFor(IssueTracker issues, Map<String, String> opt) throws InterruptedException {
         String pr = prNumber(opt);
         long deadline = System.currentTimeMillis() + Ctx.cfg.num("ci.waitMinutes", 60) * 60_000L;
@@ -95,7 +88,7 @@ public final class Ci {
         List<Check> failed = cs.stream().filter(c -> c.bucket().equals("fail") || c.bucket().equals("cancel")).toList();
         StringBuilder sb = new StringBuilder("# CI result for PR #" + pr + " at " + Git.shortHead() + "\n\n");
         for (Check c : cs) sb.append("- ").append(c.bucket().toUpperCase(Locale.ROOT)).append(" ").append(c.name()).append(c.link().isBlank() ? "" : " - " + c.link()).append('\n');
-        List<String[]> mistakes = new ArrayList<>(); // source, category, location, summary
+        List<String[]> mistakes = new ArrayList<>();
         for (Check c : failed) {
             sb.append("\n## Failed: ").append(c.name()).append("\n\n");
             if (!c.description().isBlank()) sb.append(c.description()).append("\n\n");
@@ -133,18 +126,13 @@ public final class Ci {
         return !link.isBlank() && (!j.isBlank() && link.startsWith(j.replaceAll("/+$", "")) || link.contains("/job/"));
     }
 
-    /** Build URL from a GitHub status link: .../job/x/job/PR-12/5/display/redirect -> .../job/x/job/PR-12/5/ */
     public static String buildUrl(String link) {
         String u = link.replaceAll("/display/redirect/?$", "/").replaceAll("/console(Full|Text)?/?$", "/");
         Matcher m = Pattern.compile("^(.*/job/[^/]+/\\d+)/?").matcher(u);
         return m.find() ? m.group(1) + "/" : u.endsWith("/") ? u : u + "/";
     }
 
-    /**
-     * True only when a link points at the configured Jenkins (same scheme, host and port, under its
-     * path). Check links are set by whoever reports a status on the PR, so the Jenkins token is
-     * sent nowhere else.
-     */
+    // Check links are set by whoever reports a status: the Jenkins token goes only to the configured Jenkins.
     public static boolean trustedJenkins(String link) {
         String j = Ctx.cfg.str("ci.jenkins.url").replaceAll("/+$", "");
         if (j.isBlank() || link.isBlank()) return false;
@@ -229,13 +217,11 @@ public final class Ci {
         return out;
     }
 
-    /** The most telling log line: an ERROR/FAILED line before INFO lines that only mention a check. */
     public static String firstError(List<String> lines) {
         for (String l : lines) if (l.matches("(?i).*(\\[ERROR\\]|\\bERROR\\b|\\bFAILED\\b|BUILD FAILURE|COMPILATION ERROR).*")) return l;
         return lines.get(0);
     }
 
-    /** A measure's value: "period.value" (SonarQube 10+), "periods[0].value" (SonarQube Cloud, older servers) or "value". */
     public static String measureValue(Object m) {
         if (!Json.str(m, "period.value").isBlank()) return Json.str(m, "period.value");
         List<Object> periods = Json.list(Json.at(m, "periods"));
@@ -243,20 +229,18 @@ public final class Ci {
         return Json.str(m, "value");
     }
 
-    /** "com.acme:payments:src/Foo.java" -> "src/Foo.java": project keys often contain a colon. */
     public static String componentPath(String component, String projectKey) {
         if (component.startsWith(projectKey + ":")) return component.substring(projectKey.length() + 1);
         int colon = component.lastIndexOf(':');
         return colon < 0 ? component : component.substring(colon + 1);
     }
 
-    /** SonarQube quality gate, conditions, new issues and coverage gaps for the PR. */
     private static void sonar(String pr, StringBuilder sb, List<String[]> mistakes) {
         String url = Ctx.cfg.str("ci.sonar.url").replaceAll("/+$", "");
         String key = Ctx.cfg.str("ci.sonar.projectKey");
         String token = Ctx.secret("SONAR_TOKEN", "");
         if (url.isBlank() || key.isBlank()) return;
-        String auth = token.isBlank() ? null : Http.basic(token, ""); // public SonarQube Cloud projects need no token
+        String auth = token.isBlank() ? null : Http.basic(token, "");
         Map<String, String> q = new LinkedHashMap<>();
         q.put("projectKey", key);
         q.put("pullRequest", pr);
@@ -308,7 +292,7 @@ public final class Ci {
                         if (Json.str(m, "metric").equals("new_uncovered_lines")) uncovered = v;
                         ms.append(Json.str(m, "metric")).append('=').append(v).append(' ');
                     }
-                    if (uncovered.isBlank() || uncovered.matches("0+(\\.0+)?")) continue; // only files that need tests
+                    if (uncovered.isBlank() || uncovered.matches("0+(\\.0+)?")) continue;
                     sb.append("- ").append(Json.str(c, "path")).append(": ").append(ms.toString().trim()).append('\n');
                 }
             }

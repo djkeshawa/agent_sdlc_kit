@@ -13,30 +13,17 @@ import sdlc.core.Trusted;
 import sdlc.core.UsageException;
 import sdlc.util.Proc;
 
-/**
- * The change under check: from the commit where this branch left its base, to the working tree
- * as it is now, committed or not, untracked files included, ignored files left out.
- *
- * The working tree is recorded as a git tree through a throw-away index and a throw-away object
- * folder, so both sides can be read and compared with git. The repository itself is only read:
- * its working tree, index and object store stay as they are.
- */
 public final class Change {
-    /** The empty tree in this repository's hash format: the base of a repository with no commit, or of a first commit. */
     private static String emptyTree() {
         Proc p = Proc.runWithInput(Ctx.root, "", 30, "git", "hash-object", "-t", "tree", "--stdin");
         if (!p.ok() || p.out().isBlank()) throw new UsageException("git hash-object failed: " + p.err().strip());
         return p.out().strip();
     }
 
-    /** One changed file: A added, M modified, D deleted. Renames show as a deletion and an addition. */
     public record File(String status, String path) {}
 
-    /** The commit (or empty tree) the change starts from. */
     public final String base;
-    /** How the base was chosen, for the report: "origin/main", "--base v1.2", "HEAD (no base branch found)". */
     public final String baseName;
-    /** The working tree as a git tree. */
     public final String head;
     public final List<File> files;
 
@@ -47,7 +34,6 @@ public final class Change {
         this.files = List.copyOf(files);
     }
 
-    /** The change of the repository at Ctx.root. baseOption is --base's value, or null or blank to find the base. */
     public static Change of(String baseOption) {
         if (!Proc.run(Ctx.root, "git", "rev-parse", "--git-dir").ok()) throw new UsageException("sdlc check needs a git repository: " + Ctx.root + " is not one");
         String[] base = base(baseOption);
@@ -55,7 +41,6 @@ public final class Change {
         return new Change(base[0], base[1], head, diff(base[0], head));
     }
 
-    /** One commit as a change: from its first parent (the empty tree for a first commit) to the commit itself. */
     public static Change ofCommit(String commit) {
         String sha = rev(commit);
         if (sha.isEmpty()) throw new UsageException(commit + " is not a commit of this repository");
@@ -74,7 +59,6 @@ public final class Change {
         return files;
     }
 
-    /** {commit or empty tree, how it was found}. */
     private static String[] base(String option) {
         boolean hasHead = Git.refExists("HEAD");
         if (option != null && !option.isBlank()) {
@@ -83,7 +67,6 @@ public final class Change {
         }
         if (!hasHead) return new String[] {emptyTree(), "an empty repository (no commit yet)"};
         if (Trusted.inCi()) {
-            // in a pull request build the base is the event's, or nothing: falling back to HEAD would report "nothing has changed"
             String ref = Trusted.baseRef();
             if (!Git.refExists(ref + "^{commit}")) throw new UsageException("the base branch " + Trusted.shortName(ref) + " is not in this checkout: fetch it first (git fetch origin)");
             if (!Proc.run(Ctx.root, "git", "merge-base", ref, "HEAD").ok()) throw new UsageException("this checkout has no commit in common with " + Trusted.shortName(ref) + " (a shallow clone?): fetch more history");
@@ -100,14 +83,13 @@ public final class Change {
 
     private static String mergeBase(String ref) {
         Proc p = Proc.run(Ctx.root, "git", "merge-base", ref, "HEAD");
-        return p.ok() && !p.out().isBlank() ? p.out().strip() : rev(ref); // unrelated histories: compare with the ref itself
+        return p.ok() && !p.out().isBlank() ? p.out().strip() : rev(ref);
     }
 
     private static String rev(String ref) {
         return Proc.run(Ctx.root, "git", "rev-parse", ref + "^{commit}").out().strip();
     }
 
-    /** Where this run keeps the git objects of uncommitted files: outside the repository, removed when the tool ends. */
     private static Path objects;
 
     private static synchronized Path objects() throws IOException {
@@ -120,10 +102,8 @@ public final class Change {
                         Files.deleteIfExists(p);
                     }
                 } catch (IOException ignored) {
-                    // a stray temp folder
                 }
             }));
-            // every later git command of this run can read what the snapshot wrote there
             String inherited = System.getenv("GIT_ALTERNATE_OBJECT_DIRECTORIES");
             Proc.ENV.merge("GIT_ALTERNATE_OBJECT_DIRECTORIES", (inherited == null || inherited.isBlank() ? "" : inherited + java.io.File.pathSeparator) + dir,
                     (a, b) -> a + java.io.File.pathSeparator + dir);
@@ -132,11 +112,6 @@ public final class Change {
         return objects;
     }
 
-    /**
-     * The working tree as a tree object. It is written through a copy of the index and into an
-     * object folder of its own, with the repository's objects as alternates: the repository is
-     * only read, so a read-only checkout works too.
-     */
     private static String snapshot() {
         Path tmp = null;
         try {
@@ -145,7 +120,7 @@ public final class Change {
             Path index = where.ok() ? Ctx.root.resolve(where.out().strip()) : null;
             // the copy keeps the index's timestamp: git trusts a file's size and time unless the index is not newer than it
             if (index != null && Files.isRegularFile(index)) Files.copy(index, tmp, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.COPY_ATTRIBUTES);
-            else Files.delete(tmp); // git creates it
+            else Files.delete(tmp);
             Proc od = Proc.run(Ctx.root, "git", "rev-parse", "--git-path", "objects");
             if (!od.ok()) throw new UsageException("cannot find the repository's objects: " + od.err().strip());
             String repoObjects = Ctx.root.resolve(od.out().strip()).toString();
@@ -168,18 +143,10 @@ public final class Change {
                     Files.deleteIfExists(Path.of(tmp + ".lock"));
                 }
             } catch (IOException ignored) {
-                // a stray temp file
             }
         }
     }
 
-    /**
-     * Clears, in the copy of the index, the two flags that tell git not to look at a file
-     * (assume-unchanged, skip-worktree): with them set, an edit of that file would be missing from
-     * the snapshot. A file that a sparse checkout's rules leave out keeps its flag: it is not
-     * deleted, it was never checked out. A flagged file that is missing for any other reason is a
-     * deleted file.
-     */
     private static void lookAtEveryFile(Map<String, String> env) {
         Proc flagged = Proc.runWithEnv(Ctx.root, env, null, 120, "git", "ls-files", "-v", "-z");
         if (!flagged.ok()) throw new UsageException("cannot record the working tree (git ls-files): " + flagged.err().strip());
@@ -197,19 +164,16 @@ public final class Change {
             }
             clear.append(path).append('\0');
         }
-        // A flagged file that is not on disk: left out by a sparse checkout, or deleted. Only git's own reading of the
-        // sparse rules tells the two apart.
         if (missing.length() > 0) {
             boolean sparse = Proc.run(Ctx.root, "git", "config", "--bool", "core.sparseCheckout").out().strip().equals("true");
             if (!sparse) {
-                clear.append(missing); // no sparse checkout: the files are gone, and that is part of the change
+                clear.append(missing);
             } else {
                 Proc inside = Proc.runWithInput(Ctx.root, missing.toString(), 120, "git", "sparse-checkout", "check-rules", "-z");
                 if (!inside.ok()) {
                     throw new UsageException("this is a sparse checkout with files that are not on disk, and this git cannot say which of them the sparse rules leave out "
                             + "(git sparse-checkout check-rules needs git 2.41): " + inside.err().strip());
                 }
-                // what the rules keep in the checkout and is not there was deleted
                 for (String path : inside.out().split("\0")) if (!path.isEmpty()) clear.append(path).append('\0');
             }
         }
@@ -225,32 +189,26 @@ public final class Change {
         return files.isEmpty();
     }
 
-    /** Paths whose status is one of the given letters, e.g. "AM". */
     public List<String> paths(String statuses) {
         return files.stream().filter(f -> statuses.contains(f.status())).map(File::path).toList();
     }
 
-    /** Told of each file whose whole text is read (before or after), for the self test: a test file is never read whole by the scan. */
     public static java.util.function.Consumer<String> wholeRead = path -> {};
 
-    /** A file's text before the change, or null when it did not exist. */
     public String before(String path) {
         wholeRead.accept(path);
         return Trusted.read(base, path);
     }
 
-    /** A file's text after the change, or null when it is gone. */
     public String after(String path) {
         wholeRead.accept(path);
         return Trusted.read(head, path);
     }
 
-    /** Lines the change adds, per file (no context lines). */
     public Map<String, List<String>> addedLines() {
         return Git.addedLines(Git.patch(base, head));
     }
 
-    /** Lines the change removes, per file (no context lines). */
     public Map<String, List<String>> removedLines() {
         return Git.removedLines(Git.patch(base, head));
     }

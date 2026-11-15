@@ -17,7 +17,6 @@ import sdlc.guard.EnvRules;
 import sdlc.util.Glob;
 import sdlc.util.Proc;
 
-/** Runs the full local build and remembers that it passed for exactly these files. */
 public final class Verify {
     private static final List<String> IGNORE = List.of(".sdlc/**", ".agent/.build/**", "**/target/**", "**/build/**", "**/.gradle/**", "**/out/**",
             "**/node_modules/**", "**/dist/**", "**/coverage/**", "**/.next/**", ".idea/**", "**/*.log", "**/*.iml");
@@ -27,7 +26,7 @@ public final class Verify {
     public static int run() {
         String cmd = Ctx.cfg.verifyCommand();
         if (cmd.isBlank()) throw new UsageException("build.verify is not set in .agent/sdlc.yml");
-        for (Map.Entry<String, String> e : System.getenv().entrySet()) { // MAVEN_OPTS=-DskipTests left in the terminal must not buy a pass
+        for (Map.Entry<String, String> e : System.getenv().entrySet()) {
             String problem = EnvRules.buildEnvProblem(Ctx.cfg, e.getKey(), e.getValue());
             if (problem != null) {
                 System.err.println("[sdlc] VERIFY REFUSED: " + problem + " Unset " + e.getKey() + " and run verify again.");
@@ -70,7 +69,6 @@ public final class Verify {
         return fingerprint().equals(String.valueOf(Store.read(Ctx.work("verify.json")).get("fingerprint")));
     }
 
-    /** Hash of every tracked and untracked (not ignored) file, build output excluded. */
     public static String fingerprint() {
         List<String> ignore = new ArrayList<>(IGNORE);
         ignore.addAll(Ctx.cfg.list("verify.ignore"));

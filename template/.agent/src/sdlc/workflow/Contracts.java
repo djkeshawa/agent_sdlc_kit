@@ -16,23 +16,12 @@ import sdlc.core.Work;
 import sdlc.util.Json;
 import sdlc.util.Yaml;
 
-/**
- * Reads OpenAPI (3.x, and 2.x paths) and AsyncAPI (2.x and 3.x) files far enough to compare two
- * versions: which operations or messages were added or removed, and the breaking changes a
- * consumer would feel. Deliberately limited; what it detects is listed in docs/08:
- *   removed operation or message, removed response code, a new required request field or
- *   parameter, a removed enum value, a changed property type, a removed response or payload property.
- * Not detected: changes deeper than one level of properties, oneOf/allOf/anyOf, format and
- * pattern changes, security changes, servers. Teams that need more add oasdiff to their CI.
- */
 public final class Contracts {
     private Contracts() {}
 
-    /** What a consumer relies on in one operation or message. */
     public record Op(Set<String> responses, Set<String> requiredRequest, Map<String, String> requestTypes, Map<String, Set<String>> requestEnums,
                      Map<String, String> responseTypes, Map<String, Set<String>> responseEnums) {}
 
-    /** A parsed spec: operation key ("POST /orders/{id}/refunds", "message RefundRequested on refund-events") -> details. */
     public record Spec(String kind, Map<String, Op> operations) {}
 
     public record Change(String operation, String kind, String detail) {
@@ -43,7 +32,6 @@ public final class Contracts {
 
     private static final List<String> METHODS = List.of("get", "put", "post", "delete", "patch", "head", "options");
 
-    /** The spec of an API from its local file (this repository's file, or the synced copy), or null. */
     static Spec read(Catalog.Api a) {
         if (a.localCopy() == null || !Files.isRegularFile(a.localCopy())) return null;
         try {
@@ -60,8 +48,6 @@ public final class Contracts {
         if (r.containsKey("asyncapi")) return new Spec("asyncapi", async(r));
         return new Spec("openapi", openapi(r));
     }
-
-    // ---------------- OpenAPI ----------------
 
     private static Map<String, Op> openapi(Map<String, Object> r) {
         Map<String, Op> ops = new TreeMap<>();
@@ -108,21 +94,19 @@ public final class Contracts {
         return ops;
     }
 
-    // ---------------- AsyncAPI ----------------
-
     private static Map<String, Op> async(Map<String, Object> r) {
         Map<String, Op> ops = new TreeMap<>();
         for (Map.Entry<String, Object> ch : Json.map(r.get("channels")).entrySet()) {
             Map<String, Object> c = Json.map(ch.getValue());
             String channel = Work.str(c.getOrDefault("address", ch.getKey()));
             Map<String, Object> messages = new LinkedHashMap<>();
-            for (String dir : List.of("publish", "subscribe")) { // 2.x
+            for (String dir : List.of("publish", "subscribe")) {
                 Object msg = Json.at(c, dir + ".message");
                 if (msg == null) continue;
                 List<Object> list = Json.map(msg).containsKey("oneOf") ? Json.list(Json.map(msg).get("oneOf")) : List.of(msg);
                 for (Object m : list) messages.put(messageName(r, m), resolve(r, m));
             }
-            for (Map.Entry<String, Object> m : Json.map(c.get("messages")).entrySet()) messages.put(messageName(r, m.getValue(), m.getKey()), resolve(r, m.getValue())); // 3.x
+            for (Map.Entry<String, Object> m : Json.map(c.get("messages")).entrySet()) messages.put(messageName(r, m.getValue(), m.getKey()), resolve(r, m.getValue()));
             for (Map.Entry<String, Object> m : messages.entrySet()) {
                 Map<String, Object> payload = Json.map(resolve(r, Json.map(m.getValue()).get("payload")));
                 Map<String, String> types = new TreeMap<>();
@@ -147,9 +131,6 @@ public final class Contracts {
         return fallback.isBlank() ? "message" : fallback;
     }
 
-    // ---------------- schema helpers ----------------
-
-    /** Follows a local $ref (#/components/...) up to 10 levels; anything else is returned as it is. */
     static Object resolve(Map<String, Object> root, Object o) {
         Object cur = o;
         for (int i = 0; i < 10 && cur instanceof Map<?, ?> m && m.get("$ref") instanceof String ref && ref.startsWith("#/"); i++) {
@@ -186,9 +167,6 @@ public final class Contracts {
         return o != null && o.toString().strip().equalsIgnoreCase("true");
     }
 
-    // ---------------- diff ----------------
-
-    /** Operation keys by what they are (identity). Two keys of one spec that are the same operation stay apart under their own names. */
     private static Map<String, String> canonical(Set<String> keys) {
         Map<String, String> out = new LinkedHashMap<>();
         Set<String> twice = new LinkedHashSet<>();
@@ -198,14 +176,12 @@ public final class Contracts {
         return out;
     }
 
-    /** As normalize: what makes two operation keys the same operation. */
     static String identity(String key) {
         return normalize(key);
     }
 
     private static final java.util.regex.Pattern PLACEHOLDER = java.util.regex.Pattern.compile("\\{([^}/]*)\\}");
 
-    /** The old operation with its path parameters named as the new path template names them, position by position. */
     private static Op renamed(Op a, String wasKey, String nowKey) {
         List<String> was = new ArrayList<>(), now = new ArrayList<>();
         java.util.regex.Matcher m = PLACEHOLDER.matcher(wasKey);
@@ -231,10 +207,8 @@ public final class Contracts {
         return new Op(a.responses(), required, types, enums, a.responseTypes(), a.responseEnums());
     }
 
-    /** What changed from the old spec to the new one. */
     public static List<Change> diff(Spec before, Spec after) {
         List<Change> out = new ArrayList<>();
-        // "GET /orders/{id}" and "GET /orders/{orderId}" are one operation: the name of a path parameter is not part of it
         Map<String, String> wasNamed = canonical(before.operations().keySet()), nowNamed = canonical(after.operations().keySet());
         Set<String> all = new LinkedHashSet<>(wasNamed.keySet());
         all.addAll(nowNamed.keySet());
@@ -280,27 +254,19 @@ public final class Contracts {
         }
     }
 
-    /**
-     * "post /orders/{orderId}/refunds" and "POST /orders/{id}/refunds" name the same operation: the
-     * method in any case, the path with its parameters unnamed. Nothing else is taken as equal,
-     * in an allowance as in a comparison: "/orders" and "/orders/" may be two routes, and
-     * "Orders" and "orders" two channels.
-     */
     public static String normalize(String op) {
         String s = op.strip();
         java.util.regex.Matcher m = HTTP_OPERATION.matcher(s);
         if (m.matches() && METHODS.contains(m.group(1).toLowerCase(Locale.ROOT))) {
             return m.group(1).toUpperCase(Locale.ROOT) + " " + m.group(2).replaceAll("\\{[^}/]*\\}", "{}");
         }
-        return op; // a message and its channel: byte for byte as written, white space at its ends included
+        return op;
     }
 
     private static final java.util.regex.Pattern HTTP_OPERATION = java.util.regex.Pattern.compile("(\\S+)\\s+(\\S.*)");
 
-    /** The mark of an allowance whose operations are written as normalize gives them. Older ones dropped a slash at the end and the case of messages. */
     public static final String EXACT = "exact";
 
-    /** A path a client calls (with or without {params}) matches a spec path template. */
     public static boolean pathMatches(String template, String called) {
         String[] t = template.replaceAll("/+$", "").split("/"), c = called.replaceAll("[?#].*$", "").replaceAll("/+$", "").split("/");
         if (t.length != c.length) return false;
@@ -311,45 +277,30 @@ public final class Contracts {
         return true;
     }
 
-    // ---------------- PR policy ----------------
-
     public record Policy(List<String> passes, List<String> fails, List<String> warns) {}
 
-    /**
-     * For check-pr and the PR gate: every changed contract file of this repository, compared with
-     * the point where the branch left the base branch. With lanes.enabled, each added or removed operation must be allowed by the
-     * story's docs/agent/contracts/<STORY>.json (written by tasks create from its lane and slice),
-     * and a breaking change needs compatibility: breaking in the solution. Without lanes, breaking
-     * changes are warnings.
-     */
     public static Policy prPolicy(String story, String base, List<String> changed) {
         List<String> passes = new ArrayList<>(), fails = new ArrayList<>(), warns = new ArrayList<>();
         String from = mergeBase(base);
-        // the contract files are those of the base branch's catalog and of this branch's: a pull request
-        // that drops an API from its own catalog-info.yaml still has that API's file checked
         Map<String, String> fileToApi = new LinkedHashMap<>();
         String catalogFile = sdlc.core.Ctx.root.relativize(Catalog.file()).toString().replace('\\', '/');
         try {
             apiFiles(Catalog.parse(show(from, catalogFile)), fileToApi);
-            // the base branch's catalog as it is now: a branch made before the catalog existed is still held to it
             if (!base.equals(from)) apiFiles(Catalog.parse(show(base, catalogFile)), fileToApi);
         } catch (RuntimeException e) {
-            // without the catalog it is not known which files are contracts: that is a failure, not "no contracts"
             fails.add("The catalog " + catalogFile + " on " + sdlc.core.Trusted.shortName(base) + " cannot be read, so contract changes cannot be checked: " + e.getMessage());
             return new Policy(passes, fails, warns);
         }
         apiFiles(Catalog.load(), fileToApi);
         if (fileToApi.isEmpty()) return new Policy(passes, fails, warns);
         List<String> touched = changed.stream().filter(fileToApi::containsKey).toList();
-        // --no-renames: `git mv api/openapi.yaml x.yaml` is the contract's removal, not a rename
         List<String> deleted = sdlc.core.Git.changed("--diff-filter=D", base + "...HEAD");
         List<String> all = new ArrayList<>(touched);
         for (String d : deleted) if (fileToApi.containsKey(d) && !all.contains(d)) all.add(d);
         if (all.isEmpty()) return new Policy(passes, fails, warns);
         String allowanceRel = "docs/agent/contracts/" + story + ".json";
         boolean lanes = Lanes.enabled();
-        // In a pull request build the allowance is the base branch's: a pull request must not write the permission it is
-        // judged by. Architects merge an allowance first, in a pull request of its own.
+        // In a pull request build the allowance is the base branch's: a pull request must not write the permission it is judged by.
         boolean ci = sdlc.core.Trusted.inCi();
         String onBase = sdlc.core.Trusted.shortName(base);
         Map<String, Object> allowance;
@@ -400,13 +351,10 @@ public final class Contracts {
                 fails.add("Contract " + api + " (" + file + ") changed, but the " + lane + " lane of " + story + " allows no change to it" + (lane.equals("patch") ? " (raise the LLD's lane, get it approved, tasks create again)" : ""));
                 continue;
             }
-            // exactly as the allowance holds them: an operation is not trimmed on its way in (see normalize)
             Set<String> add = new LinkedHashSet<>(Work.exact(entry.get("add")));
             Set<String> remove = new LinkedHashSet<>(Work.exact(entry.get("remove")));
             boolean named = !remove.isEmpty() || add.stream().anyMatch(a -> !a.equals("*"));
             if (named && !EXACT.equals(Work.str(allowance.get("operations")))) {
-                // written by an earlier version of the kit, which did not keep a slash at the end of a path or the case of a
-                // message: such a list cannot say which operation was meant
                 fails.add("The contract allowance " + allowanceRel + " was written by an earlier version of the kit and does not name its operations exactly. Write it again from the approved solution "
                         + "(java .agent/Sdlc.java tasks create " + story + ") and commit it" + (ci ? "; in a pull request build it is read from " + onBase + ", so merge it there first, in a pull request of its own" : ""));
                 continue;
@@ -433,17 +381,11 @@ public final class Contracts {
         }
     }
 
-    /**
-     * Where this branch left the base branch. The old contract is read there, as `git diff base...HEAD` does,
-     * so an operation the base branch gained later is not seen as removed by this branch. Without a common
-     * ancestor (a shallow clone), the base itself.
-     */
     public static String mergeBase(String base) {
         sdlc.util.Proc r = sdlc.util.Proc.run(sdlc.core.Ctx.root, "git", "merge-base", base, "HEAD");
         return r.code() == 0 && !r.out().isBlank() ? r.out().strip() : base;
     }
 
-    /** A file as committed at a ref, "" when the ref does not hold it. A read that fails throws: it is not an empty file. */
     private static String show(String ref, String file) {
         String text = sdlc.core.Trusted.read(ref, file);
         return text == null ? "" : text;

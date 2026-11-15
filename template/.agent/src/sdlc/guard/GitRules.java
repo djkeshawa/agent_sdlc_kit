@@ -7,7 +7,6 @@ import java.util.Set;
 
 import sdlc.util.ShellWords;
 
-/** Rules for git commands an agent runs. The option and config-key helpers are static: they only look at text. */
 final class GitRules {
     private final Guard g;
 
@@ -72,7 +71,6 @@ final class GitRules {
             case "branch" -> rest.stream().anyMatch(a -> a.matches("^-[a-zA-Z]*[dDmMfF][a-zA-Z]*$") || a.equals("--delete") || a.equals("--force") || a.equals("--move"))
                     ? Decision.ask("deletes, renames or resets a branch.") : Decision.allow();
             case "update-ref", "filter-branch", "filter-repo", "replace" -> Decision.deny("rewrites git history or refs.");
-            // --prefix writes the files of the index under any folder, the git folder and the approval record in it included
             case "checkout-index" -> rest.stream().anyMatch(x -> x.startsWith("--p") || x.equals("--temp") || abbrev(x, "--temp", 3))
                     ? Decision.deny("`git checkout-index --prefix` writes files of the index to a folder of the command's choosing, which the guard cannot check.") : Decision.allow();
             case "stash" -> !rest.isEmpty() && (rest.get(0).equals("drop") || rest.get(0).equals("clear")) ? Decision.ask("drops stashed work.") : Decision.allow();
@@ -83,7 +81,6 @@ final class GitRules {
         };
     }
 
-    /** git accepts any unambiguous prefix of a long option: --no-veri is --no-verify. */
     static boolean abbrev(String arg, String full, int min) {
         String flag = arg.split("=", 2)[0];
         return flag.length() >= min && full.startsWith(flag);
@@ -93,7 +90,6 @@ final class GitRules {
         return abbrev(a, "--no-verify", 6);
     }
 
-    /** -c / --config-env settings that change hooks or define commands the guard cannot see. */
     private static Decision configKey(String spec) {
         String key = spec.split("=", 2)[0].toLowerCase(Locale.ROOT);
         if (key.startsWith("core.hookspath")) return Decision.deny("changes where git hooks run from.");
@@ -106,7 +102,6 @@ final class GitRules {
         return null;
     }
 
-    /** An unknown subcommand may be an alias: check what it expands to (builtins cannot be aliased). */
     private Decision alias(String sub, List<String> rest, int depth) {
         if (depth > 3) return Decision.deny("git aliases nest too deeply to check.");
         String expansion = g.repo.alias(sub);
@@ -123,31 +118,22 @@ final class GitRules {
             + "|uploadpack\\.packobjectshook|sendemail\\..+|browser\\..+\\.cmd|man\\..+\\.cmd|trailer\\..+\\.(command|cmd)|interactive\\.difffilter|init\\.templatedir"
             + "|submodule\\..+\\.update|protocol\\.ext\\.allow)$");
 
-    /** Config keys whose value git runs as a program (core.fsmonitor, core.pager, diff.external, filter.*, ...). */
     static boolean runsProgram(String key) {
         return PROGRAM_KEY.matcher(key.toLowerCase(Locale.ROOT)).matches();
     }
 
-    /** Values that run nothing of the agent's making: off, or a plain pager. */
     static boolean harmlessProgram(String value) {
         return value.strip().matches("(?i)|cat|more|less( -[A-Za-z]+)*|true|false|:");
     }
 
-    /**
-     * True when the argument is the long option or a shortened form of it: git takes any start of
-     * an option's name that fits no other option ("--remove-sect", "--edi"). A start that fits
-     * several is refused by git itself, so treating it as each of them is safe.
-     */
+    // git takes any start of a long option's name that fits no other option (--no-veri is --no-verify).
     static boolean longOption(String arg, String option) {
         String name = arg.contains("=") ? arg.substring(0, arg.indexOf('=')) : arg;
         return name.length() > 2 && name.startsWith("--") && option.startsWith(name);
     }
 
-    // git config, by a list of what is allowed. A list of what is refused cannot be complete: git takes options shortened,
-    // negated (--get --no-get sets), grouped, and with operands that look like other things (--file get). So only these
-    // options, written out in full, are known; anything else is refused. And the options are read as git reads them: up to
-    // "--" or the first word that is not an option (after the subcommand of newer git, if there is one). From there on
-    // every token is the key, its value or a pattern, whatever it looks like: git config core.hooksPath -l sets the key to "-l".
+    // git config takes options shortened, negated, grouped and with operands that look like options: only known options are allowed.
+    // Options end at "--" or the first word that is not one: in git config core.hooksPath -l, "-l" is the value.
     private static final Set<String> CONFIG_SCOPE = Set.of("--local", "--global", "--system", "--worktree");
     private static final Set<String> CONFIG_READ = Set.of("--get", "--get-all", "--get-regexp", "--list", "-l");
     private static final Set<String> CONFIG_WRITE = Set.of("--add", "--unset", "--unset-all", "--replace-all");
@@ -166,12 +152,11 @@ final class GitRules {
         int i = 0;
         for (; i < rest.size(); i++) {
             String a = rest.get(i);
-            if (a.equals("--")) { // options end here: what follows are the key and its value
+            if (a.equals("--")) {
                 i++;
                 break;
             }
             if (!a.startsWith("-") || a.equals("-")) {
-                // the first word may be a subcommand of newer git, and options may follow it; any other word is the key, and ends the options
                 if (subcommand == null && CONFIG_SUBCOMMAND.contains(a)) {
                     subcommand = a;
                     continue;
@@ -188,10 +173,10 @@ final class GitRules {
             else if (CONFIG_OPERAND.contains(a)) {
                 if (i + 1 >= rest.size()) return CONFIG_UNKNOWN;
                 file |= a.equals("--file") || a.equals("-f");
-                i++; // its operand is a file name or a value, never the subcommand or the key
-            } else return CONFIG_UNKNOWN; // shortened, negated, grouped, or an option that edits or removes: not known, refused
+                i++;
+            } else return CONFIG_UNKNOWN;
         }
-        List<String> keys = rest.subList(Math.min(i, rest.size()), rest.size()); // the key, its value, a pattern: never read as options
+        List<String> keys = rest.subList(Math.min(i, rest.size()), rest.size());
         if (subcommand == null) subcommand = "";
         if (subcommand.equals("edit") || subcommand.equals("remove-section") || subcommand.equals("rename-section")) {
             return Decision.deny("opens git settings in an editor, or removes or renames a whole section of them, protected keys included. Set single keys instead.");
@@ -199,11 +184,9 @@ final class GitRules {
         if (subcommand.equals("get") || subcommand.equals("list")) reads++;
         if (subcommand.equals("set") || subcommand.equals("unset")) writes++;
         unset |= subcommand.equals("unset");
-        if (reads > 1 || reads > 0 && writes > 0) return CONFIG_UNKNOWN; // which of the two git would do is not for the guard to guess
-        // a read: one read action, or no action and one key (git config <key> prints the key), in any scope and from any file
+        if (reads > 1 || reads > 0 && writes > 0) return CONFIG_UNKNOWN;
         if (reads == 1 || writes == 0 && subcommand.isEmpty() && keys.size() == 1) return Decision.allow();
         if (outside) return Decision.deny("changes git settings outside this repository.");
-        // a file of the command's choosing is written like any git settings file, and may be a file the guard protects
         if (file) return Decision.deny("writes git settings into a file of the command's choosing, which the guard does not check. Set the key in the repository's own settings.");
         for (int k = 0; k < keys.size(); k++) {
             String a = keys.get(k);

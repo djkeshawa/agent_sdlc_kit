@@ -47,7 +47,6 @@ import sdlc.workflow.Verify;
 import sdlc.workflow.Wiki;
 import sdlc.workflow.Workflow;
 
-/** Entry point of the sdlc tool. Run it as: java .agent/Sdlc.java <command> */
 public final class Main {
     private static final String USAGE = """
             usage: java .agent/Sdlc.java <command>      (fast: sh .agent/bin/sdlc | .agent\\bin\\sdlc.cmd)
@@ -118,15 +117,14 @@ public final class Main {
             if (guard) {
                 code = Hooks.emit(Decision.deny(sdlc.util.SafeOut.clean("the guard could not decide (" + e.getMessage() + ").")), hookFormat(args));
             } else {
-                System.err.println(sdlc.util.SafeOut.clean(e.getMessage())); // the message may quote a file name or a line of the repository
+                System.err.println(sdlc.util.SafeOut.clean(e.getMessage()));
                 code = 3;
             }
         } catch (Http.ApiException e) {
             System.err.println(sdlc.util.SafeOut.clean("Remote call failed: " + e.getMessage()));
             code = 4;
-        } catch (Throwable e) { // also StackOverflowError and OutOfMemoryError: a tool call built to crash the guard is refused
+        } catch (Throwable e) { // also StackOverflowError and OutOfMemoryError: the guard fails closed
             if (guard) {
-                // fail closed: a broken guard must not wave tool calls through
                 code = Hooks.emit(Decision.deny(sdlc.util.SafeOut.clean("the guard failed (" + e + "). Ask a human to run: java .agent/Sdlc.java selftest")), hookFormat(args));
             } else if (hook) {
                 System.err.println(sdlc.util.SafeOut.clean("[sdlc] hook error (ignored): " + e));
@@ -139,15 +137,13 @@ public final class Main {
         System.exit(code);
     }
 
-    /** hook ... --for claude | codex | copilot: the host whose answer format is wanted. */
     private static HookFormat hookFormat(String[] args) {
         return HookFormat.of(Checks.options(args, 1).getOrDefault("for", "copilot"));
     }
 
-    /** Seconds the guard may take for one tool call. The hosts give a hook 30 s and let the call through when it runs out. */
+    // The hosts give a hook 30 s and let the call through when it runs out.
     private static final int GUARD_SECONDS = 20;
 
-    /** A guard that hangs must not let the call through: after GUARD_SECONDS it refuses and stops. */
     private static void refuseWhenSlow(String[] args) {
         Thread t = new Thread(() -> {
             try {
@@ -162,20 +158,14 @@ public final class Main {
         t.start();
     }
 
-    /**
-     * The repository this copy of the tool belongs to: the folder that holds .agent. Never the
-     * folder a hook payload names. The agent chooses that folder (cd /tmp), and rules read from
-     * there would be the rules of another repository, or none.
-     */
     private static Path home() {
         try {
             var source = Main.class.getProtectionDomain().getCodeSource();
             if (source != null) {
-                Path agent = Path.of(source.getLocation().toURI()).getParent(); // <repo>/.agent/.build -> <repo>/.agent
+                Path agent = Path.of(source.getLocation().toURI()).getParent();
                 if (agent != null && agent.getParent() != null && String.valueOf(agent.getFileName()).equals(".agent")) return agent.getParent();
             }
         } catch (Exception e) {
-            // not started from .agent/.build: use the process directory
         }
         return Path.of("").toAbsolutePath();
     }
@@ -192,9 +182,9 @@ public final class Main {
         String c0 = a[0];
         String c1 = a.length > 1 ? a[1] : "";
         Map<String, String> opt = Checks.options(a, 1);
-        if (c0.equals("check")) return sdlc.check.Check.run(opt); // needs no configuration and no tracker
-        if (c0.equals("mandate")) return sdlc.mandate.MandateCli.run(a, opt); // nor does this
-        Workflow w = new Workflow(new Jira(Ctx.cfg), new Confluence(Ctx.cfg), Console.TERMINAL); // the one place that says the tracker is Jira and the wiki is Confluence
+        if (c0.equals("check")) return sdlc.check.Check.run(opt);
+        if (c0.equals("mandate")) return sdlc.mandate.MandateCli.run(a, opt);
+        Workflow w = new Workflow(new Jira(Ctx.cfg), new Confluence(Ctx.cfg), Console.TERMINAL);
         return switch (c0) {
             case "hook" -> Hooks.run(c1, stdin, hookFormat(a), w.sync);
             case "git-hook" -> GitHooks.run(c1, Arrays.copyOfRange(a, 2, a.length), stdin);
@@ -250,7 +240,7 @@ public final class Main {
             };
             case "confluence" -> {
                 Wiki.Page p = w.wiki.page(need(a, 2, "PAGE_ID"));
-                System.out.println(opt.containsKey("storage") ? p.storage() // the raw storage format, to debug the Markdown conversion
+                System.out.println(opt.containsKey("storage") ? p.storage()
                         : "# " + p.title() + "  (v" + p.version() + ", " + p.url() + ")\n\n" + Markdown.toMarkdown(p.storage()));
                 yield 0;
             }
@@ -310,12 +300,11 @@ public final class Main {
         return a[i];
     }
 
-    /** The arguments from index i on that are not options. */
     private static List<String> positional(String[] a, int i) {
         List<String> out = new ArrayList<>();
         for (int j = i; j < a.length; j++) {
             if (a[j].startsWith("--")) {
-                j++; // skip the option's value
+                j++;
                 continue;
             }
             out.add(a[j]);
@@ -333,15 +322,6 @@ public final class Main {
         return Gates.guard(null).files.safeInput(f);
     }
 
-    /**
-     * When started from the compiled copy (.agent/.build) and the sources differ from the ones it
-     * was built from (after a git pull or an upgrade), re-run through the bootstrap, which
-     * recompiles. Rules are never out of date.
-     */
-    /**
-     * SHA-256 over the path and content of every source file, as Sdlc.java computes it. Content, not
-     * timestamps: sources copied in with old timestamps (cp -p, rsync -a, an archive) still count as a change.
-     */
     static String fingerprint(Path src) throws IOException, java.security.NoSuchAlgorithmException {
         java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
         try (Stream<Path> files = Files.walk(src)) {
@@ -369,7 +349,7 @@ public final class Main {
             try {
                 fresh = Files.readString(stamp).trim().equals(fingerprint(src));
             } catch (Exception e) {
-                fresh = false; // the bootstrap then compiles, or fails loudly
+                fresh = false;
             }
             if (fresh) return null;
             List<String> cmd = new ArrayList<>(List.of(Ctx.javaBinary(), build.getParent().resolve("Sdlc.java").toString()));

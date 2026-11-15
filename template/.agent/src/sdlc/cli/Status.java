@@ -9,7 +9,6 @@ import sdlc.util.Json;
 import sdlc.workflow.Gates;
 import sdlc.workflow.Verify;
 
-/** `sdlc status`: where am I, what may I edit, what is left before the PR. */
 public final class Status {
     private Status() {}
 

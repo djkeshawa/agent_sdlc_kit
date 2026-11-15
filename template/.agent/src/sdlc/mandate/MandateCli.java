@@ -13,7 +13,6 @@ import sdlc.core.Ctx;
 import sdlc.core.UsageException;
 import sdlc.util.Json;
 
-/** sdlc mandate check|show|list: read and validate the mandates in docs/mandates. Needs no tracker. */
 public final class MandateCli {
     private MandateCli() {}
 
@@ -25,7 +24,6 @@ public final class MandateCli {
               mandate approve <ID> approve it yourself, in a terminal: you say first how it could fail
             """;
 
-    /** args is the whole command line: args[0] is "mandate". */
     public static int run(String[] args, Map<String, String> opt) throws IOException {
         String sub = args.length > 1 ? args[1] : "";
         Path root = Ctx.root;
@@ -42,7 +40,6 @@ public final class MandateCli {
         };
     }
 
-    /** Asks the person at the terminal. There must be one: an approval that arrives through a pipe is nobody's. */
     private static String terminal(String question) {
         java.io.Console console = System.console();
         if (console == null) throw new UsageException("mandate approve is for a person at a terminal. It does not read answers from a pipe or a file.");
@@ -50,14 +47,8 @@ public final class MandateCli {
         return answer == null ? "" : answer.strip();
     }
 
-    /**
-     * Approval by the person at the keyboard. The order matters: they say how the change could
-     * fail before they see what the draft says, so the draft cannot put the thought in their head.
-     * ask puts one question and returns the answer.
-     */
     public static int approve(Path root, String id, java.util.function.Function<String, String> ask, PrintStream to) throws IOException {
-        PrintStream out = sdlc.util.SafeOut.stream(to); // names and sentences of the repository are printed here
-        // read once: what is shown, what is rewritten and what is approved all come from these bytes
+        PrintStream out = sdlc.util.SafeOut.stream(to);
         Mandate.Loaded read = Mandate.loaded(root, id);
         Mandate draft = read.mandate();
         out.println("Approving " + Mandate.DIR + "/" + id + ".json");
@@ -103,25 +94,23 @@ public final class MandateCli {
             out.println("Not approved.");
             return 1;
         }
-        // the file must still be the one that was shown: a draft swapped in while the person was deciding is not approved
+        // a draft swapped in while the person was deciding is not approved
         Path file = Mandate.file(root, id);
         String rel = Mandate.DIR + "/" + id + ".json";
         if (!Mandate.read(root, file, rel).equals(read.text())) {
             out.println(rel + " changed while you were deciding. Nothing was approved; look at it again.");
             return 1;
         }
-        // the sentence becomes part of the mandate, so the blob that is approved holds the approver's own words
         Map<String, Object> json = new java.util.LinkedHashMap<>(Json.map(Json.parseStrict(read.text())));
         json.put("failsIf", fails);
         String approved = Json.pretty(json) + "\n";
-        Mandate.parse(id, approved); // what is about to be written is a valid mandate
+        Mandate.parse(id, approved);
         if (approved.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > Mandate.MAX_BYTES) {
-            // written out with the sentence it would be a file the tool refuses to read
             out.println(rel + " would be larger than " + Mandate.MAX_BYTES / 1024 + " KB once written with your sentence. Nothing was approved; make the mandate shorter.");
             return 1;
         }
         Files.writeString(file, approved, java.nio.charset.StandardCharsets.UTF_8);
-        String blob = Mandate.blobOf(root, approved); // of the text just written, not of a second read
+        String blob = Mandate.blobOf(root, approved);
         SelfApproval.record(root, id, new SelfApproval.Record(blob, who(root), java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString(), covers));
         out.println();
         out.println("Approved by you (" + MandateCard.safe(who(root)) + "), blob " + blob.substring(0, Math.min(12, blob.length())) + ".");
@@ -143,7 +132,7 @@ public final class MandateCli {
     }
 
     static int check(Path root, String id, PrintStream to) {
-        PrintStream out = sdlc.util.SafeOut.stream(to); // names and sentences of the repository are printed here
+        PrintStream out = sdlc.util.SafeOut.stream(to);
         Path f = Mandate.file(root, id);
         String rel = Mandate.DIR + "/" + id + ".json";
         if (!Files.isRegularFile(f)) {
@@ -168,7 +157,6 @@ public final class MandateCli {
         return 0;
     }
 
-    /** What is odd about a valid mandate in this working tree, without making it invalid. */
     static List<String> warnings(Path root, Mandate m) {
         List<String> out = new ArrayList<>();
         for (int k = 0; k < m.mustStayTrue().size(); k++) {
@@ -189,14 +177,14 @@ public final class MandateCli {
     }
 
     static int show(Path root, String id, PrintStream to) {
-        PrintStream out = sdlc.util.SafeOut.stream(to); // names and sentences of the repository are printed here
+        PrintStream out = sdlc.util.SafeOut.stream(to);
         Mandate m = Mandate.load(root, id);
         out.print(MandateCard.render(m, Mandate.blobId(root, id)));
         return 0;
     }
 
     static int list(Path root, PrintStream to) throws IOException {
-        PrintStream out = sdlc.util.SafeOut.stream(to); // names and sentences of the repository are printed here
+        PrintStream out = sdlc.util.SafeOut.stream(to);
         Path dir = root.resolve(Mandate.DIR);
         List<Path> files = new ArrayList<>();
         if (Files.isDirectory(dir)) {
@@ -238,7 +226,6 @@ public final class MandateCli {
         return name.substring(0, name.length() - ".json".length());
     }
 
-    /** The intent, read leniently so a mandate with problems still shows what it is about. */
     private static String intentOf(String json) {
         try {
             Object v = Json.at(Json.parse(json), "intent");

@@ -21,13 +21,6 @@ import sdlc.util.Glob;
 import sdlc.util.Json;
 import sdlc.util.Proc;
 
-/**
- * sdlc tests lock <STORY> [--paths glob,glob] (a QE person runs it; agents are refused):
- * copies the acceptance tests the qa-verifier drafted in .sdlc/<STORY>/drafts/acceptance/
- * (mirroring repository paths) into the repository, and/or takes existing test files matching
- * --paths, and records their hashes in docs/test-locks/<STORY>.json. sdlc tests status shows
- * every lock and any locked file that changed.
- */
 public final class TestLocks {
     private TestLocks() {}
 
@@ -62,7 +55,7 @@ public final class TestLocks {
         }
         Path lockFile = Ctx.root.resolve(Locks.DIR).resolve(story + ".json");
         Map<String, Object> old = Store.read(lockFile);
-        for (String f : Json.map(old.get("files")).keySet()) if (Files.isRegularFile(Ctx.root.resolve(f))) files.add(f); // re-locking keeps the earlier files
+        for (String f : Json.map(old.get("files")).keySet()) if (Files.isRegularFile(Ctx.root.resolve(f))) files.add(f);
         if (files.isEmpty()) throw new UsageException("nothing to lock: no files in " + Ctx.rel(draft) + " and no --paths given");
         Map<String, Object> hashes = new TreeMap<>();
         for (String f : files) hashes.put(f, Locks.hash(Files.readAllBytes(Ctx.root.resolve(f))));

@@ -20,11 +20,6 @@ import javax.imageio.ImageIO;
 
 import sdlc.core.UsageException;
 
-/**
- * Mind map of a test design: the feature at the root, test areas (## headings) as branches, test
- * scenarios (### TS-.. headings) as leaves. Rendered as a PNG (Confluence shows it on the page)
- * and as Mermaid source (renders on GitHub, or in Confluence with a Mermaid app).
- */
 public final class MindMap {
     public record Node(String text, List<Node> children) {}
 
@@ -70,7 +65,6 @@ public final class MindMap {
         return s.replaceAll("[()\\[\\]{}\"`]", " ").replaceAll("\\s+", " ").trim();
     }
 
-    /** Writes mindmap.png next to the draft and makes sure the draft shows it. */
     static String addImage(String md, Path draft) throws IOException {
         Node root = parse(md);
         if (root.children().isEmpty()) return md;

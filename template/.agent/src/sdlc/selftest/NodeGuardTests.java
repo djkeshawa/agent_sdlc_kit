@@ -19,7 +19,6 @@ import sdlc.guard.Decision;
 import sdlc.workflow.Checks;
 import sdlc.workflow.Tasks;
 
-/** Self test: the guard rules and settings that differ in a Node repository. */
 final class NodeGuardTests {
     private NodeGuardTests() {}
 

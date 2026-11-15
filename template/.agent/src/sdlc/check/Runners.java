@@ -14,44 +14,29 @@ import java.util.stream.Stream;
 import sdlc.core.Ctx;
 import sdlc.util.Proc;
 
-/** The runners this version has: Maven Surefire and Vitest. */
 public final class Runners {
     private Runners() {}
 
-    /** For the self test: where Maven would be started for a module. */
     public static String reactorRootOf(java.nio.file.Path checkout, String module) {
         return Maven.reactorRoot(checkout, module);
     }
 
-    /** For the self test: what the Maven runner makes of one test file in a checkout, in words (see said). */
     public static String mavenRun(Path checkout, String file) {
         return said(new Maven().run(checkout, List.of(file), 120).get(file));
     }
 
-    /**
-     * For the self test: what the Vitest runner makes of a report vitest wrote and exited with 1, for
-     * one test file (its path in the project), with what the check's own reporter wrote beside it
-     * (retries; a path that does not exist where it wrote nothing).
-     */
     public static String vitestReport(Path report, Path retries, String file) throws IOException {
         return said(Vitest.result(JUnitXml.read(report), file, null, 1, false, "", Vitest.Retries.read(retries)));
     }
 
-    /** For the self test: a test's name as vitest's JUnit report gives it once read, from the name vitest gave it (see Vitest.Retries.asReported); null where none. */
     public static String vitestReportedName(String name) {
         return Vitest.Retries.asReported(name, new JUnitXml.Attributes());
     }
 
-    /** For the self test: the text of the check's own reporter for vitest (see Vitest.REPORTER). */
     public static String vitestReporter() {
         return Vitest.REPORTER;
     }
 
-    /**
-     * A file's run in words: "no result: why", "ran, no tests", or each case as "STATUS name", with
-     * " (run again)" where the runner ran it again, joined by "; "; then, where the run does not say
-     * which passes were at the first try, " [retries not known: why]".
-     */
     private static String said(Runner.FileRun run) {
         if (run == null) return "no result";
         if (run.problem() != null) return "no result: " + run.problem();
@@ -64,26 +49,23 @@ public final class Runners {
         return List.of(new Maven(), new Vitest());
     }
 
-    /** The nearest folder at or above the file's folder (inside the checkout) that the test accepts, relative, "" for the root; null when none. */
     static String nearest(Path checkout, String path, java.util.function.Predicate<Path> accepts) {
         Path dir = checkout.resolve(path).getParent();
         while (dir != null && dir.startsWith(checkout)) {
             if (accepts.test(dir)) {
                 String rel = checkout.relativize(dir).toString();
-                return Proc.WINDOWS ? rel.replace('\\', '/') : rel; // elsewhere a backslash is part of a name, not a separator
+                return Proc.WINDOWS ? rel.replace('\\', '/') : rel;
             }
             dir = dir.getParent();
         }
         return null;
     }
 
-    /** Removes a folder and what is in it. A link is removed, never followed. */
     static void deleteTree(Path dir) {
         if (!Files.exists(dir, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return;
         try (Stream<Path> s = Files.walk(dir)) {
             for (Path p : s.sorted(java.util.Comparator.reverseOrder()).toList()) Files.deleteIfExists(p);
         } catch (IOException e) {
-            // what stays is seen by the next run, which then reports what it finds
         }
     }
 
@@ -92,7 +74,6 @@ public final class Runners {
         return String.join("\n", List.of(all).subList(Math.max(0, all.length - lines), all.length));
     }
 
-    /** Maven's own first complaint: the first [ERROR] line that says something. */
     private static String firstError(String text) {
         for (String line : text.split("\\R")) {
             String l = line.strip();
@@ -104,14 +85,9 @@ public final class Runners {
         return tail(text, 2).replaceAll("\\s+", " ");
     }
 
-    /** Names that go into a build tool's arguments: letters, digits and the few signs paths and class names need. Nothing a selector or a shell reads as syntax. */
     private static final Pattern PLAIN = Pattern.compile("[\\p{L}\\p{N}_$.][\\p{L}\\p{N}_$./-]*");
 
-    /**
-     * Only a failed assertion counts as a failure. Vitest's junit reporter writes every thrown error
-     * as a failure element, and a report can name any type there; anything that is not an
-     * assertion error is "threw something else".
-     */
+    // Vitest's junit reporter writes every thrown error as a failure element: only an assertion error is a failure.
     private static JUnitXml.Case assertionOrError(JUnitXml.Case c) {
         if (c.status() != JUnitXml.Status.FAILED) return c;
         String type = c.type().toLowerCase(java.util.Locale.ROOT);
@@ -119,11 +95,6 @@ public final class Runners {
         return new JUnitXml.Case(c.suite(), c.name(), JUnitXml.Status.ERRORED, c.type(), c.message(), c.retried());
     }
 
-    /**
-     * True when the folder, or the nearest folder above it that exists, is a real folder inside the
-     * checkout: not a link, and not reached through one. A build that writes its reports through a
-     * linked "target" would write outside the checkout.
-     */
     private static boolean inside(Path checkout, Path dir) {
         try {
             Path real = checkout.toRealPath();
@@ -135,8 +106,6 @@ public final class Runners {
             return false;
         }
     }
-
-    // ---------------- Maven Surefire ----------------
 
     static final class Maven implements Runner {
         private static final Pattern TEST_CLASS = Pattern.compile("(Test.*|.*Test|.*Tests|.*TestCase)\\.java");
@@ -159,7 +128,6 @@ public final class Runners {
             return path.contains("src/test/");
         }
 
-        /** What Maven prints when code does not compile. */
         private static final Pattern DOES_NOT_COMPILE = Pattern.compile("COMPILATION ERROR|Compilation failure");
 
         @Override
@@ -167,7 +135,6 @@ public final class Runners {
             for (String f : files) {
                 String module = nearest(checkout, f, d -> Files.isRegularFile(d.resolve("pom.xml")));
                 if (module == null) continue;
-                // compiled tests, and the compiler's own record of what it compiled
                 for (String built : List.of("target/test-classes", "target/maven-status")) {
                     Path dir = checkout.resolve(module).resolve(built);
                     if (inside(checkout, dir)) deleteTree(dir);
@@ -198,7 +165,6 @@ public final class Runners {
                     for (String f : m.getValue()) out.put(f, FileRun.failed("was not run: " + refused));
                     continue;
                 }
-                // Maven runs where the module's build starts: the topmost pom that lists it, which need not be the repository root
                 String root = reactorRoot(checkout, m.getKey());
                 String within = root.isEmpty() ? m.getKey() : m.getKey().equals(root) ? "" : m.getKey().substring(root.length() + 1);
                 List<String> launcher = launcher(checkout, root);
@@ -211,7 +177,6 @@ public final class Runners {
                         "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false"));
                 if (!within.isEmpty()) cmd.addAll(List.of("-pl", within, "-am"));
                 cmd.add("test");
-                // read from every line as it arrives: the kept text of a long output has no middle
                 java.util.concurrent.atomic.AtomicBoolean doesNotCompile = new java.util.concurrent.atomic.AtomicBoolean();
                 Proc.Lines seen = (line, endsLine) -> {
                     if (DOES_NOT_COMPILE.matcher(line).find()) doesNotCompile.set(true);
@@ -220,7 +185,6 @@ public final class Runners {
                 List<JUnitXml.Case> cases = new ArrayList<>();
                 String unreadable = null;
                 if (p.code() == 124) {
-                    // a run that was cut off proves nothing, whatever reports it left
                     for (String f : m.getValue()) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
                     continue;
                 }
@@ -243,7 +207,6 @@ public final class Runners {
                     else if (p.code() == 124) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
                     else if (doesNotCompile.get()) out.put(f, FileRun.broken(Witness.DOES_NOT_COMPILE));
                     else if (p.code() == 127) out.put(f, FileRun.failed("Maven could not be started (" + tail(text, 1) + ")"));
-                    // the build passed, its reports could be read, and none is about this class: the class ran and has no tests
                     else if (p.code() == 0) out.put(f, new FileRun(List.of(), null));
                     else out.put(f, FileRun.failed("did not run (Maven exit " + p.code() + ": " + firstError(text) + ")"));
                 }
@@ -251,11 +214,6 @@ public final class Runners {
             return out;
         }
 
-        /**
-         * The folder Maven is started in for a module: the module itself, or the topmost folder
-         * above it whose pom.xml lists it (through any chain of <module> entries). "" is the
-         * repository root.
-         */
         static String reactorRoot(Path checkout, String module) {
             String dir = module;
             while (!dir.isEmpty()) {
@@ -269,7 +227,6 @@ public final class Runners {
                     try {
                         if (Pattern.compile("<module>\\s*(\\./)?" + Pattern.quote(rel) + "/?\\s*</module>").matcher(Integrity.withoutComments(Files.readString(pom))).find()) listedBy = above;
                     } catch (IOException e) {
-                        // an unreadable pom lists nothing
                     }
                 }
                 if (listedBy == null) break;
@@ -278,7 +235,6 @@ public final class Runners {
             return dir;
         }
 
-        /** Removes the reports of an earlier run. False when that cannot be done safely: the folder is a link, or a file stays. */
         private static boolean clear(Path checkout, Path reports) {
             if (!inside(checkout, reports)) return false;
             if (!Files.exists(reports, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return true;
@@ -293,7 +249,6 @@ public final class Runners {
             }
         }
 
-        /** The Maven wrapper nearest to the build's root (there, or in a folder above it), else mvn; null when neither starts. */
         private static List<String> launcher(Path checkout, String root) {
             String name = Proc.WINDOWS ? "mvnw.cmd" : "mvnw";
             for (Path dir = checkout.resolve(root); dir != null && dir.startsWith(checkout); dir = dir.getParent()) {
@@ -307,21 +262,12 @@ public final class Runners {
         }
     }
 
-    // ---------------- Vitest ----------------
-
     static final class Vitest implements Runner {
         private static final Pattern TEST_FILE = Pattern.compile(".*\\.(test|spec)\\.[cm]?[jt]sx?");
         private static final Pattern DID_NOT_LOAD = Pattern.compile("SyntaxError|Failed to load|Failed to resolve import|Cannot find module|Transform failed|Failed to parse source");
-        /** True when vitest's output reports a load failure within a few lines of this file's name. */
-        /**
-         * Reads the output of vitest line by line, both streams as they arrive, and notes the test files it says it could
-         * not load: a line that says so (DID_NOT_LOAD) on, or up to five lines after, a line that
-         * names the file. Another file's syntax error says nothing about this one.
-         */
         private static final class LoadFailures implements Proc.Lines {
             private final List<String> files;
             private final Set<String> failed;
-            /** For each of the last six lines: the test files it names. A long line that arrives in pieces is one line. */
             private final java.util.ArrayDeque<Set<String>> last = new java.util.ArrayDeque<>();
             private boolean lineOpen;
 
@@ -342,52 +288,24 @@ public final class Runners {
             }
         }
 
-        /**
-         * What one test file's run comes to, from vitest's report (cases), the reason it could not be
-         * read (unreadable), vitest's exit code, whether its output said the file did not load, and the
-         * last lines it printed. Every case the report gives the file is kept as the report gives it:
-         * vitest writes a file or a group without tests ("No test found in suite ...") as a failed case
-         * exactly as it writes a test's own failure, and no message or name tells the two apart, as a
-         * test's author may write any of them.
-         */
+        // Vitest writes a file or group without tests as a failed case, exactly as it writes a test's own failure.
         static FileRun result(List<JUnitXml.Case> cases, String name, String unreadable, int exit, boolean didNotLoad, String said, Retries retries) {
             List<JUnitXml.Case> mine = cases.stream().filter(c -> slashes(c.suite()).equals(name)).map(Runners::assertionOrError).toList();
             if (!mine.isEmpty()) return retries.apply(mine, name);
             if (unreadable != null) return FileRun.failed("its report cannot be read (" + unreadable + ")");
             if (exit == 127) return FileRun.failed("node could not be started (is Node.js on the PATH?)");
-            // vitest gave this file no result. That is broken code only when vitest says it could not load the file;
-            // a worker that did not start, or a file its configuration leaves out, says nothing about the code.
-            // (and says so about this file: another file's syntax error says nothing about this one)
             if (didNotLoad) return FileRun.broken("did not load (vitest exit " + exit + ": " + said + ")");
             return FileRun.failed("gave no result (vitest exit " + exit + ": " + said + ")");
         }
 
-        /** A path vitest wrote, with "/" between its folders: on Windows it writes "\\"; elsewhere a backslash is part of a name, not a separator. */
         private static String slashes(String path) {
             return Proc.WINDOWS ? path.replace('\\', '/') : path;
         }
 
-        /** The environment variable that tells the check's reporter where to write. */
         private static final String RETRIES_TO = "SDLC_VITEST_RETRIES";
 
-        /**
-         * The check's own reporter, run by vitest beside its JUnit reporter. Vitest's JUnit report
-         * writes a test that failed and then passed when vitest ran it again (the retry option of
-         * the test, of its group, or of the configuration: per test it wins over the configuration
-         * and the command line) as an ordinary passed case, and nothing in the report tells the
-         * two apart. Vitest itself knows: a test's result counts its retries (result.retryCount).
-         * This reporter writes, for each test of each file vitest ran, the file and the name as
-         * the JUnit reporter writes them (the path from the project's root; the names of the groups
-         * and the test joined by " > "), the test's state, how often vitest ran it again, and the
-         * retries it was given, as JSON, to the file named by SDLC_VITEST_RETRIES. It answers to the
-         * reporter calls of vitest 3 and earlier (onFinished) and of later versions
-         * (onTestRunEnd); what both write is the same.
-         *
-         * Its text is fixed: nothing of the repository goes into it, and it is written to a folder of
-         * the check's own outside the checkout. It runs in vitest's process, which already runs the
-         * project's configuration and the change's tests, so it can do nothing they cannot; what it
-         * writes is read as hostile input all the same (see Retries.read).
-         */
+        // Vitest's JUnit report writes a test that passed on a retry as an ordinary pass; only result.retryCount tells.
+        // The reporter API is onFinished in vitest 3 and earlier, onTestRunEnd later.
         static final String REPORTER = """
                 // sdlc check: for each test vitest ran, its file, its name as the JUnit reporter writes it, its state and its retries
                 import { writeFileSync } from 'node:fs';
@@ -419,31 +337,17 @@ public final class Runners {
                 }
                 """;
 
-        /** Why nothing of a run can be taken for a pass at the first try where vitest's own account of it is missing. */
         private static final String NOT_WRITTEN = "vitest did not write the check's account of its tests (its reporter did not load or did not finish)";
 
-        /** The largest account of the retries that is read: it is written in a process that runs the change's code. */
         private static final long MAX_RETRIES_BYTES = 50L * 1024 * 1024;
 
-        /**
-         * What the check's reporter wrote (see REPORTER): per file, per name as the JUnit report
-         * gives it (see asReported), each test of that name as vitest ran it; or why it cannot be
-         * used (why), in which case no pass of the run is taken for a pass at the first try.
-         */
         record Retries(Map<String, Map<String, List<Ran>>> files, String why) {
-            /** One test as vitest ran it: its state ("pass", "fail", "skip", "todo", or null where it did not run), how often it was run again, the retries it was given (null where vitest does not say). */
             record Ran(String state, Long retryCount, Long retry) {}
 
             static Retries unknown(String why) {
                 return new Retries(Map.of(), why);
             }
 
-            /**
-             * Reads the account a run of the reporter wrote. It is hostile input: a regular file
-             * (a link is not followed), at most MAX_RETRIES_BYTES, strict JSON of exactly the shape
-             * the reporter writes, or it is not used. Nothing in it is used as a path or a command:
-             * its file names and test names are only compared with those of the JUnit report.
-             */
             static Retries read(Path json) {
                 try {
                     if (!Files.isRegularFile(json, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return unknown(NOT_WRITTEN);
@@ -456,7 +360,6 @@ public final class Runners {
                         if (!(t instanceof Map<?, ?> m) || !(m.get("file") instanceof String file) || !(m.get("name") instanceof String name)) throw new IllegalArgumentException("a test without its file or name");
                         Object state = m.get("state");
                         if (state != null && !(state instanceof String)) throw new IllegalArgumentException("a state that is not a word");
-                        // each test under its name as the JUnit report gives it once read: the two are compared, never the name vitest gave
                         if (name.length() > MAX_NAME) return unknown("vitest's account of its tests names a test longer than " + MAX_NAME + " characters");
                         String reported = asReported(name, xml);
                         if (reported == null) return unknown("vitest's account of its tests names a test that its JUnit report cannot write as XML");
@@ -469,21 +372,10 @@ public final class Runners {
                 }
             }
 
-            /** The longest name that is compared: longer ones make the account unusable, as reading one costs memory in proportion. */
             static final int MAX_NAME = 1_000_000;
 
-            /**
-             * A test's name as vitest's JUnit report gives it once read (see JUnitXml.read), from
-             * the name vitest gave it: what vitest's junit reporter writes into the name attribute
-             * (escapeXML of vitest 3: &, ", ', < and > written as references, then the characters
-             * XML 1.0 forbids or discourages taken out, by the same two patterns, which read UTF-16
-             * code units: so a lone low surrogate takes the character before it along, and a
-             * reference may lose its ';'), each lone surrogate left then written as U+FFFD (Node
-             * writes the report in UTF-8), then read by the check's own XML parser as an attribute's
-             * value (a line end, a tab or a line feed becomes a space). null where that is not
-             * well-formed XML: a report that held it could not be read. Linear in the name's
-             * length; never throws.
-             */
+            // vitest 3 escapeXML: &, ", ', < and > as references, then XML-forbidden characters removed by UTF-16 code unit (a reference may
+            // lose its ';'); Node writes a lone surrogate as U+FFFD; an XML parser then normalises the attribute value.
             static String asReported(String name, JUnitXml.Attributes xml) {
                 StringBuilder escaped = new StringBuilder(name.length() + 16);
                 for (int i = 0; i < name.length(); i++) {
@@ -509,12 +401,6 @@ public final class Runners {
                 return c >= 0xDC00 && c <= 0xDFFF;
             }
 
-            /**
-             * Vitest's first pattern, global, on code units, its alternatives tried in that order at
-             * each place: one of U+0000 to U+0008, U+000B, U+000C, U+000E to U+001F, U+FFFD, U+FFFE,
-             * U+FFFF; a high surrogate without a low one after it; a low surrogate with the code unit
-             * before it where that is not a high surrogate, or alone at the start.
-             */
             private static String invalidOut(CharSequence s) {
                 StringBuilder out = new StringBuilder(s.length());
                 int n = s.length();
@@ -523,7 +409,7 @@ public final class Runners {
                     boolean lowNext = i + 1 < n && low(s.charAt(i + 1));
                     if (c <= 0x08 || c == 0x0B || c == 0x0C || (c >= 0x0E && c <= 0x1F) || c >= 0xFFFD) i++;
                     else if (high(c) && !lowNext) i++;
-                    else if (!high(c) && lowNext) i += 2; // a low surrogate with the code unit before it
+                    else if (!high(c) && lowNext) i += 2;
                     else if (i == 0 && low(c)) i++;
                     else {
                         out.append(c);
@@ -533,12 +419,6 @@ public final class Runners {
                 return out.toString();
             }
 
-            /**
-             * Vitest's second pattern (what XML 1.0 discourages), global, on code units: U+007F to
-             * U+0084, U+0086 to U+009F, U+FDD0 to U+FDEF, the last two code points of planes 1 to
-             * 15, and those of plane 16 only together with what follows them (see plane16Tail), as
-             * the pattern is written.
-             */
             private static String discouragedOut(String s) {
                 StringBuilder out = new StringBuilder(s.length());
                 int n = s.length();
@@ -565,22 +445,15 @@ public final class Runners {
                 return out.toString();
             }
 
-            /**
-             * How many code units at j the group after U+10FFFE or U+10FFFF takes in vitest's second
-             * pattern, or -1 where it does not match. Its alternatives, in order: one code unit that
-             * is not a line feed, a carriage return, U+2028, U+2029 or a surrogate; a surrogate pair;
-             * a high surrogate alone; any code unit but a high surrogate with a low one after it.
-             */
             private static int plane16Tail(String s, int j) {
                 if (j >= s.length()) return -1;
                 char d = s.charAt(j);
                 boolean lowNext = j + 1 < s.length() && low(s.charAt(j + 1));
                 if (d != '\n' && d != '\r' && d != 0x2028 && d != 0x2029 && !high(d) && !low(d)) return 1;
                 if (high(d)) return lowNext ? 2 : 1;
-                return lowNext ? 2 : -1; // a line end or a low surrogate, with a low surrogate after it
+                return lowNext ? 2 : -1;
             }
 
-            /** Each lone surrogate as U+FFFD, as Node's UTF-8 encoder writes it. */
             private static String wellFormed(String s) {
                 StringBuilder out = null;
                 for (int i = 0; i < s.length(); i++) {
@@ -598,27 +471,16 @@ public final class Runners {
                 return out == null ? s : out.toString();
             }
 
-            /** A count: null, or a whole number from 0 up. */
             private static Long count(Object o) {
                 if (o == null) return null;
                 if (!(o instanceof Double d) || d < 0 || d > 1e9 || d != Math.floor(d)) throw new IllegalArgumentException("a count that is not a whole number");
                 return d.longValue();
             }
 
-            /**
-             * The cases of one file (name: its path in the project) with what vitest said of each.
-             * A case vitest ran again is marked so (Case.retried), whatever its result. A case the
-             * JUnit report lists as passed is taken for a pass at the first try only where vitest
-             * says of it, by name, that it passed and how often it ran it again: where vitest
-             * gave a test retries and does not count them (a version without retryCount), or its
-             * account is missing or does not name the case, the run says why (retriesUnknown), once
-             * for the file. One the JUnit report lists without a mark that vitest did not run
-             * (skipped, a to-do, no result: a test after a bail) is skipped: it did not run.
-             */
             FileRun apply(List<JUnitXml.Case> mine, String file) {
                 String unknown = null;
                 Map<String, List<Ran>> ran = why == null ? files.getOrDefault(file, Map.of()) : null;
-                Map<String, Integer> listed = new java.util.HashMap<>(); // how many cases of the report have each name
+                Map<String, Integer> listed = new java.util.HashMap<>();
                 for (JUnitXml.Case c : mine) listed.merge(c.name(), 1, Integer::sum);
                 List<JUnitXml.Case> out = new ArrayList<>();
                 for (JUnitXml.Case c : mine) {
@@ -641,7 +503,6 @@ public final class Runners {
                         if (unknown == null) unknown = "vitest's account of its tests does not name a test its JUnit report lists as passed (" + c.name() + ")";
                         out.add(c);
                     } else if (same.size() > listed.get(c.name())) {
-                        // more tests of this name than the report has cases of it: which of them this case is, is not known
                         if (unknown == null) unknown = "vitest's account of its tests names more tests " + c.name() + " than its JUnit report lists";
                         out.add(c);
                     } else if (same.stream().noneMatch(r -> "pass".equals(r.state()))) {
@@ -682,19 +543,11 @@ public final class Runners {
             return TEST_FILE.matcher(path).matches() || SUPPORT_DIR.matcher(path).matches();
         }
 
-        /** Files that decide which packages are installed. Both sides run with the one installed set. */
         private static final Pattern PACKAGES = Pattern.compile("(^|.*/)(package\\.json|package-lock\\.json|npm-shrinkwrap\\.json|yarn\\.lock|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|bun\\.lockb?|\\.npmrc|\\.yarnrc(\\.yml)?|\\.pnpmfile\\.cjs)$");
 
-        /** The parts of a package.json that decide what is installed. */
         private static final List<String> INSTALLS = List.of("dependencies", "devDependencies", "peerDependencies", "optionalDependencies", "bundledDependencies",
                 "bundleDependencies", "overrides", "resolutions", "workspaces", "pnpm", "packageManager");
 
-        /**
-         * Counts a changed package file when it decides what this test's project has installed: one
-         * in the project's folder or above it (the workspace root and its lock file), or the
-         * package.json of another package this project names as a dependency. A package.json counts
-         * only when its lists of packages changed, not for a new script or description.
-         */
         @Override
         public String sharedBySides(Change change, Path checkout, String file) {
             String project = project(checkout, file);
@@ -713,12 +566,11 @@ public final class Runners {
                     + ") and both sides ran with the packages installed now, so the side before the change was not without all of it";
         }
 
-        /** True unless both versions of a package.json can be read and list the same packages. */
         private static boolean installsDiffer(Change change, String path) {
             try {
                 return !installs(change.before(path)).equals(installs(change.after(path)));
             } catch (RuntimeException e) {
-                return true; // one that cannot be read may hold anything
+                return true;
             }
         }
 
@@ -730,7 +582,6 @@ public final class Runners {
             return out;
         }
 
-        /** True when the project's package.json lists, as a dependency, the package that the other package.json declares. */
         private static boolean namedBy(Path checkout, String project, Change change, String path) {
             try {
                 String text = change.after(path) != null ? change.after(path) : change.before(path);
@@ -745,11 +596,10 @@ public final class Runners {
                 }
                 return false;
             } catch (IOException | RuntimeException e) {
-                return true; // not known: count it
+                return true;
             }
         }
 
-        /** The nearest folder whose package.json names vitest. */
         private static String project(Path checkout, String path) {
             return nearest(checkout, path, d -> {
                 try {
@@ -777,7 +627,6 @@ public final class Runners {
                     for (String f : e.getValue()) out.put(f, FileRun.failed("vitest is not installed in the repository (run npm install there first)"));
                     continue;
                 }
-                // a folder of the check's own, outside the checkout: the JUnit report, the check's reporter and what that reporter writes
                 Path tmp, report, retries;
                 try {
                     tmp = Files.createTempDirectory("sdlc-vitest");
@@ -793,13 +642,12 @@ public final class Runners {
                             "--outputFile=" + report));
                     List<String> rel = e.getValue().stream().map(f -> e.getKey().isEmpty() ? f : f.substring(e.getKey().length() + 1)).toList();
                     if (rel.stream().anyMatch(r -> r.startsWith("-"))) {
-                        // vitest would read such a name as an option
                         for (String f : e.getValue()) out.put(f, FileRun.failed("was not run: a test file's name starts with a dash"));
                         continue;
                     }
                     cmd.addAll(rel);
                     Set<String> didNotLoad = java.util.concurrent.ConcurrentHashMap.newKeySet();
-                    LoadFailures reader = new LoadFailures(rel, didNotLoad); // one for both streams: vitest may name the file on one and the error on the other
+                    LoadFailures reader = new LoadFailures(rel, didNotLoad);
                     Proc p = Proc.runBuild(project, Map.of("CI", "1", RETRIES_TO, retries.toString()), timeoutSeconds, reader, reader, cmd.toArray(new String[0]));
                     List<JUnitXml.Case> cases = new ArrayList<>();
                     String unreadable = null;
@@ -818,17 +666,12 @@ public final class Runners {
                         out.put(e.getValue().get(i), result(cases, rel.get(i), unreadable, p.code(), didNotLoad.contains(rel.get(i)), said, again));
                     }
                 } finally {
-                    deleteTree(tmp); // a stray folder at worst
+                    deleteTree(tmp);
                 }
             }
             return out;
         }
 
-        /**
-         * A scratch checkout has no node_modules (they are ignored files). Each node_modules folder
-         * the repository has at or above the project is linked into the checkout; returns vitest's
-         * entry script, or null when the repository has none installed.
-         */
         private static Path dependencies(Path checkout, String project) {
             Path entry = null;
             String dir = project;

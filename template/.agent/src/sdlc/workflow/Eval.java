@@ -22,15 +22,6 @@ import sdlc.integrations.GitHub;
 import sdlc.util.Markdown;
 import sdlc.util.Yaml;
 
-/**
- * Scoping eval: how well agents pick the components a feature changes. Ground truth comes from
- * history (the repositories that got commits for an epic's Jira keys); answers are what an
- * agent picked from the same inputs. Several runs per case show consistency, not just luck.
- *
- *   <eval.dir>/scoping/cases/<KEY>.md    the input: one pager, HLD and Jira text (agents read it)
- *   .sdlc/hidden/eval/truth/<KEY>.yml    what really changed (hidden from agents, never in git: git show would reveal it)
- *   .sdlc/eval/inbox/<run>/<KEY>.yml     one agent answer: components: [a, b] (or a solution draft)
- */
 public final class Eval {
     private final Workflow w;
 
@@ -42,7 +33,6 @@ public final class Eval {
         return Ctx.root.resolve(Ctx.cfg.str("eval.dir", "docs/agent/eval")).resolve("scoping");
     }
 
-    /** The ground truth: under .sdlc/hidden (git-ignored), so no git command can show it to an agent. */
     public static Path truthDir() {
         return Ctx.work("hidden", "eval", "truth");
     }
@@ -51,9 +41,6 @@ public final class Eval {
         return Ctx.work("eval", "inbox");
     }
 
-    // ---------------- collect ----------------
-
-    /** sdlc eval collect <EPIC>...: writes the case input and the ground truth for each epic. */
     public int collect(List<String> epics) throws IOException {
         if (epics.isEmpty()) throw new UsageException("usage: sdlc eval collect <EPIC> [<EPIC> ...]");
         int written = 0;
@@ -81,7 +68,6 @@ public final class Eval {
         return written == epics.size() ? 0 : 1;
     }
 
-    /** The epic's key, its stories' keys and their sub-tasks' keys: commits usually carry the sub-task's key. */
     static List<String> keysOf(Workflow w, String epic) {
         List<String> keys = new ArrayList<>(List.of(epic));
         for (IssueTracker.Issue story : w.issues.children(epic)) {
@@ -92,7 +78,6 @@ public final class Eval {
         return keys;
     }
 
-    /** The case input: the epic's Jira text and its one pager / HLD pages. Never the code or later designs. */
     private String caseText(String epic) {
         StringBuilder sb = new StringBuilder("# Case " + epic + "\n\nInput for the scoping eval: which components must change for this feature?\n\n");
         try {
@@ -101,16 +86,13 @@ public final class Eval {
             sb.append("(Jira text unavailable: ").append(e.getMessage()).append(")\n\n");
         }
         for (Docs.Doc d : w.docs.find(epic)) {
-            if (!d.type().equals("onePager") && !d.type().equals("hld")) continue; // later documents would give the answer away
+            if (!d.type().equals("onePager") && !d.type().equals("hld")) continue;
             Wiki.Page p = w.wiki.page(d.id());
             sb.append("## ").append(p.title()).append("\n\n").append(Markdown.toMarkdown(p.storage())).append("\n\n");
         }
         return sb.toString();
     }
 
-    // ---------------- score ----------------
-
-    /** One case's scores over the runs that answered it. */
     public record CaseScore(String key, Set<String> truth, List<Set<String>> answers, double precision, double recall, boolean anyExact, boolean allExact, boolean consistent) {}
 
     public record Report(List<CaseScore> cases, List<String> runs, double precision, double recall, double passAtK, double passHatK, double consistency) {}
@@ -163,7 +145,6 @@ public final class Eval {
         return null;
     }
 
-    /** Precision and recall averaged over the runs; exact = the run named exactly the true set. */
     public static CaseScore score(String key, Set<String> truth, List<Set<String>> answers) {
         double p = 0, r = 0;
         boolean any = false, all = !answers.isEmpty();
@@ -183,10 +164,6 @@ public final class Eval {
 
     private static final Pattern SOLUTION_BLOCK = Pattern.compile("(?s)```ya?ml\\s*\\n(#\\s*sdlc-solution.*?)```");
 
-    /**
-     * Component names from an answer or truth file: a YAML file with components: [a, b] (names or
-     * mappings with name:), or a Markdown solution draft with its # sdlc-solution block.
-     */
     public static Set<String> components(String text) {
         Matcher m = SOLUTION_BLOCK.matcher(text);
         String yaml = m.find() ? m.group(1) : text;

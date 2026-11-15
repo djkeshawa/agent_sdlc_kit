@@ -16,11 +16,6 @@ import sdlc.core.Work;
 import sdlc.util.Glob;
 import sdlc.util.ShellWords;
 
-/**
- * Rules for agent read and edit tools: secrets, guardrail files, branch, task scope. The
- * methods that need the repository, its configuration or the shell's folder are instance
- * methods and take them from the Guard; the pure text helpers (paths, isGlob, diffTargets) are static.
- */
 public final class FileRules {
     private static final Set<String> PATH_KEYS = Set.of("filePath", "file_path", "path", "filename", "file", "target_file", "targetFile", "uri", "dirPath", "directory", "notebook_path", "notebookPath");
     private static final Pattern PATCH_FILE = Pattern.compile("^\\*\\*\\* (?:Update|Add|Delete) File: (.+)$", Pattern.MULTILINE);
@@ -32,12 +27,6 @@ public final class FileRules {
         this.g = g;
     }
 
-    /**
-     * What else a relative path may name, relative to the repository: the same words read from the
-     * other folders the shell may be in, and a path that climbs with ../ read as if it came back
-     * inside (the terminal may sit in a subfolder the guard never saw). Used for the checks that
-     * must not be fooled - secrets and guardrail files - not for the task scope.
-     */
     List<String> otherReadings(String path) {
         List<String> out = new ArrayList<>();
         try {
@@ -56,12 +45,10 @@ public final class FileRules {
                 if (!rel.isEmpty() && !rel.equals(primary) && !out.contains(rel)) out.add(rel);
             }
         } catch (RuntimeException e) {
-            // not a path
         }
         return out;
     }
 
-    /** Every file path a tool call names, however the host spells it. */
     public static List<String> paths(Map<String, Object> args) {
         Set<String> out = new LinkedHashSet<>();
         collect(args, out);
@@ -88,7 +75,6 @@ public final class FileRules {
         }
     }
 
-    /** Path relative to the repository root with forward slashes; "../x" when outside. */
     public String relative(String path) {
         try {
             Path p = Path.of(path.replace('\\', '/'));
@@ -107,14 +93,13 @@ public final class FileRules {
         return realish(abs, 0);
     }
 
-    /** The path with every symbolic link on the way resolved, also for a file that does not exist yet or a link that points nowhere yet. */
     private static Path realish(Path abs, int depth) {
         Path existing = abs;
         while (existing != null && !Files.exists(existing, java.nio.file.LinkOption.NOFOLLOW_LINKS)) existing = existing.getParent();
         if (existing == null) return abs;
         try {
             Path rest = existing.relativize(abs);
-            if (Files.isSymbolicLink(existing) && !Files.exists(existing) && depth < 8) { // dangling link: a write creates its target
+            if (Files.isSymbolicLink(existing) && !Files.exists(existing) && depth < 8) {
                 Path parent = existing.getParent() == null ? existing : existing.getParent().toRealPath();
                 return realish(parent.resolve(Files.readSymbolicLink(existing)).normalize(), depth + 1).resolve(rest).normalize();
             }
@@ -124,11 +109,6 @@ public final class FileRules {
         }
     }
 
-    /**
-     * Where a write to this path can land, relative to the repository: the path as written and,
-     * when a symbolic link is on the way, the file the link leads to ("../..." when that is outside).
-     * A link in a folder agents may write to must not open a door to code or guardrail files.
-     */
     List<String> writeTargets(String path) {
         String rel = relative(path);
         List<String> out = new ArrayList<>(List.of(rel));
@@ -140,7 +120,6 @@ public final class FileRules {
             String realRel = (real.startsWith(realRoot) ? realRoot.relativize(real) : g.root.relativize(real)).toString().replace('\\', '/');
             if (!realRel.equals(rel)) out.add(realRel);
         } catch (IOException | RuntimeException e) {
-            // keep the path as written
         }
         return out;
     }
@@ -148,7 +127,6 @@ public final class FileRules {
     private static final Pattern DIFF_PAIR = Pattern.compile("^--- ([^\\t\\n]+)[^\\n]*\\n\\+\\+\\+ ([^\\t\\n]+)", Pattern.MULTILINE);
     private static final Pattern DIFF_RENAME = Pattern.compile("^(?:rename|copy) (?:from|to) (.+)$", Pattern.MULTILINE);
 
-    /** Files a unified diff changes. strip = leading path parts to drop (-p); -1 = one when the paths start with a/ or b/. */
     public static List<String> diffTargets(String patch, int strip) {
         Set<String> out = new LinkedHashSet<>();
         Matcher m = DIFF_PAIR.matcher(patch);
@@ -166,7 +144,6 @@ public final class FileRules {
         return new ArrayList<>(out);
     }
 
-    /** A credential file (paths.secret only): never committed. Hidden files (paths.hidden) are kept out of agents' reach but may be committed. */
     public boolean isCredential(String path) {
         String clean = path.replace('\\', '/');
         String name = clean.substring(clean.lastIndexOf('/') + 1);
@@ -178,14 +155,10 @@ public final class FileRules {
         String clean = path.replace('\\', '/');
         String name = clean.substring(clean.lastIndexOf('/') + 1);
         List<String> globs = new java.util.ArrayList<>(g.cfg.list("paths.secret"));
-        globs.addAll(g.cfg.list("paths.hidden")); // eval truth and hold-out tests: never read by agents either
+        globs.addAll(g.cfg.list("paths.hidden"));
         return Glob.any(globs, relative(path)) || Glob.any(globs, clean) || Glob.any(globs, "x/" + name) || otherReadings(path).stream().anyMatch(r -> Glob.any(globs, r));
     }
 
-    /**
-     * A shell word that names a credential file, e.g. cat .agent/local.env or --file=~/.netrc,
-     * including a glob the shell would expand to one (cat .agent/*, cat .agent/local.en?).
-     */
     boolean isSecretWord(String word) {
         if (word.startsWith("-") && !word.contains("=")) return false;
         String v = word.contains("=") ? word.substring(word.indexOf('=') + 1) : word;
@@ -209,11 +182,7 @@ public final class FileRules {
         return GLOB_CHARS.matcher(word).find();
     }
 
-    /**
-     * What the shell would expand a glob to, segment by segment like sh/bash: `*`, `?` and `[..]`
-     * do not match a leading dot unless the pattern does, and `**` acts as `*`. A relative glob
-     * expands in every folder the shell may be in. Null when there are too many matches to tell (fail closed).
-     */
+    // As sh/bash: *, ? and [..] do not match a leading dot unless the pattern does. Too many matches: null (fail closed).
     List<Path> expandGlob(String pattern) {
         String p = pattern.replace('\\', '/');
         boolean absolute;
@@ -223,7 +192,7 @@ public final class FileRules {
             return List.of();
         }
         if (absolute) return expandFrom(g.root, p);
-        Set<Path> out = new LinkedHashSet<>(); // a relative glob expands in whichever folder the shell is in
+        Set<Path> out = new LinkedHashSet<>();
         for (Path dir : g.folders.bases()) {
             List<Path> hits = expandFrom(dir, p);
             if (hits == null) return null;
@@ -251,7 +220,7 @@ public final class FileRules {
             try {
                 m = current.get(0).getFileSystem().getPathMatcher("glob:" + seg);
             } catch (RuntimeException e) {
-                return List.of(); // not a valid glob (a regex argument, say): the shell would not expand it either
+                return List.of();
             }
             boolean dotOk = seg.startsWith(".");
             List<Path> next = new ArrayList<>();
@@ -263,7 +232,6 @@ public final class FileRules {
                         return (dotOk || !n.startsWith(".")) && m.matches(x.getFileName());
                     }).forEach(next::add);
                 } catch (IOException e) {
-                    // an unreadable folder expands to nothing, as in the shell
                 }
                 if (next.size() > WALK_LIMIT) return null;
             }
@@ -273,7 +241,6 @@ public final class FileRules {
         return current;
     }
 
-    /** True when a folder holds a credential file anywhere below it (build output and .git skipped). */
     boolean dirHoldsSecret(Path dir) {
         if (!Files.isDirectory(dir)) return false;
         boolean[] found = {false};
@@ -301,12 +268,11 @@ public final class FileRules {
                 }
             });
         } catch (IOException e) {
-            return true; // cannot tell: fail closed
+            return true;
         }
         return found[0];
     }
 
-    /** A file the tool reads on request (--file): refused when it is, or links to, a credential file. */
     public Path safeInput(String file) {
         Path p = Path.of(file);
         if (!Files.isRegularFile(p)) throw new UsageException("no such file: " + file);
@@ -328,29 +294,20 @@ public final class FileRules {
         return inGit != null && Glob.any(g.cfg.list("paths.protected"), inGit);
     }
 
-    /**
-     * A path inside this checkout's git folder, written as if that folder were .git here, or null.
-     * In a linked worktree the git folder is somewhere else (.git is a file that names it), so the
-     * rules for .git/hooks, .git/config and the tool's own state under .git/sdlc would otherwise
-     * not see a write there: the path is outside the checkout.
-     */
     String inGitFolder(String rel) {
         try {
             Path abs = g.root.resolve(rel).normalize();
             for (Path git : gitFolders()) {
-                // the folder itself, and any folder that holds it: a copy or a move of a whole tree writes what is inside
                 if (abs.equals(git) || git.startsWith(abs)) return ".git";
                 if (abs.startsWith(git)) return ".git/" + git.relativize(abs).toString().replace('\\', '/');
             }
         } catch (RuntimeException e) {
-            // not a path: it names nothing in the git folder
         }
         return null;
     }
 
     private List<Path> gitFolders;
 
-    /** The git folder all worktrees of this repository share, as written and with links resolved. Empty in a plain checkout, whose .git the patterns already name. */
     private List<Path> gitFolders() {
         if (gitFolders != null) return gitFolders;
         List<Path> out = new ArrayList<>();
@@ -364,7 +321,6 @@ public final class FileRules {
                     Path pointer = own.resolve("commondir");
                     if (Files.isRegularFile(pointer)) shared = own.resolve(Files.readString(pointer).strip()).normalize();
                     for (Path p : List.of(shared, own)) {
-                        // "own" comes second: under the shared folder it is already covered (worktrees/NAME/...)
                         if (out.stream().anyMatch(p::startsWith)) continue;
                         out.add(p);
                         Path real = realish(p);
@@ -373,7 +329,6 @@ public final class FileRules {
                 }
             }
         } catch (IOException | RuntimeException e) {
-            // no readable pointer: nothing more to protect than the patterns do
         }
         gitFolders = out;
         return out;
@@ -394,7 +349,7 @@ public final class FileRules {
                 if (isProtected(alt)) return Decision.deny("`" + path + "` may name `" + alt + "`, a guardrail or state file. Use a path from the repository root.");
             }
         }
-        for (String path : paths) for (String rel : writeTargets(path)) { // the path, and the file a symbolic link on the way leads to
+        for (String path : paths) for (String rel : writeTargets(path)) {
             if (rel.startsWith("..")) return Decision.deny("`" + path + "` is outside the repository.");
             if (isSecret(path) || isSecret(rel)) return Decision.deny("`" + rel + "` holds credentials or hidden test data. Agents never touch it.");
             if (sdlc.core.Locks.isLocked(g.root, rel)) return Decision.deny("`" + rel + "` is an acceptance test locked by QE (" + sdlc.core.Locks.DIR + "). Make the code pass it; if the test is wrong, ask QE to change and lock it again.");
@@ -414,7 +369,6 @@ public final class FileRules {
         return result;
     }
 
-    /** May the task in progress change this code file? Docs are always free; without a task, code is not. */
     Decision scope(String rel) {
         Work.Task task = g.task();
         if (Glob.any(g.cfg.list("paths.doc"), rel)) return Decision.allow();
@@ -426,7 +380,7 @@ public final class FileRules {
             return Decision.allow();
         }
         if (Glob.any(task.scope(), rel)) return Decision.allow();
-        if (Glob.any(g.cfg.list("paths.ask"), rel)) return Decision.allow(); // the ask rule applies
+        if (Glob.any(g.cfg.list("paths.ask"), rel)) return Decision.allow();
         return Decision.deny("`" + rel + "` is outside the scope of task " + task.key() + " (" + String.join(", ", task.scope())
                 + "). If the task truly needs it, stop and ask the human: the LLD's task scope must change and be re-approved.");
     }

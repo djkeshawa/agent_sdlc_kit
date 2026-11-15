@@ -15,11 +15,6 @@ import sdlc.core.Ctx;
 import sdlc.core.Store;
 import sdlc.util.Json;
 
-/**
- * Generates the Claude Code and Codex setups from the Copilot sources in .github (agents,
- * prompts, skills), so one set of files drives every tool (sdlc.yml: tools). Generated files
- * are guardrail files: agents cannot edit them; re-run `config apply` after changing .github.
- */
 public final class AgentTools {
     static final List<String> EVENTS = List.of("PreToolUse:pre-tool-use", "PostToolUse:post-tool-use", "Stop:stop", "SessionStart:session-start");
 
@@ -35,12 +30,7 @@ public final class AgentTools {
         if (tools.contains("codex")) codex();
     }
 
-    /**
-     * The command a hook runs (POSIX shell, Git Bash on Windows). The repository is found from the
-     * folder the agent was started in (Claude Code: CLAUDE_PROJECT_DIR), not from wherever its
-     * shell has wandered to. A guard that cannot be found refuses the tool call: a `cd` out of the
-     * repository, or into another one, must not switch the guard off.
-     */
+    // A guard that cannot be found refuses the call: a cd out of the repository must not switch the guard off.
     static String hookCommand(String event, String tool) {
         String missing = event.equals("pre-tool-use")
                 ? "echo \"Refused by project guardrail: the guard (.agent/bin/sdlc) was not found. Start the agent inside the repository.\" >&2; exit 2"
@@ -60,8 +50,6 @@ public final class AgentTools {
         }
         return hooks;
     }
-
-    // ---------------- Claude Code ----------------
 
     static void claude() throws IOException {
         Path root = Ctx.root;
@@ -90,7 +78,6 @@ public final class AgentTools {
         System.out.println("- Claude Code: .claude/settings.json hooks, .claude/agents, .claude/commands, .claude/skills, CLAUDE.md -> AGENTS.md");
     }
 
-    /** Copilot tool sets -> Claude Code tool names; null = inherit all (agents that use MCP servers). */
     public static List<String> claudeTools(List<String> copilot) {
         Set<String> out = new LinkedHashSet<>();
         for (String t : copilot) {
@@ -109,8 +96,6 @@ public final class AgentTools {
         }
         return new ArrayList<>(out);
     }
-
-    // ---------------- Codex ----------------
 
     static void codex() throws IOException {
         Path root = Ctx.root;
@@ -135,8 +120,6 @@ public final class AgentTools {
         System.out.println("- Codex: .codex/hooks.json, .codex/agents/*.toml, .agents/skills (skills and /analyse, /test-design, /design, /feature, /review, /fix-ci); AGENTS.md is read natively");
         System.out.println("  Codex asks you once to trust the hooks; check with: codex, then a guarded command (docs/02 step 8)");
     }
-
-    // ---------------- sources ----------------
 
     static List<Agent> agents() throws IOException {
         List<Agent> out = new ArrayList<>();
@@ -174,7 +157,6 @@ public final class AgentTools {
         }
     }
 
-    /** [front matter, body] of a Markdown file with a --- block. */
     public static String[] frontMatter(String text) {
         if (!text.startsWith("---")) return new String[] {"", text};
         int end = text.indexOf("\n---", 3);

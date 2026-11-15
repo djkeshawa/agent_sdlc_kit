@@ -14,33 +14,19 @@ import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
-/**
- * Reads JUnit XML reports (Maven Surefire, Vitest's junit reporter). The reports are written by
- * the code under test, so they are read as hostile input: no DTDs, no external entities.
- */
 public final class JUnitXml {
     private JUnitXml() {}
 
-    /** A case's last result. Whether the build ran it again is said apart (Case.retried). */
     public enum Status { PASSED, FAILED, ERRORED, SKIPPED }
 
-    /** Reports are written by the code under test: one that is larger than this is not read. */
     private static final long MAX_BYTES = 50L * 1024 * 1024;
 
-    /**
-     * One test case of a report. FAILED means an assertion did not hold (a failure element);
-     * ERRORED means something else was thrown (an error element). type is the exception's name.
-     * retried: the build ran the case again after it failed (Surefire's rerunFailingTestsCount).
-     * The status is then the last one: PASSED where a rerun passed (flakyFailure, flakyError),
-     * FAILED or ERRORED where every run failed (failure or error, then rerunFailure, rerunError).
-     */
     public record Case(String suite, String name, Status status, String type, String message, boolean retried) {
         public Case(String suite, String name, Status status, String type, String message) {
             this(suite, name, status, type, message, false);
         }
     }
 
-    /** The parser of every report, and of what a report would make of a name (see Attributes). */
     private static DocumentBuilder builder() throws javax.xml.parsers.ParserConfigurationException {
         DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();
         f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
@@ -49,16 +35,11 @@ public final class JUnitXml {
         f.setXIncludeAware(false);
         f.setExpandEntityReferences(false);
         DocumentBuilder builder = f.newDocumentBuilder();
-        builder.setErrorHandler(null); // no chatter on stderr; a bad report is an IOException
+        builder.setErrorHandler(null);
         return builder;
     }
 
-    /**
-     * Reads a text as read reads it where a report writes it as the value of an attribute: in a
-     * UTF-8 document, between double quotes. The parser then reads its character references,
-     * makes every line end one line feed (CR LF, a lone CR) and every tab and line feed a space
-     * (XML 1.0, attribute-value normalization); nothing else. One parser for many texts.
-     */
+    // XML 1.0 attribute-value normalization: character references are read, CR LF and a lone CR become LF, then tab and LF become a space.
     public static final class Attributes {
         private final DocumentBuilder builder;
 
@@ -70,7 +51,6 @@ public final class JUnitXml {
             }
         }
 
-        /** The value read, or null where the document is not well-formed XML (a report holding it cannot be read). Never throws. */
         public String read(String text) {
             try {
                 builder.reset();
@@ -92,16 +72,16 @@ public final class JUnitXml {
                 Element c = (Element) cases.item(i);
                 Status status = Status.PASSED;
                 String type = "", message = "";
-                boolean retried = false, last = false; // last: a failure, error or skipped element gave the status
+                boolean retried = false, last = false;
                 for (Node n = c.getFirstChild(); n != null; n = n.getNextSibling()) {
                     if (!(n instanceof Element e)) continue;
                     switch (e.getTagName()) {
-                        // Surefire, rerunFailingTestsCount: a case that failed and passed when run again has only flakyFailure or flakyError elements,
-                        // its result is a pass; one that failed every time has its failure or error, then a rerunFailure or rerunError for each rerun
+                        // Surefire rerunFailingTestsCount: a case that passed on a rerun has only flakyFailure or flakyError;
+                        // one that failed every time has failure or error, then rerunFailure or rerunError.
                         case "flakyFailure", "flakyError" -> retried = true;
                         case "rerunFailure", "rerunError" -> {
                             retried = true;
-                            if (!last) { // a rerun element without the failure before it: every run failed all the same
+                            if (!last) {
                                 status = e.getTagName().equals("rerunFailure") ? Status.FAILED : Status.ERRORED;
                                 type = e.getAttribute("type");
                                 message = e.getAttribute("message");
@@ -118,7 +98,6 @@ public final class JUnitXml {
                             last = true;
                         }
                         default -> {
-                            // system-out, system-err, properties
                         }
                     }
                 }

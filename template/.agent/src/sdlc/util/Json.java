@@ -5,9 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Minimal JSON: parses to Map / List / String / Double / Boolean / null, and writes the same. */
 public final class Json {
-    /** Deeper than any real payload; a document nested further is refused instead of overflowing the stack. */
     private static final int MAX_DEPTH = 200;
     private final String s;
     private final boolean strict;
@@ -28,12 +26,6 @@ public final class Json {
         return v;
     }
 
-    /**
-     * As parse, for a file whose every byte counts (a mandate). Also an error: a key that appears
-     * twice in one object, anything after the top-level value, a number or an escape that JSON
-     * does not allow, and a raw line break or control character inside a string. The message
-     * says where, by line and column.
-     */
     public static Object parseStrict(String text) {
         Json j = new Json(text, true);
         try {
@@ -50,7 +42,6 @@ public final class Json {
         }
     }
 
-    /** "line L, column C" of a character offset, both counted from 1. */
     private String where(int offset) {
         int line = 1;
         int col = 1;
@@ -71,7 +62,6 @@ public final class Json {
         throw new IllegalArgumentException("expected a JSON object");
     }
 
-    /** The object, or an empty one when the value is missing or not an object (lenient reading of specs and catalogs). */
     @SuppressWarnings("unchecked")
     public static Map<String, Object> map(Object o) {
         return o instanceof Map<?, ?> m ? (Map<String, Object>) m : new java.util.LinkedHashMap<>();
@@ -82,7 +72,6 @@ public final class Json {
         return o instanceof List<?> l ? (List<Object>) l : new ArrayList<>();
     }
 
-    /** Value at a dotted path such as "fields.status.name", or null. */
     public static Object at(Object root, String path) {
         Object cur = root;
         for (String part : path.split("\\.")) {
@@ -240,7 +229,6 @@ public final class Json {
         return quote(o.toString());
     }
 
-    /** Indented output for files people read. */
     public static String pretty(Object o) {
         return pretty(o, "");
     }

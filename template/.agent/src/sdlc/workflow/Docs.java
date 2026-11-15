@@ -18,11 +18,6 @@ import sdlc.core.Work;
 import sdlc.guard.FileRules;
 import sdlc.util.Markdown;
 
-/**
- * The document chain in Confluence: one pager (product owner), HLD (architect), test design
- * (QE), LLDs (developers, this team and others). Pages are found by the Jira key in their title,
- * following the issue's parents (sub-task -> story -> epic).
- */
 public final class Docs {
     record Doc(String type, String key, String id, String title, String space, String version, String url, boolean ours) {}
 
@@ -80,11 +75,7 @@ public final class Docs {
         return title.equalsIgnoreCase(title(type, key)) && space.equalsIgnoreCase(Ctx.cfg.str("confluence.publish." + type + ".space"));
     }
 
-    /**
-     * Our own published document of a type (the test design or our team's LLD), nearest key first.
-     * Looked up by its exact title, not by search: a page published a minute ago is not in the
-     * search index yet.
-     */
+    // By exact title, not by search: a page published a minute ago is not in the search index yet.
     Doc own(String key, String type) {
         String space = Ctx.cfg.str("confluence.publish." + type + ".space");
         if (space.isBlank()) return null;
@@ -105,7 +96,6 @@ public final class Docs {
         return 0;
     }
 
-    /** Copies every document (and the Jira issues) into .sdlc/<KEY>/sources/ for agents to read. */
     public int pull(String key) throws IOException {
         Path dir = Work.storyDir(key).resolve("sources");
         Files.createDirectories(dir);
@@ -122,7 +112,7 @@ public final class Docs {
         Map<String, Integer> counts = new LinkedHashMap<>();
         for (Doc d : find(key)) {
             Wiki.Page p = w.wiki.page(d.id());
-            boolean otherTeam = !d.ours() && (d.type().equals("lld") || d.type().equals("testDesign")); // one pager and HLD are shared inputs
+            boolean otherTeam = !d.ours() && (d.type().equals("lld") || d.type().equals("testDesign"));
             String name = d.type() + (otherTeam ? "-other" : "") + "-" + d.id() + ".md";
             Path f = dir.resolve(name);
             String approval = d.ours() ? w.approvals.statusLine(d.key(), d.type()) : "";
@@ -143,7 +133,6 @@ public final class Docs {
         return 0;
     }
 
-    /** The solution design that governs this issue (its own, or a parent's), or null. */
     Doc solution(String key) {
         Doc own = own(key, "solution");
         if (own != null) return own;
@@ -151,10 +140,6 @@ public final class Docs {
         return null;
     }
 
-    /**
-     * Writes sources/solution-slice.md when a parent epic has a solution design that names this
-     * repository's component: what the team designs from, and the hash its LLD must carry.
-     */
     private String solutionSlice(String key, Path dir) {
         Doc d;
         try {
@@ -199,11 +184,7 @@ public final class Docs {
 
     private static final Pattern IMAGE_FILE = Pattern.compile("(?i).+\\.(png|jpe?g|gif|svg)$");
 
-    /**
-     * The image a draft references, or null when it is not an image file inside the draft's own
-     * folder. An agent writes the draft, so a reference like ../../.agent/local.env must never be
-     * read and uploaded.
-     */
+    // An agent writes the draft: a reference like ../../.agent/local.env must never be read and uploaded.
     public static Path attachable(Path draftDir, String img) {
         if (!IMAGE_FILE.matcher(img).matches()) return null;
         try {
@@ -227,13 +208,12 @@ public final class Docs {
         return "image/jpeg";
     }
 
-    /** Publishes a local Markdown draft as the test design or our LLD, then asks for approval. */
     public int publish(String key, String type, Path file) throws IOException {
         if (!type.equals("testDesign") && !type.equals("lld") && !type.equals("solution")) throw new UsageException("type must be test-design, lld or solution");
         String space = Ctx.cfg.str("confluence.publish." + type + ".space");
         if (space.isBlank()) throw new UsageException("confluence.publish." + type + ".space is not set in .agent/sdlc.yml");
         String md = Files.readString(file);
-        if (type.equals("lld")) Tasks.parse(md); // refuse an LLD whose tasks block is broken
+        if (type.equals("lld")) Tasks.parse(md);
         if (type.equals("solution")) {
             List<String> problems = Solution.parse(md).problems(Catalog.load());
             if (!problems.isEmpty()) throw new UsageException("the solution design is not ready to publish:\n- " + String.join("\n- ", problems));

@@ -25,17 +25,11 @@ import sdlc.workflow.Gates;
 import sdlc.workflow.Sync;
 import sdlc.workflow.Verify;
 
-/**
- * The agent hooks of Copilot (VS Code, JetBrains, Copilot CLI), Claude Code and Codex. Reads the
- * event JSON on stdin; both the VS Code payload (tool_name, tool_input) and the CLI payload
- * (toolName, toolArgs) work. What to answer is decided by the rules behind a Guard; how the
- * answer is written for the host is the HookFormat's business.
- */
 public final class Hooks {
     private Hooks() {}
 
     public static int run(String event, String stdin, HookFormat format, Sync sync) {
-        if (Files.exists(Ctx.work("hook-debug"))) Store.log("hook-payloads", Store.map("event", event, "stdin", stdin)); // opt-in: touch .sdlc/hook-debug
+        if (Files.exists(Ctx.work("hook-debug"))) Store.log("hook-payloads", Store.map("event", event, "stdin", stdin));
         Map<String, Object> input = stdin.isBlank() ? new LinkedHashMap<>() : Json.obj(Json.parse(stdin));
         return switch (event) {
             case "pre-tool-use" -> preToolUse(input, format);
@@ -46,7 +40,6 @@ public final class Hooks {
         };
     }
 
-    /** Where the agent's shell is, as the host reports it (the payload's cwd), or null when it does not say. */
     private static Path shellFolder(Map<String, Object> input) {
         return Guard.folder(Ctx.root, Ctx.root, input.get("cwd"));
     }
@@ -68,8 +61,6 @@ public final class Hooks {
         return a instanceof Map ? Json.obj(a) : new LinkedHashMap<>();
     }
 
-    // ---------------- PreToolUse ----------------
-
     static int preToolUse(Map<String, Object> input, HookFormat format) {
         String tool = toolName(input);
         Decision d = decide(tool, toolArgs(input), shellFolder(input));
@@ -79,15 +70,10 @@ public final class Hooks {
         return emit(d, format);
     }
 
-    /** The guard's answer to one tool call, with the agent's shell in the repository root. */
     public static Decision decide(String tool, Map<String, Object> args) {
         return decide(tool, args, null);
     }
 
-    /**
-     * The guard's answer to one tool call. shellFolder is where the agent's shell is (null = the
-     * repository root); a call that carries its own folder (Codex: workdir) starts there instead.
-     */
     public static Decision decide(String tool, Map<String, Object> args, Path shellFolder) {
         Path base = shellFolder == null ? Ctx.root : shellFolder;
         Path workdir = Guard.folder(Ctx.root, base, args.containsKey("workdir") ? args.get("workdir") : args.get("cwd"));
@@ -99,11 +85,11 @@ public final class Hooks {
         if (sub != null) return sub;
         if (guard.mcp.isExternal(tool)) return guard.mcp.check(tool);
         Object command = args.get("command");
-        if (command instanceof List<?> argv) command = ShellWords.join(argv.stream().map(String::valueOf).toList()); // ["bash", "-lc", "..."]
+        if (command instanceof List<?> argv) command = ShellWords.join(argv.stream().map(String::valueOf).toList());
         if (command instanceof String cmd) {
             Decision d = guard.shell.check(cmd);
             if (d.denied() || !cmd.contains("*** ")) return d;
-            List<String> patched = FileRules.paths(Map.of("input", cmd)); // apply_patch run as a shell command
+            List<String> patched = FileRules.paths(Map.of("input", cmd));
             return patched.isEmpty() ? d : d.strictest(guard.files.checkEdit(patched));
         }
         List<String> paths = FileRules.paths(args);
@@ -117,10 +103,8 @@ public final class Hooks {
                 && !t.matches(".*(edit|write|create|replace|insert|patch|delete|rename|move).*");
     }
 
-    /** Writes the answer to a PreToolUse event for the host and returns the exit code. */
     public static int emit(Decision d, HookFormat format) {
         if (d.kind() == Decision.Kind.ALLOW) return 0;
-        // a reason may quote the command or the path it is about: nothing of that may steer the terminal it is shown on
         String reason = sdlc.util.SafeOut.clean((d.denied() ? "Refused by project guardrail: " : "Needs human approval: ") + d.reason());
         System.out.println(Json.write(format.permission(d.denied() ? "deny" : "ask", reason)));
         if (d.denied()) {
@@ -129,8 +113,6 @@ public final class Hooks {
         }
         return 0;
     }
-
-    // ---------------- PostToolUse ----------------
 
     static int postToolUse(Map<String, Object> input, HookFormat format, Sync sync) {
         String tool = toolName(input);
@@ -155,7 +137,6 @@ public final class Hooks {
                     notes.add("Test file " + rel + " contains a disabled or focused test. The git hook refuses it. Fix the test instead.");
                 }
             } catch (java.io.IOException ignored) {
-                // file vanished
             }
         }
         if (notes.isEmpty()) return 0;
@@ -164,8 +145,6 @@ public final class Hooks {
         return 0;
     }
 
-    // ---------------- Stop ----------------
-
     static int stop(HookFormat format, Sync sync) {
         syncQuietly(sync);
         if (!hasCodeChanges()) return 0;
@@ -173,7 +152,7 @@ public final class Hooks {
         if (fp.equals(String.valueOf(Verify.last().get("fingerprint")))) return 0;
         Map<String, Object> blocks = Store.read(Ctx.work("stop-blocks.json"));
         int count = blocks.get(fp) instanceof Double d ? d.intValue() : 0;
-        if (count >= Ctx.cfg.num("guard.maxStopBlocks", 3)) return 0; // hand the turn back to the human
+        if (count >= Ctx.cfg.num("guard.maxStopBlocks", 3)) return 0;
         blocks.clear();
         blocks.put(fp, count + 1);
         Store.write(Ctx.work("stop-blocks.json"), blocks);
@@ -188,7 +167,6 @@ public final class Hooks {
         return Git.branchFiles().stream().anyMatch(f -> Glob.any(code, f));
     }
 
-    /** Keeps Jira in step with the local state, at most once a minute. */
     private static void syncQuietly(Sync sync) {
         String story = Work.currentStory();
         if (story.isEmpty()) return;
@@ -202,8 +180,6 @@ public final class Hooks {
             Store.log("sync", Store.map("story", story, "error", e.getMessage()));
         }
     }
-
-    // ---------------- SessionStart ----------------
 
     static int sessionStart(HookFormat format) {
         String text = Status.text() + "\nRules: read docs/agent/project-profile.md before coding; work only on a feature branch; edit code only inside "

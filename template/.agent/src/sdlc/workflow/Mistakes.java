@@ -12,11 +12,6 @@ import sdlc.core.Work;
 import sdlc.util.Http;
 import sdlc.util.Json;
 
-/**
- * The mistakes log, .sdlc/logs/mistakes.jsonl: every blocking review finding, QA failure,
- * CI failure, SonarQube issue and hook refusal as a "found" event, and a "fixed" event with
- * the commit that fixed it. `sdlc retro <STORY>` summarises it.
- */
 public final class Mistakes {
     private Mistakes() {}
 
@@ -26,7 +21,6 @@ public final class Mistakes {
                 "category", category, "location", location, "summary", summary, "commit", Git.shortHead()));
     }
 
-    /** Marks every open mistake of the story (optionally one task) from these sources as fixed at HEAD. */
     static int fixAll(String story, String task, List<String> sources) {
         int n = 0;
         for (Map<String, Object> m : open(story)) {

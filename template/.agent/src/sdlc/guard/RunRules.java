@@ -10,10 +10,6 @@ import java.util.regex.Pattern;
 import sdlc.core.Work;
 import sdlc.util.Glob;
 
-/**
- * Shell rules about commands that run other code: a shell given a command line or a script,
- * interpreters given inline code or a file, a file run by its path, and package runners.
- */
 final class RunRules {
     private static final Set<String> SHELLS = Set.of("bash", "sh", "zsh", "dash", "ksh");
     private static final Set<String> POWERSHELLS = Set.of("powershell", "pwsh");
@@ -30,15 +26,14 @@ final class RunRules {
         this.build = build;
     }
 
-    /** bash -c "...", sh script.sh, source x.sh, powershell -Command, cmd /c, eval: the inner command line is checked like the outer one. */
     Decision nested(ShellCommand c) {
         String name = c.name();
         List<String> args = c.args();
         if (SHELLS.contains(name)) {
-            int i = -1; // -c, also combined as in bash -lc / sh -ec
+            int i = -1;
             for (int k = 0; k < args.size() && i < 0; k++) if (args.get(k).matches("^-[a-zA-Z]*c[a-zA-Z]*$")) i = k;
             if (i >= 0) return i + 1 < args.size() ? shell.check(args.get(i + 1)) : Decision.allow();
-            for (int k = 0; k < args.size(); k++) { // sh mvnw ..., bash scripts/x.sh: the script is the command
+            for (int k = 0; k < args.size(); k++) {
                 if (args.get(k).startsWith("-") || args.get(k).startsWith("+")) continue;
                 List<String> script = new ArrayList<>(args.subList(k, args.size()));
                 if (build.isTool(script.get(0))) return build.check(script.subList(1, script.size()));
@@ -65,7 +60,6 @@ final class RunRules {
         return null;
     }
 
-    /** node -e, python -c, perl -e ...: code the guard cannot read. */
     Decision inlineCode(ShellCommand c) {
         String name = c.name();
         if (INLINE.contains(name) && c.args().stream().anyMatch(a -> a.equals("-e") || a.equals("--eval") || a.equals("-p") || a.equals("--print") || a.equals("-c") || a.equals("eval"))) {
@@ -74,7 +68,6 @@ final class RunRules {
         return null;
     }
 
-    /** A script handed to an interpreter (node x.js, python3 x.py, java X.java) or run by its path (./x.sh). */
     Decision scriptFile(ShellCommand c) {
         String cmd = c.cmd(), name = c.name();
         List<String> args = c.args();
@@ -92,11 +85,11 @@ final class RunRules {
                     continue;
                 }
                 if (a.startsWith("-")) continue;
-                if (module) return null; // python -m pytest: a module, not a file
+                if (module) return null;
                 boolean runner = name.equals("deno") || name.equals("bun");
                 if (runner && i == 0 && Set.of("run", "test", "x").contains(a)) continue;
-                if (name.equals("java") && !a.endsWith(".java")) return null; // java -cp x Main
-                if (runner && !(a.contains("/") || a.contains("."))) return null; // bun run <package script>
+                if (name.equals("java") && !a.endsWith(".java")) return null;
+                if (runner && !(a.contains("/") || a.contains("."))) return null;
                 return unlessAllowed(file(a));
             }
             return null;
@@ -114,11 +107,6 @@ final class RunRules {
         return d.kind() == Decision.Kind.ALLOW ? null : d;
     }
 
-    /**
-     * A file an interpreter is asked to run. Committed, unchanged files (and build output) run freely;
-     * a file nobody reviewed - outside the repository, an agent draft, not committed, or changed
-     * outside the task scope - needs a human, because the guard cannot see what it does.
-     */
     Decision file(String word) {
         String rel = g.files.relative(ShellRules.expandHome(word));
         String why;
@@ -135,7 +123,6 @@ final class RunRules {
         return Decision.ask("`" + word + "` " + why + ", so nobody has reviewed what it runs (it could read secrets or edit files the guard protects). Approve only if you read it.");
     }
 
-    /** npx / pnpx / bunx / npm exec / pnpm dlx / yarn dlx / bun x: a package that is not installed here is downloaded and run. */
     Decision packageRunner(ShellCommand c) {
         String name = c.name();
         List<String> args = c.args();
@@ -150,7 +137,7 @@ final class RunRules {
             String a = rest.get(i);
             if (a.equals("-c") || a.equals("--call")) return i + 1 < rest.size() ? shell.check(rest.get(i + 1)) : null;
             if (a.equals("-p") || a.equals("--package")) {
-                download = true; // the command comes from a package named here
+                download = true;
                 i++;
             } else if (a.startsWith("--package=") || a.equals("-y") || a.equals("--yes")) {
                 download = true;

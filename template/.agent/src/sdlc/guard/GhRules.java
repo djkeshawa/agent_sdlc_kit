@@ -3,7 +3,6 @@ package sdlc.guard;
 import java.util.List;
 import java.util.Set;
 
-/** Rules for GitHub CLI commands an agent runs. */
 final class GhRules {
     private final Guard g;
 
@@ -22,7 +21,7 @@ final class GhRules {
                     return args.stream().anyMatch(x -> x.equals("--approve") || x.matches("^-[a-zA-Z]*a[a-zA-Z]*$")) ? Decision.deny("agents never approve pull requests.") : Decision.allow();
                 case "close":
                     return Decision.ask("closes a pull request.");
-                case "create", "new": // gh pr new is gh's own alias of gh pr create
+                case "create", "new":
                     return g.gate.openPullRequest();
                 default:
                     return Decision.allow();
@@ -30,7 +29,7 @@ final class GhRules {
         }
         if (group.equals("release") && !Set.of("view", "list", "download").contains(action)) return Decision.deny("releases are made by humans.");
         if (group.equals("repo") && Set.of("delete", "archive", "rename", "edit").contains(action)) return Decision.deny("changes repository settings.");
-        if (group.equals("auth")) { // gh auth status -t / --show-token prints the token
+        if (group.equals("auth")) {
             boolean showsToken = args.stream().anyMatch(x -> GitRules.abbrev(x, "--show-token", 4) || x.matches("^-[a-zA-Z]*t[a-zA-Z]*$"));
             return action.equals("status") && !showsToken ? Decision.allow() : Decision.deny("agents never read or change GitHub credentials.");
         }
@@ -51,10 +50,8 @@ final class GhRules {
             "codespace", "cs", "gist", "gpg-key", "label", "org", "project", "ruleset", "rs", "search", "secret", "ssh-key", "status", "variable",
             "extension", "ext", "config", "completion", "help", "attestation", "at", "copilot", "agent-task", "preview", "version");
 
-    /**
-     * gh api: any method but GET, and any field (-f/-F/--field/--raw-field/--input, in every spelling
-     * pflag accepts) without an explicit GET, writes. GraphQL mutations write.
-     */
+    // Any method but GET, or any field (-f/-F/--field/--raw-field/--input, in every pflag spelling) without an explicit GET, writes;
+    // so do GraphQL mutations.
     private static Decision api(List<String> args) {
         String method = null;
         boolean fields = false;

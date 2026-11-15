@@ -10,15 +10,6 @@ import sdlc.core.UsageException;
 import sdlc.core.Work;
 import sdlc.util.Glob;
 
-/**
- * Delivery lanes (lanes.enabled): how much process a story needs, decided from facts, not only
- * from what an agent says.
- *   patch            one repository, no change to a contract file it provides
- *   component        one repository, its tasks may change a contract file (additive)
- *   cross-component  a parent epic's solution design names this repository's component
- * The LLD's # sdlc-tasks block declares `lane:`; `tasks create` refuses a lane below what the
- * task scopes and the solution design imply, and an LLD written from an old solution slice.
- */
 public final class Lanes {
     private Lanes() {}
 
@@ -32,7 +23,6 @@ public final class Lanes {
         return ORDER.indexOf(lane);
     }
 
-    /** The lowest lane the facts allow, with why. */
     public record Floor(String lane, List<String> reasons, Solution solution, Docs.Doc solutionDoc) {}
 
     static Floor floor(Workflow w, String story, List<List<String>> scopes) {
@@ -62,7 +52,6 @@ public final class Lanes {
         return new Floor(lane, reasons, s, d);
     }
 
-    /** Problems with the LLD's declared lane and slice; empty when tasks may be created. */
     static List<String> problems(Workflow w, String story, Map<String, Object> block, List<List<String>> scopes) {
         List<String> p = new ArrayList<>();
         String declared = Work.str(block.getOrDefault("lane", "patch")).strip();
@@ -87,7 +76,6 @@ public final class Lanes {
         return p;
     }
 
-    /** sdlc classify <KEY>: the lowest lane the facts allow, before or after the LLD. */
     public static int classify(Workflow w, String key) {
         List<List<String>> scopes = new ArrayList<>();
         Docs.Doc lld = w.docs.own(key, "lld");
@@ -110,10 +98,6 @@ public final class Lanes {
         return 0;
     }
 
-    /**
-     * For task start: the solution changed this component's slice after the tasks were created
-     * (a message), or null when the slice is still the one the LLD was approved for.
-     */
     static String staleSlice(Workflow w, String story) {
         String had = Work.str(Store.read(allowanceFile(story)).get("solutionSlice"));
         Docs.Doc d = w.docs.solution(story);
@@ -126,15 +110,10 @@ public final class Lanes {
                 + "(java .agent/Sdlc.java docs pull " + story + "), get it approved, and run: java .agent/Sdlc.java tasks create " + story;
     }
 
-    /** Where tasks create records what the story may change in its contracts; committed, so check-pr in CI can read it. */
     public static java.nio.file.Path allowanceFile(String story) {
         return Ctx.root.resolve("docs/agent/contracts").resolve(story + ".json");
     }
 
-    /**
-     * What the story may change in this repository's contracts, from its lane: patch nothing,
-     * component additions to its own APIs, cross-component exactly what its slice provides.
-     */
     static Map<String, Object> allowance(String story, String lane, Floor f) {
         Catalog c = Catalog.load();
         Map<String, Object> apis = new java.util.LinkedHashMap<>();
