@@ -1491,6 +1491,14 @@ final class CheckTests {
         check("every difference: beside the line of a retried test switched off, a test a repeat run does not report is said unstable",
                 retriedRepeat.contains("passed 1 more only when the build ran it again") && retriedRepeat.contains("\n        the file was reported differently from run to run, in "
                         + "ways " + NO_RULE + ": steady (after the change: passed, not reported)\n") && code == 0);
+        // CR4-3: every test switched off, the flaky one among them, the reports alike in every run: the steady test is lost, and the line does not
+        // say the reports vary. The case that passed only when run again is not counted as a test that ran, there or in how the runs compare
+        write(repo, "checks/retry.t", "steady: skip\nflaky: skip\n");
+        String allOff = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("every difference: a test lost beside a retried one switched off, alike in every run, is said without saying the runs differ, and the check fails",
+                allOff.contains(L1 + "      checks/retry.t  [self test]\n        the file as it was passed 1 of its tests, and after the change it runs 0: at least 1 test that "
+                        + "ran before the change does not run now (skipped now under names that ran before: flaky, steady)\n")
+                && !allOff.contains("in some runs") && !allOff.contains("from run to run") && code == 1);
         write(repo, "checks/retry.t", RETRY);
 
         // CR3-4: a class set-up that threw every time the build ran it, in place of three tests, mended: not three new tests, and not a pass of the

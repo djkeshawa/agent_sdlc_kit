@@ -1347,7 +1347,9 @@ final class Witness {
                         + "of the code, not of the tests, may have taken " + (total == 1 ? "it" : "them") + t4, by, (int) (total - t), Cover.LIST));
             }
             StringBuilder d = new StringBuilder(head);
-            if (most > total) d.append(", and up to ").append(most).append(" in some runs: what the file reports is not the same in every run");
+            // whether the runs differ, from the same count on both sides: the cases that passed at the first try (a case that passed only when run again is
+            // in no run's count here, so it cannot make the runs look different)
+            if (maxR0 - minR1 > total) d.append(", and up to ").append(maxR0 - minR1).append(" in some runs: what the file reports is not the same in every run");
             if (why4 == null && r4 < maxR0) d.append(". As it was, on the code after the change, the file runs ").append(r4).append(", and as the change has it ").append(maxR1)
                     .append(": the change of the code may have taken some of them, and on that code the change of the tests runs fewer tests than the file as it was");
             if (why4 != null) d.append(". The file as it was could not be run on the code after the change (there it ").append(why4)
