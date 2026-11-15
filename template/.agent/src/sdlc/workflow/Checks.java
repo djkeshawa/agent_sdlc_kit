@@ -199,7 +199,7 @@ public final class Checks {
         // (it, a line break, .skip; @, a line break, Disabled); which tests are skipped is for a run to say, and check-pr runs none.
         // What the lint is sure of fails; what it cannot know to be a switch, or to be unconditional, is a warning
         for (String f : files) {
-            if (!Glob.any(Ctx.cfg.list("paths.test"), f)) continue;
+            if (!sdlc.check.Integrity.testFile(f, Ctx.cfg.list("paths.test"))) continue;
             sdlc.check.Integrity.Lint lint = sdlc.check.Integrity.lint(added.getOrDefault(f, List.of()));
             for (String hit : lint.sure()) disabled.add(f + ": " + hit);
             if (!lint.notes().isEmpty()) {

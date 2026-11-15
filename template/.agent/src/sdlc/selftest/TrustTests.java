@@ -321,6 +321,21 @@ final class TrustTests {
                 && gate.warns().stream().anyMatch(w -> w.contains("GateTest.java: may switch a test off") && w.contains("@Test(enabled = false || RUN_TESTS)"))
                 && gate.warns().stream().anyMatch(w -> w.contains("test_gate.py: may switch a test off") && w.contains("@(pytest.mark.skip if IS_CI else identity)")));
 
+        // audit round 6, finding 6: check-pr lints the test files sdlc check lints, by their built-in names and folders too, not
+        // only those under the configured paths.test (src/test/** for this Java stack)
+        git(repo, "switch", "-q", "-c", "feature/PROJ-22-outside", "origin/main");
+        write(repo, "web/disabled.test.ts", "it.skip('x', () => {});\n");
+        write(repo, "web/__tests__/cases.ts", "describe.only('y', () => {});\n");
+        write(repo, "web/helpers.ts", "export const later = 'it.skip';\n");
+        write(repo, "src/test/java/OutsideTest.java", "class OutsideTest {}\n");
+        write(repo, "src/main/java/A.java", "class A { int j; }\n");
+        commit(repo, "feat(PROJ-22): script tests outside the configured test paths");
+        Ctx.init(repo);
+        String outside = Checks.prPolicy(null, false).fails().stream().filter(f -> f.contains("No switch that turns a test off or focuses one was found")).findFirst().orElse("");
+        check("trust: a script test file outside the configured test paths, named or placed like one, fails check-pr as it fails sdlc check",
+                outside.contains("web/disabled.test.ts: it.skip('x', () => {});") && outside.contains("web/__tests__/cases.ts: describe.only('y', () => {});")
+                        && !outside.contains("web/helpers.ts"));
+
         // a branch with no commit in common with the base: every diff would be empty or fail
         git(repo, "switch", "-q", "--orphan", "feature/PROJ-13-orphan");
         write(repo, "src/main/java/A.java", "class A { int o; }\n");
