@@ -1,17 +1,4 @@
 #!/bin/sh
-# Smoke test of the packaged tool, against a throwaway git repository that has no .agent/ folder.
-#   1. The bundle (dist/sdlc-<os>-<arch>, or the folder given as $1), run with a PATH that holds
-#      only sh, git and the launcher's helpers: no java, no JDK, no JAVA_HOME.
-#   2. When a Docker daemon is reachable: the image, built from packaging/Dockerfile (or $IMAGE with
-#      SMOKE_BUILD=0), run with the repository mounted read-only. Otherwise this part is skipped.
-#
-# Environment:
-#   SMOKE_TLS_URL      an https address for the TLS check (default https://example.com). A fake
-#                      token is sent there; the check passes on any HTTP answer, fails on a TLS error.
-#   SMOKE_REQUIRE_TLS  1: fail, not skip, when that address cannot be reached at all (CI sets it)
-#   SKIP_DOCKER        1: skip the image part
-#   IMAGE              image tag to build and test (default sdlc:smoke)
-#   SMOKE_BUILD        0: test $IMAGE as it is, do not build it
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
@@ -26,7 +13,7 @@ bundle=${1:-$dist/sdlc-$os-$arch}
 [ -x "$bundle/bin/sdlc" ] || { echo "smoke: no bundle at $bundle (run packaging/build.sh first)" >&2; exit 1; }
 bundle=$(CDPATH= cd -- "$bundle" && pwd -P)
 
-# Under the repository, not /tmp: Docker Desktop only mounts folders it shares, and /tmp is often not one.
+# Under the repository: Docker Desktop mounts only the folders it shares, and /tmp is often not one.
 work=$dist/.smoke
 rm -rf "$work"
 mkdir -p "$work/repo" "$work/path" "$work/out"
@@ -37,23 +24,21 @@ pass() { echo "  PASS  $1"; }
 fail() { echo "  FAIL  $1"; failures=$((failures + 1)); }
 skip() { echo "  SKIP  $1"; }
 
-# The throwaway repository: one commit, no .agent/, no sdlc.yml.
 git -C "$target" init -q -b main
 printf '# demo\n' > "$target/README.md"
 git -C "$target" add README.md
 git -C "$target" -c user.name=smoke -c user.email=smoke@example.com -c commit.gpgsign=false \
   -c core.hooksPath=/dev/null commit -q -m "chore: smoke fixture"
 
-# A PATH with only what the launcher and the tool start: sh, git, dirname, readlink.
 for tool in sh git dirname readlink; do
   ln -s "$(command -v "$tool")" "$work/path/$tool"
 done
 printf '# PROJ-1 Smoke\n\n## Area\n\n### TS-01 a scenario\n' > "$work/out/test-design.md"
 
-# Runners. $envs holds extra KEY=value words for one call (no spaces in the values).
+# $envs is split into words by the shell: no spaces in its values.
 envs=
 run_bundle() {
-  # shellcheck disable=SC2086 # $envs is a list of words
+  # shellcheck disable=SC2086
   (cd "$target" && env -i PATH="$work/path" HOME="$work/out" $envs "$bundle/bin/sdlc" "$@")
 }
 run_image() {
@@ -63,12 +48,11 @@ run_image() {
   docker run --rm $flags -v "$target:/repo:ro" "$image" "$@"
 }
 
-# Runs <runner> <args...>; sets $out and $rc.
 call() {
   if out=$("$@" 2>&1 </dev/null); then rc=0; else rc=$?; fi
 }
 
-checks() { # <runner> <label>
+checks() {
   runner=$1
   call "$runner" help
   if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '^usage:'; then pass "help"; else fail "help (exit $rc): $out"; fi

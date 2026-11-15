@@ -36,7 +36,7 @@ if args[:2] == ["pr", "view"]:
     if not pr:
         print("no pull requests found for branch \"%s\"" % branch, file=sys.stderr)
         sys.exit(1)
-    pr["headRefOid"] = git("rev-parse", "HEAD")  # the remote has what we pushed
+    pr["headRefOid"] = git("rev-parse", "HEAD")
     print(json.dumps(pr))
     sys.exit(0)
 if args[:2] == ["pr", "checks"]:

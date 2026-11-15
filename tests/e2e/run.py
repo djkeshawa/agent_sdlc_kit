@@ -55,7 +55,7 @@ def main():
     mock = subprocess.Popen([sys.executable, str(HERE / "mock.py"), str(port)])
     try:
         wait_for(port, mock)
-        # the flow's repositories have their own base branch: a pull request build of this repository must not name it for them
+        # a pull request build of this repository must not name its base branch for the flow's repositories
         env = {k: v for k, v in os.environ.items() if k not in ("SDLC_BASE_BRANCH", "GITHUB_BASE_REF", "CHANGE_TARGET")}
         code = subprocess.run([sys.executable, str(HERE / "flow.py"), str(template), str(work / "run"), str(port)], env=env).returncode
     finally:

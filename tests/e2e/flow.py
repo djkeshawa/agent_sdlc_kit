@@ -88,7 +88,6 @@ def commit(msg):
     return git("commit", "-m", msg)
 
 
-# =============================== 0. set up a repository from the template ===============================
 shutil.rmtree(WORK, ignore_errors=True)
 PROJ.mkdir(parents=True)
 run("git", "init", "-q", "--bare", "-b", "develop", str(ORIGIN), cwd=WORK)
@@ -127,7 +126,7 @@ write("src/test/java/com/acme/payments/AppTest.java", "package com.acme.payments
 git("add", "-A")
 git("commit", "-q", "-m", "chore(PAY-1): initial service")
 git("push", "-q", "origin", "develop")
-for item in TEMPLATE.iterdir():  # the compiled copy of the tool is rebuilt in the project, not copied
+for item in TEMPLATE.iterdir():
     if item.is_dir():
         shutil.copytree(item, PROJ / item.name, ignore=shutil.ignore_patterns(".build"))
     else:
@@ -165,12 +164,11 @@ git("switch", "-q", "develop")
 git("merge", "-q", "--ff-only", "chore/PAY-1-agent-kit")
 code, out = git("push", "origin", "develop")
 check("pre-push refuses a direct push to develop", code != 0 and "protected" in out.lower(), out)
-git("push", "-q", "--no-verify", "origin", "develop")  # the human merge of the kit PR, simulated
+git("push", "-q", "--no-verify", "origin", "develop")
 
 code, out = sdlc("analyse")
 check("analyse collects repository facts", code == 0 and (PROJ / ".sdlc/analysis/facts.md").exists(), out)
 
-# =============================== 1. QE: test design ===============================
 admin("/__admin/page", {"space": "PROD", "title": "PAY-100 Refunds - One Pager",
                          "storage": "<h2>Goal</h2><p>Customers can refund a paid order within 30 days.</p>"})
 admin("/__admin/page", {"space": "ARCH", "title": "PAY-10 Refunds - HLD",
@@ -251,7 +249,6 @@ admin("/__admin/comment", {"key": "PAY-100", "body": "{noformat}%s{noformat}" % 
 code, out = sdlc("approval", "check", "PAY-100", "test-design")
 check("QE lead approval counts", code == 0 and "APPROVED" in out, out)
 
-# =============================== 2. Developer: LLD ===============================
 lld = """# PAY-100 - LLD - payments
 
 ## 9. Work breakdown
@@ -295,7 +292,6 @@ check("editing the LLD after approval voids the approval", code != 0, out)
 lline = sdlc("approval", "line", "PAY-100", "lld")[1].strip().splitlines()[-1]
 admin("/__admin/comment", {"key": "PAY-100", "body": lline, "accountId": "tech-lead-1", "name": "Tech Lead"})
 check("re-approved after the edit", sdlc("approval", "check", "PAY-100", "lld")[0] == 0)
-# four eyes: the person who saved the page version cannot approve it
 admin("/__admin/edit", {"id": lld_page, "append": "<p>edit by the tech lead</p>", "author": "tech-lead-1"})
 lline = sdlc("approval", "line", "PAY-100", "lld")[1].strip().splitlines()[-1]
 admin("/__admin/comment", {"key": "PAY-100", "body": lline, "accountId": "tech-lead-1", "name": "Tech Lead"})
@@ -313,7 +309,6 @@ subs = sorted(k for k, v in st["issues"].items() if v["type"] == "Sub-task")
 check("tasks create: Jira sub-tasks from the LLD", code == 0 and subs == ["PAY-101", "PAY-102"], out + str(subs))
 T1, T2 = "PAY-101", "PAY-102"
 
-# =============================== 3. Build: task T1 ===============================
 code, out = sdlc("task", "start", T2)
 check("task start refused while its dependency is not approved", code != 0, out)
 d, _ = hook("create_file", {"filePath": str(PROJ / "src/main/java/com/acme/payments/refund/policy/RefundPolicy.java")})
@@ -326,7 +321,6 @@ check("edit of a guardrail file refused", hook("replace_string_in_file", {"fileP
 check("shell write outside scope refused", bash("echo x > src/main/java/com/acme/payments/App.java")[0] == "deny")
 check("secret read by glob refused", bash("cat .agent/*")[0] == "deny")
 check("skip tests refused", bash("./mvnw -B -DskipTests verify")[0] == "deny")
-# ---- spellings that used to get past the guard (task T1 active, scope refund/policy/**) ----
 check("escaped secret path refused", bash("cat .agent/local.e\\nv")[0] == "deny")
 check("decoded path needs approval", bash("cat $(echo LmFnZW50L2xvY2FsLmVudg== | base64 -d)")[0] == "ask")
 check("skip tests through a wrapper shell refused", bash("sh mvnw -B -DskipTests verify")[0] == "deny")
@@ -399,7 +393,7 @@ write(TP + "Skipped.java", "package com.acme.payments.refund.policy;\nclass Skip
 code, out = commit("test(PAY-101): skipped")
 check("pre-commit refuses a disabled test", code != 0 and "isabled" in out, out)
 (PROJ / TP / "Skipped.java").unlink()
-fake_key = "AKIA" + "IOSFODNN7EXAMPLQ"  # not a real key; split so secret scanners do not flag this test file
+fake_key = "AKIA" + "IOSFODNN7EXAMPLQ"  # split so secret scanners do not flag this test file
 write(P + "Keys.java", 'package com.acme.payments.refund.policy;\nclass Keys {\n    String k = "%s";\n    String p = "password=Sup3rS3cretValue9";\n}\n' % fake_key)
 code, out = commit("feat(PAY-101): keys")
 check("pre-commit refuses a secret", code != 0 and "ecret" in out, out)
@@ -428,7 +422,6 @@ check("fix commit", commit("test(PAY-101): add day-30 boundary test")[0] == 0)
 code, out = review(T1, "APPROVE", extra="Boundary covered.")
 check("review round 2: approve", code == 0, out)
 
-# =============================== 4. Build: task T2 ===============================
 code, out = sdlc("task", "start", T2)
 check("task T2 starts once T1 is approved", code == 0, out)
 A, TA = "src/main/java/com/acme/payments/refund/api/", "src/test/java/com/acme/payments/refund/api/"
@@ -480,7 +473,6 @@ print("      status:", " | ".join(l.strip() for l in out.splitlines() if l.strip
 d, why = bash('gh pr create --base develop --title "PAY-100: Refunds for paid orders" --body x')
 check("PR gate open after every loop passed", d == "allow", why)
 
-# =============================== 5. PR, CI loop ===============================
 code, out = git("push", "-u", "origin", "feature/PAY-100-refunds")
 check("push of the feature branch passes pre-push", code == 0, out)
 code, out = run("gh", "pr", "create", "--base", "develop", "--title", "PAY-100: Refunds for paid orders", "--body", "x")
@@ -523,7 +515,6 @@ st = state()
 check("after merge: Jira told, tickets left for a human to close", code == 0 and any("merged" in c["body"] for c in st["comments"]["PAY-100"])
       and st["issues"]["PAY-100"]["status"] == "In Review", out)
 
-# =============================== 6. other agent tools ===============================
 d, _ = hook("Bash", {"command": "git push --force"}, fmt="claude")
 check("Claude Code hook format: force push refused", d == "deny")
 d, _ = hook("shell", {"command": ["bash", "-lc", "cat .agent/local.env"]}, fmt="codex")
@@ -534,10 +525,8 @@ code, out = sdlc("selftest")
 check("selftest in the project", code == 0 and "SELFTEST PASSED" in out, out[-400:])
 SELFTEST_OUT = out
 
-# =============================== 7. sdlc check against real Vitest (tests/e2e/vitest.py) ===============================
 exec((HERE / "vitest.py").read_text())
 
-# =============================== 8. multi-component delivery (tests/e2e/multi.py) ===============================
 exec((HERE / "multi.py").read_text())
 
 passed = sum(1 for _, ok in RESULTS if ok)
