@@ -250,14 +250,14 @@ final class TrustTests {
 
         // a Java test file is linted by the lines the change adds, as a script test file is
         git(repo, "switch", "-q", "-c", "feature/PROJ-18-java", "origin/main");
-        write(repo, "src/test/java/OffTest.java", "class OffTest {\n  @Disabled(\"later\")\n  @Test void later() {}\n  @Test void sooner() { assumeTrue(false); }\n  @Test void never() { Assumptions.<Void>abort(\"later\"); }\n}\n");
+        write(repo, "src/test/java/OffTest.java", "class OffTest {\n  @Disabled(\"later\")\n  @Test void later() {}\n  @Test void sooner() {\n    assumeTrue(false);\n  }\n  @Test void never() { Assumptions.<Void>abort(\"later\"); }\n}\n");
         write(repo, "src/main/java/A.java", "class A { int f; }\n");
         commit(repo, "feat(PROJ-18): switch Java tests off");
         Ctx.init(repo);
         Checks.Result offJava = Checks.prPolicy(null, false);
         check("trust: a Java test switched off on an added line fails, by the line",
                 offJava.fails().stream().anyMatch(f -> f.contains("No switch that turns a test off or focuses one was found") && f.contains("OffTest.java: @Disabled(\"later\")")
-                        && f.contains("OffTest.java: @Test void sooner() { assumeTrue(false); }") && !f.contains("Assumptions.<Void>abort(")));
+                        && f.contains("OffTest.java: assumeTrue(false);") && !f.contains("Assumptions.<Void>abort(")));
         check("trust: Assumptions.abort, which a condition on another line may hold, is a warning, not a failure",
                 offJava.warns().stream().anyMatch(w -> w.contains("OffTest.java: may switch a test off") && w.contains("Assumptions.<Void>abort(\"later\")")));
 

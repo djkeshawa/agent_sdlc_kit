@@ -51,6 +51,7 @@ layer-1 and layer-2 rules (532 checks, with the multi-component ones).
 | Rewriting refs (`filter-branch`, `filter-repo`, `update-ref`, `replace`). Local `rebase` and `commit --amend` are allowed; pushing rewritten history needs a force push, which is denied | deny | - | - | force-push block |
 | `git reset --hard`, `git clean -f`, `git checkout -- .`, `stash drop`, branch delete/rename | ask | - | - | - |
 | `git clean -x`, git config outside the repo, identity/credential/remote changes | deny | - | - | - |
+| `git config` in a form the guard does not know: only these options, written out in full, are known (`--local`, `--global`, `--system`, `--worktree`, `--get`, `--get-all`, `--get-regexp`, `--list`/`-l`, `--add`, `--unset`, `--unset-all`, `--replace-all`, `--file`/`-f`, `--default`, `--type`, `--show-origin`, `--show-scope`, `--name-only`, `-z`, the type options). A shortened, negated or other option, two actions at once, a write with `--file`, and `git checkout-index --prefix`/`--temp` are refused | deny | - | - | - |
 | Approval lines (`SDLC-APPROVED`) in any command | deny | - | - | - |
 | `gh pr merge`, `gh pr review --approve` / `-a`, releases, repo settings, secrets, `gh auth token`, `gh auth status --show-token`, `git credential ...`, raw `gh api` writes in every spelling (`-XPUT`, `--field=`, `-fk=v`, GraphQL mutations), `gh alias` changes, `gh extension install` | deny | - | - | rulesets |
 | A `gh` command the guard does not know (an alias or extension) | ask | - | - | - |

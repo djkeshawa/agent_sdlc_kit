@@ -1845,9 +1845,23 @@ public final class Integrity {
             String never = m.group(1).equals("True") ? "false" : "true";
             boolean holds = false;
             for (int k = 0; k < a.ended() && !holds; k++) holds = a.list().get(k).equals(never);
-            int level = !a.closed() ? OPEN : !holds ? NONE : endsStatement(r.s, a.end()) ? SURE : NOTE;
-            r.form(K_ASSUME, qualified(r.s, m.start()), level, AS_STATEMENT);
+            int from = qualified(r.s, m.start());
+            // sure only where the call is the first thing on its line: after anything else on the line (a brace of a lambda or of a
+            // Kotlin trailing lambda, a comment and then a brace, a declaration written on one line) the line alone does not show
+            // whether the call runs in the test's own body, and the run of the file judges it
+            int level = !a.closed() ? OPEN : !holds ? NONE : endsStatement(r.s, a.end()) && startsLine(r.s, from) ? SURE : NOTE;
+            r.form(K_ASSUME, from, level, AS_STATEMENT);
         }
+    }
+
+    /** True when only blanks stand between the start of the line that holds this place and the place. */
+    private static boolean startsLine(CharSequence s, int at) {
+        for (int i = at - 1; i >= 0; i--) {
+            char c = s.charAt(i);
+            if (c == '\n' || c == '\r') return true;
+            if (c != ' ' && c != '\t') return false;
+        }
+        return true;
     }
 
     /**

@@ -586,12 +586,14 @@ Claude Code, in `.claude/settings.json`:
     every string, character literal, text block, template literal, regular expression or comment
     the line opened (`String fixture = "{ @Disabled class Example {} }";`, `assertThrows(...,
     () -> { assumeTrue(false); })`, `runInSandbox(function () { it.skip('x', ...) })` and
-    `Runnable r = () -> { assumeTrue(false); };` are notes; `@Test void t() { assumeTrue(false); }`
-    is sure). A line that begins inside something an earlier line opened does not show it: what
+    `Runnable r = () -> { assumeTrue(false); };` are notes; `{ it.skip('x', () => {}); }` is sure). A line that begins inside something an earlier line opened does not show it: what
     the line opens, read alone, decides; `pytest.param(..., marks=...)` at the start of its line,
     or after `[`, a comma or a `(` that opens no call (an element of a list or a tuple); an
-    assumption also ends its statement (`;`, `}`, a comment or the line's end after its closing
-    parenthesis);
+    assumption is the first thing on its line and also ends its statement (`;`, `}`, a comment or
+    the line's end after its closing parenthesis): after anything else on the line (a method
+    written on one line, `@Test void t() { assumeTrue(false); }`; a lambda's brace after a
+    comment; a trailing lambda, `assertThrows<X> { assumeTrue(false) }`) it is a note, as the
+    line alone does not show whether the call runs in the test's own body;
   - and, for a declaration, an option, an assumption, `pytestmark` or `pytest.param`, **no
     condition stands before it on its line**, nor on the added line just before the line or lines
     it is read from, when that line opens a block or a statement under a condition or ends where
