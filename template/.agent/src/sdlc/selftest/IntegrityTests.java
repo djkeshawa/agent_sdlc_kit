@@ -1271,7 +1271,7 @@ final class IntegrityTests {
 
     private static void write(Path repo, String rel, String text) throws IOException {
         Path f = repo.resolve(rel);
-        Files.createDirectories(f.getParent());
+        sdlc.util.Fs.makeParent(f);
         Files.writeString(f, text);
     }
 

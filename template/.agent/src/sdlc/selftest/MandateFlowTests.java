@@ -375,8 +375,8 @@ final class MandateFlowTests {
             check("guard: and a write to the repository's git hooks from a linked worktree", Asserts.shell("echo 'exit 0' > " + hook).denied());
             check("guard: and to the worktree's own git configuration", Asserts.shell("echo '[core] hooksPath=/tmp/none' > " + store.getParent().getParent().resolve("config.worktree")).denied());
             check("guard: and to the files that say where the git folder is", Asserts.shell("echo 'gitdir: /tmp/other' > .git").denied()
-                    && Asserts.shell("echo /tmp/other > " + store.getParent().getParent().resolve("commondir")).denied());
-            Path shared = hook.getParent().getParent();
+                    && Asserts.shell("echo /tmp/other > " + sdlc.util.Fs.parent(sdlc.util.Fs.parent(store)).resolve("commondir")).denied());
+            Path shared = sdlc.util.Fs.parent(sdlc.util.Fs.parent(hook));
             check("guard: a copy of a tree onto the git folder itself is refused", Asserts.shell("cp -R prepared/. " + shared).denied() && Asserts.shell("mv " + shared + " " + shared + "-old").denied());
             check("guard: and onto a folder that holds it", Asserts.shell("cp -R prepared/. " + shared.getParent()).denied());
             check("guard: other files outside the checkout are judged as before", !Asserts.shell("echo x > " + linked.getParent().resolve("sdlc-elsewhere-note.txt")).denied());
@@ -409,7 +409,7 @@ final class MandateFlowTests {
 
     private static void write(Path repo, String rel, String text) throws IOException {
         Path f = repo.resolve(rel);
-        Files.createDirectories(f.getParent());
+        sdlc.util.Fs.makeParent(f);
         Files.writeString(f, text);
     }
 

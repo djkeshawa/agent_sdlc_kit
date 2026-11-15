@@ -243,7 +243,7 @@ public final class Tasks {
         if (taskKey.contains("/")) return taskKey.substring(0, taskKey.indexOf('/'));
         try (var dirs = java.nio.file.Files.list(Ctx.work())) {
             for (java.nio.file.Path d : dirs.toList()) {
-                if (java.nio.file.Files.exists(d.resolve("state.json")) && Work.tasks(Work.state(d.getFileName().toString())).containsKey(taskKey)) return d.getFileName().toString();
+                if (java.nio.file.Files.exists(d.resolve("state.json")) && Work.tasks(Work.state(sdlc.util.Fs.name(d))).containsKey(taskKey)) return sdlc.util.Fs.name(d);
             }
         } catch (java.io.IOException | RuntimeException ignored) {
         }

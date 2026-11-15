@@ -22,6 +22,7 @@ public final class Http {
     private Http() {}
 
     public static final class ApiException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
         public final int status;
 
         public ApiException(int status, String m) {

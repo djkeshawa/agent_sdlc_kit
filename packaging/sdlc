@@ -7,6 +7,6 @@ while [ -h "$self" ]; do
     *) self=$(dirname -- "$self")/$link ;;
   esac
 done
-home=$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd -P)
+home=$(CDPATH='' cd -- "$(dirname -- "$self")/.." && pwd -P)
 exec "$home/runtime/bin/java" -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Djava.awt.headless=true \
   -jar "$home/lib/sdlc.jar" "$@"

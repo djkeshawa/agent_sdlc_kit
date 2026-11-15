@@ -67,7 +67,9 @@ public class Sdlc {
         try (Stream<Path> s = Files.walk(src)) {
             s.filter(p -> p.toString().endsWith(".java")).forEach(p -> files.add(p.toString()));
         }
-        Path tmp = Files.createTempDirectory(build.getParent(), ".build-tmp");
+        Path home = build.toAbsolutePath().getParent();
+        if (home == null) throw new IOException("no folder to build in: " + build);
+        Path tmp = Files.createTempDirectory(home, ".build-tmp");
         List<String> argv = new ArrayList<>(List.of("-nowarn", "-encoding", "UTF-8", "-d", tmp.toString()));
         argv.addAll(files);
         int rc = compiler.run(null, OutputStream.nullOutputStream(), System.err, argv.toArray(new String[0]));
@@ -81,7 +83,8 @@ public class Sdlc {
         try (Stream<Path> s = Files.walk(tmp)) {
             for (Path p : s.filter(Files::isRegularFile).toList()) {
                 Path dest = build.resolve(tmp.relativize(p).toString());
-                Files.createDirectories(dest.getParent());
+                Path into = dest.getParent();
+                if (into != null) Files.createDirectories(into);
                 Files.move(p, dest, StandardCopyOption.REPLACE_EXISTING);
                 fresh.add(dest);
             }

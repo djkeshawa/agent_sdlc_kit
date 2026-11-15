@@ -39,7 +39,7 @@ public final class SelfApproval {
         all.put(id, entry);
         Path f = store(root);
         try {
-            Files.createDirectories(f.getParent());
+            sdlc.util.Fs.makeParent(f);
             Files.writeString(f, Json.pretty(all) + "\n", StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new UsageException("cannot record the approval in " + f + ": " + e.getMessage());

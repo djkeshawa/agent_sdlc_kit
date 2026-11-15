@@ -112,14 +112,14 @@ public final class Eval {
         List<String> runs = new ArrayList<>(wanted);
         if (runs.isEmpty() && Files.isDirectory(answers())) {
             try (Stream<Path> s = Files.list(answers())) {
-                s.filter(Files::isDirectory).map(p -> p.getFileName().toString()).sorted().forEach(runs::add);
+                s.filter(Files::isDirectory).map(p -> sdlc.util.Fs.name(p)).sorted().forEach(runs::add);
             }
         }
         if (runs.isEmpty()) throw new UsageException("no answers in " + Ctx.rel(answers()) + "/<run>/<KEY>.yml");
         List<CaseScore> cases = new ArrayList<>();
         try (Stream<Path> s = Files.list(truthDir)) {
             for (Path f : s.filter(p -> p.toString().endsWith(".yml")).sorted().toList()) {
-                String key = f.getFileName().toString().replaceFirst("\\.yml$", "");
+                String key = sdlc.util.Fs.name(f).replaceFirst("\\.yml$", "");
                 Set<String> truth = components(Files.readString(f));
                 List<Set<String>> answers = new ArrayList<>();
                 for (String run : runs) {

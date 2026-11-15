@@ -189,7 +189,7 @@ public final class MandateCli {
         List<Path> files = new ArrayList<>();
         if (Files.isDirectory(dir)) {
             try (Stream<Path> s = Files.list(dir)) {
-                files = s.filter(p -> p.getFileName().toString().endsWith(".json") && Files.isRegularFile(p)).sorted().toList();
+                files = s.filter(p -> sdlc.util.Fs.name(p).endsWith(".json") && Files.isRegularFile(p)).sorted().toList();
             }
         }
         if (files.isEmpty()) {
@@ -222,7 +222,7 @@ public final class MandateCli {
     }
 
     private static String idOf(Path f) {
-        String name = f.getFileName().toString();
+        String name = sdlc.util.Fs.name(f);
         return name.substring(0, name.length() - ".json".length());
     }
 

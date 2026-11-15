@@ -36,7 +36,13 @@ final class WorkflowTests {
             Workflow w = new Workflow(tracker, wiki, said);
             Proc.run(tmp, "git", "switch", "-q", "-c", "feature/PROJ-7-refunds");
             Path draft = tmp.resolve(".sdlc/PROJ-7/drafts/lld.md");
-            Files.createDirectories(draft.getParent());
+            sdlc.util.Fs.makeParent(draft);
+            // sdlc mindmap --out picture.png crashed: a path of one name has no parent, and Files.createDirectories(null) throws
+            sdlc.util.Fs.makeParent(Path.of("picture.png"));
+            Path top = Path.of("").toAbsolutePath().getRoot();
+            check("paths: a path of one name has a parent, a root has an empty name, and a file has its own",
+                    sdlc.util.Fs.parent(Path.of("picture.png")).equals(Path.of("").toAbsolutePath()) && sdlc.util.Fs.name(top).isEmpty()
+                    && sdlc.util.Fs.name(Path.of("a").resolve("b.txt")).equals("b.txt") && sdlc.util.Fs.parent(top).equals(top));
             Files.writeString(draft, "# PROJ-7 - LLD - pay\n\n## Work breakdown\n\n```yaml\n# sdlc-tasks\ntasks:\n  - id: T1\n    title: Refund policy\n"
                     + "    scope: [src/main/java/com/acme/refund/**, src/test/java/com/acme/refund/**]\n    acceptance:\n      - Given day 31, then refused\n"
                     + "  - id: T2\n    title: Refund API\n    dependsOn: [T1]\n    scope: [src/main/java/com/acme/api/**]\n    acceptance:\n      - Given a paid order, then 201\n```\n");

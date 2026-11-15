@@ -68,7 +68,7 @@ public final class MindMap {
     static String addImage(String md, Path draft) throws IOException {
         Node root = parse(md);
         if (root.children().isEmpty()) return md;
-        Path png = draft.getParent().resolve("mindmap.png");
+        Path png = sdlc.util.Fs.parent(draft).resolve("mindmap.png");
         render(root, png);
         StringBuilder out = new StringBuilder();
         if (!md.contains("](mindmap.png)")) {
@@ -127,7 +127,7 @@ public final class MindMap {
         }
         box(g, x0, rootY, rootW, 40, new Color(0x2C2C2A), new Color(0x2C2C2A), rootFont, Color.WHITE, root.text());
         g.dispose();
-        Files.createDirectories(out.getParent());
+        sdlc.util.Fs.makeParent(out);
         ImageIO.write(img, "png", out.toFile());
     }
 

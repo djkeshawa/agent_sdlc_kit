@@ -230,7 +230,7 @@ public final class Docs {
                 continue;
             }
             try {
-                w.wiki.attach(page.id(), p.getFileName().toString(), Files.readAllBytes(p), mime(img));
+                w.wiki.attach(page.id(), sdlc.util.Fs.name(p), Files.readAllBytes(p), mime(img));
             } catch (RuntimeException e) {
                 w.console.err("[sdlc] could not attach " + img + " (" + e.getMessage() + "); the page has the list version.");
             }

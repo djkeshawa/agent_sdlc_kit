@@ -34,7 +34,7 @@ public final class TestLocks {
                     String rel = draft.relativize(f).toString().replace('\\', '/');
                     if (!Glob.any(tests, rel)) throw new UsageException("drafted file " + rel + " is not test code (paths.test): acceptance tests only");
                     Path to = Ctx.root.resolve(rel);
-                    Files.createDirectories(to.getParent());
+                    sdlc.util.Fs.makeParent(to);
                     Files.copy(f, to, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                     files.add(rel);
                 }

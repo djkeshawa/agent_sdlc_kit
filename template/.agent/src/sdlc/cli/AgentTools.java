@@ -126,7 +126,7 @@ public final class AgentTools {
         for (Path f : list(Ctx.root.resolve(".github/agents"), ".agent.md")) {
             String[] fm = frontMatter(Files.readString(f));
             Map<String, String> m = fields(fm[0]);
-            out.add(new Agent(m.getOrDefault("name", f.getFileName().toString().replace(".agent.md", "")), unquote(m.getOrDefault("description", "")),
+            out.add(new Agent(m.getOrDefault("name", sdlc.util.Fs.name(f).replace(".agent.md", "")), unquote(m.getOrDefault("description", "")),
                     listValue(m.getOrDefault("tools", "")), fm[1].strip() + "\n"));
         }
         return out;
@@ -136,7 +136,7 @@ public final class AgentTools {
         List<Prompt> out = new ArrayList<>();
         for (Path f : list(Ctx.root.resolve(".github/prompts"), ".prompt.md")) {
             Map<String, String> m = fields(frontMatter(Files.readString(f))[0]);
-            out.add(new Prompt(m.getOrDefault("name", f.getFileName().toString().replace(".prompt.md", "")), unquote(m.getOrDefault("description", "")),
+            out.add(new Prompt(m.getOrDefault("name", sdlc.util.Fs.name(f).replace(".prompt.md", "")), unquote(m.getOrDefault("description", "")),
                     m.getOrDefault("agent", "orchestrator"), unquote(m.getOrDefault("argument-hint", ""))));
         }
         return out;
@@ -153,7 +153,7 @@ public final class AgentTools {
     private static List<Path> list(Path dir, String suffix) throws IOException {
         if (!Files.isDirectory(dir)) return List.of();
         try (Stream<Path> s = Files.list(dir)) {
-            return s.filter(p -> p.getFileName().toString().endsWith(suffix)).sorted().toList();
+            return s.filter(p -> sdlc.util.Fs.name(p).endsWith(suffix)).sorted().toList();
         }
     }
 

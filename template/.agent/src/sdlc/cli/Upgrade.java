@@ -49,7 +49,7 @@ public final class Upgrade {
                 else if (!lf(Files.readString(to)).equals(lf(want))) changed.add(rel);
                 else continue;
                 if (check) continue;
-                Files.createDirectories(to.getParent());
+                sdlc.util.Fs.makeParent(to);
                 Files.writeString(to, want);
                 if (rel.startsWith(".agent/bin/") || rel.startsWith(".githooks/")) to.toFile().setExecutable(true);
             }

@@ -341,21 +341,24 @@ public final class Main {
             var source = Main.class.getProtectionDomain().getCodeSource();
             if (source == null) return null;
             Path build = Path.of(source.getLocation().toURI());
-            if (!Files.isDirectory(build) || !build.getFileName().toString().equals(".build")) return null;
+            if (!Files.isDirectory(build) || !sdlc.util.Fs.name(build).equals(".build")) return null;
             Path stamp = build.resolve(".stamp");
-            Path src = build.getParent().resolve("src");
+            Path src = sdlc.util.Fs.parent(build).resolve("src");
             if (!Files.exists(stamp) || !Files.isDirectory(src)) return null;
             boolean fresh;
             try {
                 fresh = Files.readString(stamp).trim().equals(fingerprint(src));
-            } catch (Exception e) {
+            } catch (java.io.IOException | java.security.NoSuchAlgorithmException | RuntimeException e) {
                 fresh = false;
             }
             if (fresh) return null;
-            List<String> cmd = new ArrayList<>(List.of(Ctx.javaBinary(), build.getParent().resolve("Sdlc.java").toString()));
+            List<String> cmd = new ArrayList<>(List.of(Ctx.javaBinary(), sdlc.util.Fs.parent(build).resolve("Sdlc.java").toString()));
             cmd.addAll(List.of(args));
             return new ProcessBuilder(cmd).inheritIO().start().waitFor();
-        } catch (Exception e) {
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (java.net.URISyntaxException | java.io.IOException | RuntimeException e) {
             return null;
         }
     }

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 repo=$(dirname -- "$here")
 dist=${DIST:-$repo/dist}
 tls_url=${SMOKE_TLS_URL:-https://example.com}
@@ -11,7 +11,7 @@ case $(uname -s) in Linux) os=linux ;; Darwin) os=macos ;; *) os=unknown ;; esac
 case $(uname -m) in x86_64 | amd64) arch=x64 ;; aarch64 | arm64) arch=arm64 ;; *) arch=unknown ;; esac
 bundle=${1:-$dist/sdlc-$os-$arch}
 [ -x "$bundle/bin/sdlc" ] || { echo "smoke: no bundle at $bundle (run packaging/build.sh first)" >&2; exit 1; }
-bundle=$(CDPATH= cd -- "$bundle" && pwd -P)
+bundle=$(CDPATH='' cd -- "$bundle" && pwd -P)
 
 # Under the repository: Docker Desktop mounts only the folders it shares, and /tmp is often not one.
 work=$dist/.smoke

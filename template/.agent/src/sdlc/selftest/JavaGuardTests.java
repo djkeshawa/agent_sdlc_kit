@@ -282,7 +282,7 @@ final class JavaGuardTests {
         expect("hook cwd in a subfolder: reading code ok", shellIn(tmp.resolve("src/main/java"), "cat demo/A.java"), Decision.Kind.ALLOW);
 
         Path above = tmp.getParent();
-        String repo = tmp.getFileName().toString();
+        String repo = sdlc.util.Fs.name(tmp);
         check("a folder outside the repository is kept", above.equals(Guard.folder(tmp, tmp, above.toString())));
         expect("from above the repository: guardrail file by relative path", shellIn(above, "echo x > " + repo + "/.agent/sdlc.yml"), Decision.Kind.DENY);
         expect("from above the repository: secret by relative path", shellIn(above, "cat " + repo + "/.agent/local.env"), Decision.Kind.DENY);

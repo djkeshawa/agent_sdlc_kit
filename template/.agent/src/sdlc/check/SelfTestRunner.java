@@ -102,7 +102,7 @@ final class SelfTestRunner implements Runner {
             List<JUnitXml.Case> cases = new ArrayList<>();
             try {
                 Path built = checkout.resolve(".built").resolve(f);
-                Files.createDirectories(built.getParent());
+                sdlc.util.Fs.makeParent(built);
                 Files.writeString(built, "");
                 final String words = prod;
                 boolean late = call > 1 && Files.readAllLines(checkout.resolve(f)).stream().anyMatch(line -> line.matches(".*: (timeout|cut)-later \\S+") && words.contains(line.substring(line.lastIndexOf(' ') + 1)));
@@ -134,7 +134,7 @@ final class SelfTestRunner implements Runner {
                         case "skip", "skip-without", "skip-later" -> Status.SKIPPED;
                         case "skip-unless" -> has ? Status.PASSED : Status.SKIPPED;
                         case "skip-once" -> has && call == 1 ? Status.SKIPPED : Status.PASSED;
-                        case "skip-odd" -> has && call % 2 == 1 ? Status.SKIPPED : Status.PASSED;
+                        case "skip-odd" -> has && call % 2 != 0 ? Status.SKIPPED : Status.PASSED;
                         case "pass-once" -> call == 1 ? Status.PASSED : Status.SKIPPED;
                         case "fails-with" -> has ? Status.FAILED : Status.PASSED;
                         case "breaks-once" -> has && call == 1 ? Status.FAILED : Status.PASSED;
@@ -162,7 +162,7 @@ final class SelfTestRunner implements Runner {
                                 s == Status.FAILED ? "expected something else" : "", retried));
                     }
                 }
-                if (order == 1 && call % 2 == 0 || order == 2 && call % 2 == 1) java.util.Collections.reverse(cases);
+                if (order == 1 && call % 2 == 0 || order == 2 && call % 2 != 0) java.util.Collections.reverse(cases);
                 boolean untold = Files.readAllLines(checkout.resolve(f)).contains("retries not said");
                 out.put(f, new FileRun(cases, null, false, untold ? "the stand-in runner does not say whether a test passed only when it ran it again" : null));
             } catch (IOException e) {
