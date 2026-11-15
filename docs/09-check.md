@@ -433,53 +433,88 @@ Claude Code, in `.claude/settings.json`:
   in which it sees a switch's words is a note in `sdlc check` and a warning in `check-pr`, never a
   failure: whether it is a switch, or whether a condition holds it, needs more than the added
   lines hold, and the run of the file says whether a test stopped running.
+- No word, prefix or part of a line makes a switch sure by itself. A form is sure only when the
+  lint has read all of what it claims:
+  - **the argument list is complete** where the form depends on it: its closing bracket is on the
+    line, or on the two or three lines read together (a title needs only its own argument to end);
+  - **a literal is the whole argument**: `true`, `false`, `True`, `False` or `"true"` with nothing
+    else in the argument (`enabled = false || RUN` is computed, not `false`);
+  - **a title is a string for certain**: a string, or a template whose `${...}` close inside it,
+    alone or followed by `+` and names, calls or more strings, with no other operator (`'adds ' +
+    n` is a title; `'a' + b === c` is a condition);
+  - **an option is a top-level property** of the object that is a whole argument of the test
+    declaration, with a whole `true`, and no spread or property it cannot read after it
+    (`{ ...opts, skip: true }` is sure; `{ skip: true, ...opts }` is a note; `{ meta: { skip: true } }`
+    is nothing);
+  - **a modifier is the callee of the call that registers a test**: `it.skip('x', ...)`, or
+    `.each(table)` and then `('x', ...)`; one that is only named (`const each = isWindows ?
+    test.skip.each : test.each`) is a note;
+  - **a decorator or an annotation is the whole expression**: after it comes the end of the line,
+    a comment, another annotation or decorator, or the declaration (`@(pytest.mark.skip if IS_CI
+    else identity)` is a note; so is `"@Disabled"` in a string);
+  - and, for a declaration, an option or an assumption, **no condition stands before it on its
+    line** (`if (ci) it.skip('x', ...)` is a note).
 - Sure, a problem ("test switched off", "test focused"; `check-pr` fails), on the lines added to
-  any test file:
+  any test file, each as just described:
   - `@Disabled`, `@Ignore` (also qualified, `@org.junit.jupiter.api.Disabled`), TestNG's
-    `@Test(enabled = false)`, `@DisabledIf("true")`, `@EnabledIf("false")`;
-  - `@pytest.mark.skip` (also in parentheses, in `pytestmark = ...` and in `marks=...`);
-    `skipif` whose condition is a plain `True`, by place or by keyword (`skipif(True, ...)`,
-    `skipif(reason=..., condition=True)`), or that has no condition (pytest then skips);
-    `xfail(run=False)` with no condition or a plain `True`; `@unittest.skip`, `skipIf(True, ...)`,
-    `skipUnless(False, ...)`, also by keyword (`skipIf(condition=True, ...)`);
+    `@Test(enabled = false)`, `@DisabledIf("true")`, `@EnabledIf("false")` (also as `value =` or
+    `expression =`);
+  - `@pytest.mark.skip` (bare or called, also in parentheses, as `pytestmark = ...` or `marks=...`,
+    alone or in a list); `skipif` with a plain `True` among its conditions or with none, also bare
+    (`@pytest.mark.skipif`); pytest's rule is followed: when `condition=` is given it is the only
+    condition and the positional ones are not read, otherwise every positional condition is, and
+    any that holds skips (so `skipif(False, True, ...)` is sure and `skipif(True, condition=False)`
+    is nothing); `xfail(run=False)` with no condition or a plain `True`; `@unittest.skip`,
+    `skipIf(True, ...)`, `skipUnless(False, ...)`, also by keyword (`skipIf(condition=True, ...)`);
   - a declaration with its title: `skip`, `todo`, `only` or `fixme` on `it`, `test`, `describe`,
-    `context`, `suite` or `specify` whose first argument is a string, alone or joined to more
-    with `+` (`it.skip('x', ...)`, `describe.only('x', ...)`, `test.todo('x')`,
-    `test.fixme('x', ...)`; also `it.concurrent.skip`, `it?.skip`), or followed by `.each`
-    (`it.skip.each`); `xit`/`xtest`/`xdescribe`/`xcontext`/`xspecify`, `fdescribe`, `fit('x', ...)`
-    (also with `.each`); `it.skipIf(true)` and `runIf(false)`; an option object that says `skip`,
-    `only` or `todo: true` in a test declaration (`test('x', { skip: true }, fn)`); a test declared
+    `context`, `suite` or `specify` (`it.skip('x', ...)`, `describe.only('x', ...)`,
+    `test.todo('x')`, `test.fixme('x', ...)`; also `it.concurrent.skip`, `it?.skip`,
+    `test.describe.skip`), and after `.each` (`it.skip.each([...])('x', ...)`, also with a tagged
+    table); `xit`/`xtest`/`xdescribe`/`xcontext`/`xspecify`, `fdescribe` and `fit` with a title
+    (also with `.each`); `it.skipIf(true)('x', ...)` and `runIf(false)('x', ...)`; an option object
+    that says `skip`, `only` or `todo: true` (`test('x', { skip: true }, fn)`); a test declared
     without a body, its whole declaration on one line (`it('pending');`);
   - `assumeTrue` with a plain `false` as an argument of its own (`assumeTrue(false, () -> "later")`),
-    or `assumeFalse` with a plain `true`, with no condition before it on its line.
+    or `assumeFalse` with a plain `true`.
 - A note ("may switch a test off", "may focus a test"; a warning in `check-pr`), every other place
   where the lint sees a switch's words:
   - a skip from inside a test, which a condition on another line may hold: `pytest.skip(...)`,
     `self.skipTest(...)`, `raise unittest.SkipTest(...)`, Mocha's `this.skip()`, `t.Skip`,
     `t.Skipf`, `t.SkipNow`, Jasmine's `pending('reason')`, Playwright's `test.skip()`,
     `test.skip(true, ...)` and `test.fixme(true)`;
-  - `skip`, `todo`, `only` or `fixme` on `it`, `test`, ... whose first argument is computed:
-    Playwright's condition (`test.skip(browserName === 'webkit', 'reason')`,
-    `test.fixme(isMobile, REASON)`) or a computed title (`it.skip(name, ...)`); one that is not
-    called (`const later = it.skip`, `cond ? describe : describe.skip`);
+  - a modifier whose first argument is computed: Playwright's condition
+    (`test.skip(browserName === 'webkit', 'reason')`, `test.fixme(isMobile, REASON)`) or a
+    computed title (`it.skip(name, ...)`, `xit(name, ...)`, `test(name, { skip: true }, fn)`);
+    one that is not called (`const later = it.skip`, `cond ? describe : describe.skip`,
+    `const each = isWindows ? test.skip.each : test.each`);
+  - a condition that is computed: `skipif(sys.platform == "win32", ...)`, `skipIf(IS_WINDOWS,
+    ...)`, `xfail(run=RUN_SLOW)`, `@Test(enabled = RUN)`, `@DisabledIf("isWindows")`,
+    `it.skipIf(isWindows)`; an option whose value is computed or that a spread after it may change;
+  - a mark or an annotation that is not the whole expression: inside a larger decorator or value
+    (`@(pytest.mark.skip if IS_CI else identity)`), kept in a variable or passed to a call
+    (`skip_slow = pytest.mark.skip(...)`, `item.add_marker(pytest.mark.skip(...))`), or in a string;
+  - a sure form after a condition on its line (`if (x) assumeTrue(false)`, `cond && it.skip('x',
+    ...)`);
   - `Assumptions.abort` (also `Assumptions.<Void>abort` and the line that imports it statically)
     and `abort(` called alone, which may be any method named `abort`;
-  - an assumption that never holds after a condition on its line (`if (x) assumeTrue(false)`);
-  - a call whose arguments do not say what it is in any of its readings (it opens on one line,
-    and the next two lines do not complete the argument it turns on).
+  - a call or a list whose arguments do not say what it is in any of its readings (it opens on
+    one line, and the next two lines do not close it: a `.each` table or an option object longer
+    than three lines is a note).
 - A call is judged where its arguments are. One whose arguments a line leaves open before they
   say what it is is judged with the next line, and then with the next two: `test.skip(`, then
-  `false,` and `'supported');` is nothing, `it.skip(`, then `'later',` is sure. No line is reported
-  from a part of a call.
-- Not reported at all: a condition that is visibly one, in a form that only takes a condition:
-  `it.skipIf(...)`, `it.runIf(...)`, `@pytest.mark.skipif(...)`, `@unittest.skipIf(...)`,
-  `skipUnless(...)` and `xfail(...)` with any other condition, JUnit's `@DisabledIf...`,
-  `@DisabledOn...`, `@EnabledIf...` with any other condition; Playwright's `test.skip(false, ...)`
-  (also over lines); an assumption whose condition is computed (`assumeTrue(ready())`); a method
-  declared with the name `abort` (`abort(): void {}`, also over lines) or another object's
-  `abort` (`controller . abort()`); another object's `fit` (`model.fit(X, y)`), `fit` called
-  without a title (`fit(data)`) or a function declared `fit`; `this.skip(10)` (Mocha's takes no
-  argument); a skip or a fixme whose first argument is a number (`it.skip(1)`, a stream's skip).
+  `false,` and `'supported');` is nothing, `it.skip(`, then `'later',` is sure, `test.skip('webkit'`,
+  then `=== browserName, ...);` is a note. No line is reported from a part of a call.
+- Not reported at all: the same forms with the literal that runs: `skipif(False, ...)` (every
+  condition `False`), `skipUnless(True, ...)`, `xfail(...)` that runs, `@Test(enabled = true)`,
+  `@DisabledIf("false")`, `it.skipIf(false)`, Playwright's `test.skip(false, ...)` (also over
+  lines), `{ skip: false }`, a `skip: true` inside another property; JUnit's other conditional
+  annotations (`@DisabledOnOs`, `@EnabledOnJre`, `@DisabledIfEnvironmentVariable`); an
+  assumption whose condition is computed (`assumeTrue(ready())`); a method declared with the name
+  `abort` (`abort(): void {}`, also over lines) or another object's `abort` (`controller .
+  abort()`); another object's `fit` (`model.fit(X, y)`), `fit` called without a title
+  (`fit(data)`) or a function declared `fit`; `xit` or `fit` only named (`import { xit }`);
+  `this.skip(10)` (Mocha's takes no argument); a skip or a fixme whose first argument is a number
+  (`it.skip(1)`, a stream's skip).
   White space of any kind a language allows may stand between a switch's words, and Unicode
   escapes (`\u0040Disabled`) are read as a compiler reads them. A switch written over two or three
   added lines (`it`, then `.skip(` on the next; a block comment that closes on the next line; a
@@ -499,8 +534,9 @@ Claude Code, in `.claude/settings.json`:
   there) or one written over more than three lines; a switch on an added line longer than 2,000
   characters; a quote in a regular expression before a comment between a switch's words
   (`const r = /'/; it /* ' */ .skip(...)`, or `const r = /'\//; it //'` and `.skip(` on the next
-  line); a pytest skip mark kept in a variable and applied elsewhere (`skip_slow =
-  pytest.mark.skip(...)`, `item.add_marker(...)`); a test moved into a class or a `describe` block
+  line); a pytest skip mark applied elsewhere through a name (`skip_slow = pytest.mark.skip(...)`
+  is a note where it is written; `@skip_slow` is not seen); a condition on another line around a
+  declaration (`if (ci)`, then `it.skip('x', ...)` on the next line); a test moved into a class or a `describe` block
   that is already switched off; an empty test. For a file a runner owns (Maven Surefire, Vitest),
   `sdlc check` reports how many tests that ran before the change do not run now, whatever the
   source says; for a file no runner owns, and in `check-pr`, which runs no test, nothing does.
