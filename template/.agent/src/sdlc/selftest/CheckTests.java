@@ -613,7 +613,7 @@ final class CheckTests {
             System.setErr(new PrintStream(reasons, true, StandardCharsets.UTF_8));
             System.setIn(new java.io.ByteArrayInputStream("{\"hook_event_name\": \"Stop\", \"stop_hook_active\": false}".getBytes(StandardCharsets.UTF_8)));
             int first = Check.run(Map.of("selftest-runner", "true", "stop-hook", "true"));
-            String said = reasons.toString(StandardCharsets.UTF_8);
+            String said = reasons.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
             check("check: the stop hook blocks on a new test that proves nothing and on a failing one", first == 2
                     && said.contains("new tests pass with and without your change, so they do not test it: tests/old.t (the file reports 2 tests it did not have")
                     && said.contains("(proves nothing)") && said.contains("fails: tests/new.t"));
@@ -849,7 +849,8 @@ final class CheckTests {
         check("moves: a test file deleted and an unrelated one added is no move: the deletion is a problem and the new test does not test the change",
                 code == 1 && !unrelated.contains("moved") && unrelated.contains("  1 new test passes before and after, so it does not test the change\n"
                         + "      tests/jvm/b/OtherTest.java  [self test]\n        idle\n")
-                && unrelated.contains("PROBLEM  test file deleted: tests/jvm/a/CalcTest.java  the file is gone"));
+                && unrelated.contains("PROBLEM  test file deleted: tests/jvm/a/CalcTest.java  the file is gone")
+                && unrelated.contains("of its tests before the change and was deleted: at least") && unrelated.contains("      tests/jvm/a/CalcTest.java  [self test]\n"));
         Files.delete(repo.resolve("tests/jvm/b/OtherTest.java"));
         write(repo, "tests/jvm/a/CalcTest.java", CALC);
         // one added class and two deleted ones it is the twin of in two passes (the same but for its package line; the same but for its package and
@@ -1118,7 +1119,7 @@ final class CheckTests {
             System.setIn(new java.io.ByteArrayInputStream("{}".getBytes(StandardCharsets.UTF_8)));
             int blocked = Check.run(Map.of("selftest-runner", "true", "stop-hook", "true"));
             check("check: the stop hook blocks on a test that ran before the change and is skipped now", blocked == 2
-                    && reasons.toString(StandardCharsets.UTF_8).contains("tests that ran before your change do not run now: checks/judged.t (the file as it was passed 4 of its tests, "
+                    && reasons.toString(StandardCharsets.UTF_8).replace("\r\n", "\n").contains("tests that ran before your change do not run now: checks/judged.t (the file as it was passed 4 of its tests, "
                             + "and after the change it runs 3: at least 1 test that ran before the change does not run now (skipped now under a name that ran before: turned off)"));
         } finally {
             System.setIn(in);
@@ -1182,7 +1183,7 @@ final class CheckTests {
             System.setIn(new java.io.ByteArrayInputStream("{}".getBytes(StandardCharsets.UTF_8)));
             int blocked = Check.run(Map.of("selftest-runner", "true", "stop-hook", "true"));
             check("check: the stop hook blocks on a test removed", blocked == 2
-                    && reasons.toString(StandardCharsets.UTF_8).contains("tests that ran before your change do not run now: checks/judged.t (the file as it was passed 4 of its tests, "
+                    && reasons.toString(StandardCharsets.UTF_8).replace("\r\n", "\n").contains("tests that ran before your change do not run now: checks/judged.t (the file as it was passed 4 of its tests, "
                             + "and after the change it runs 3: at least 1 test that ran before the change does not run now (no longer reported: goes too)"));
         } finally {
             System.setIn(in);
@@ -1206,7 +1207,7 @@ final class CheckTests {
             System.setIn(new java.io.ByteArrayInputStream("{}".getBytes(StandardCharsets.UTF_8)));
             int blocked = Check.run(Map.of("selftest-runner", "true", "stop-hook", "true"));
             check("check: the stop hook blocks on a file that lost tests", blocked == 2
-                    && reasons.toString(StandardCharsets.UTF_8).contains("tests that ran before your change do not run now: checks/judged.t (the file as it was passed 4 of its tests"));
+                    && reasons.toString(StandardCharsets.UTF_8).replace("\r\n", "\n").contains("tests that ran before your change do not run now: checks/judged.t (the file as it was passed 4 of its tests"));
         } finally {
             System.setIn(in);
             System.setErr(err);
@@ -1618,7 +1619,7 @@ final class CheckTests {
             System.setIn(new java.io.ByteArrayInputStream("{}".getBytes(StandardCharsets.UTF_8)));
             int blocked = Check.run(Map.of("selftest-runner", "true", "stop-hook", "true"));
             check("check: the stop hook blocks on it", blocked == 2
-                    && reasons.toString(StandardCharsets.UTF_8).contains("passed before your change, fails on your code as it was, and your change took it out of the way: checks/broken.t » holds"));
+                    && reasons.toString(StandardCharsets.UTF_8).replace("\r\n", "\n").contains("passed before your change, fails on your code as it was, and your change took it out of the way: checks/broken.t » holds"));
         } finally {
             System.setIn(in);
             System.setErr(err);
@@ -2568,7 +2569,7 @@ final class CheckTests {
         } finally {
             System.setOut(out);
         }
-        return sink.toString(StandardCharsets.UTF_8);
+        return sink.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
     }
 
     private static void write(Path repo, String rel, String text) throws IOException {

@@ -1192,7 +1192,7 @@ final class IntegrityTests {
             System.setErr(new PrintStream(errors, true, StandardCharsets.UTF_8));
             System.setIn(new java.io.ByteArrayInputStream("{\"hook_event_name\": \"Stop\", \"stop_hook_active\": false}".getBytes(StandardCharsets.UTF_8)));
             int code = Check.run(options);
-            return new Said(code, said.toString(StandardCharsets.UTF_8), errors.toString(StandardCharsets.UTF_8));
+            return new Said(code, said.toString(StandardCharsets.UTF_8).replace("\r\n", "\n"), errors.toString(StandardCharsets.UTF_8).replace("\r\n", "\n"));
         } finally {
             System.setOut(out);
             System.setErr(err);

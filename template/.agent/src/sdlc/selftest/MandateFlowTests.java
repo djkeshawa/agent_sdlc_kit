@@ -102,14 +102,14 @@ final class MandateFlowTests {
             return slow.poll();
         }, new PrintStream(swapped, true, StandardCharsets.UTF_8));
         check("mandate: a mandate that changes while the person decides is not approved",
-                raced == 1 && swapped.toString(StandardCharsets.UTF_8).contains("changed while you were deciding") && SelfApproval.of(repo, "fix") == null);
+                raced == 1 && swapped.toString(StandardCharsets.UTF_8).replace("\r\n", "\n").contains("changed while you were deciding") && SelfApproval.of(repo, "fix") == null);
         Files.writeString(repo.resolve("docs/mandates/fix.json"), draftText);
 
         Deque<String> answers = new ArrayDeque<>(List.of("the fix is applied twice", "1", "fix"));
         StringBuilder order = new StringBuilder();
         boolean[] blind = {true};
         int approved = MandateCli.approve(repo, "fix", q -> {
-            String shown = said.toString(StandardCharsets.UTF_8);
+            String shown = said.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
             if (order.length() == 0) blind[0] = !shown.contains("The fix is applied") && !shown.contains("May change");
             order.append(shown.contains("May change") ? "card;" : "blind;");
             return answers.poll();
@@ -297,7 +297,7 @@ final class MandateFlowTests {
         check("mandate: a mandate that fits as written is read", Mandate.load(repo, "sizey").scopePaths().size() == 22_000);
         check("mandate: approval that would write a mandate too large to read approves nothing and leaves the file",
                 MandateCli.approve(repo, "sizey", q -> sizey.poll(), new PrintStream(tooLarge, true, StandardCharsets.UTF_8)) == 1
-                && tooLarge.toString(StandardCharsets.UTF_8).contains("would be larger than") && Files.readString(repo.resolve("docs/mandates/sizey.json")).equals(compact)
+                && tooLarge.toString(StandardCharsets.UTF_8).replace("\r\n", "\n").contains("would be larger than") && Files.readString(repo.resolve("docs/mandates/sizey.json")).equals(compact)
                 && SelfApproval.of(repo, "sizey") == null);
         Files.delete(repo.resolve("docs/mandates/sizey.json"));
 
@@ -333,6 +333,13 @@ final class MandateFlowTests {
                         + "as it was is compared with it by how many tests it reports and runs, not by their names: it reports as many tests as it had\n")
                 && !movedOnly.contains("violated  the change's own tests"));
         Files.delete(repo.resolve("tests/mv/b/a.t"));
+        write(repo, "tests/mv/a.t", "stays: pass\n");
+        // a test file deleted, within the mandate's scope: the witness sees only files the change adds or edits, so the run says it
+        Files.delete(repo.resolve("tests/mv/a.t"));
+        String deletedOnly = report(Map.of("mandate", "move", "selftest-runner", "true", "runs", "1"));
+        check("mandate: a test file deleted is a test that ran and does not run now: the witness line is violated, with the file and the count",
+                deletedOnly.contains("violated  the change's own tests") && deletedOnly.contains("tests/mv/a.t")
+                && deletedOnly.contains("the file passed 1 of its tests before the change and was deleted: at least 1 test that ran before the change does not run now"));
         write(repo, "tests/mv/a.t", "stays: pass\n");
         // a test file moved whose new import gives it a row more, passing on both sides: a new test that does not test the change, as in any file
         String rows = "package a;\n\nimport real.Calc;\n\nadds: pass\nmore: pass-with real.Rows\n";
@@ -382,7 +389,7 @@ final class MandateFlowTests {
         } finally {
             System.setOut(console);
         }
-        String shownList = listed.toString(StandardCharsets.UTF_8);
+        String shownList = listed.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
         check("mandate: the list and the diagnostics never print a direction mark or an escape of a file that is not valid",
                 shownList.contains("odd") && shownList.contains("not valid") && shownList.indexOf('\u202e') < 0 && shownList.indexOf('\u001b') < 0);
         Files.delete(repo.resolve("docs/mandates/odd.json"));
@@ -430,7 +437,7 @@ final class MandateFlowTests {
         } finally {
             System.setOut(out);
         }
-        return sink.toString(StandardCharsets.UTF_8);
+        return sink.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
     }
 
     private static void write(Path repo, String rel, String text) throws IOException {

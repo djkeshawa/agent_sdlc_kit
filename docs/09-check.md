@@ -106,7 +106,10 @@ test file of the same kind: a test file renamed to a path that is no test file, 
 extension (`sum.test.ts` to `sum.txt`), has not moved, and its deletion is a problem. A test file
 moved to where no runner of the check runs it, while a runner ran it where it was, fails the check:
 the file is run once as it was, and the tests it passed there ran before the change and do not run
-now.
+now. The same holds for a test file the change deletes: where a runner ran it before the
+change, the run says how many tests it passed there, and they count as tests that ran and do not
+run now, in the plain check and in a mandate's verdict alike (the text check's "test file
+deleted" says the same from the file's name).
 
 ### Which tests are new, gone or switched off
 

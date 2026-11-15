@@ -267,34 +267,49 @@ final class Witness {
     }
 
     /**
-     * A test file the change moved (by the one rule, Integrity.moves) to a path that no runner of
-     * the check runs, while a runner ran it where it was: its tests ran before the change and do
-     * not run now, whatever the text check calls the move. The file is run once as it was, to
-     * count them: each case passed at the first try is one test that ran (one that passed only
-     * when the runner ran it again is not: see lost). Where that run passed none, gave no result,
-     * or does not say which of its passes were at the first try (see blind), it is said and not
-     * counted. The verdict is of the file where it was.
+     * A test file the change deleted, or moved (by the one rule, Integrity.moves) to a path that
+     * no runner of the check runs, while a runner ran it where it was: its tests ran before the
+     * change and do not run now, whatever the text check calls it, and in a mandate's verdict as
+     * in the plain check (the witness sees only files the change adds or edits; without this a
+     * deleted test file had no verdict at all). The files are run once as they were, to count
+     * them: each case passed at the first try is one test that ran (one that passed only when the
+     * runner ran it again is not: see lost). Where that run passed none, gave no result, or does
+     * not say which of its passes were at the first try (see blind), it is said and not counted.
+     * The verdict is of the file where it was. A file moved to where its runner still runs it is
+     * a moved file (see MOVED), not one of these.
      */
     private static List<Verdict> movedAway(Change change, List<Runner> runners, Map<Runner, List<String>> owned, Sides sides, int timeout) {
         List<Verdict> out = new ArrayList<>();
-        for (Integrity.Move m : Integrity.moves(change).values()) {
-            if (owned.values().stream().anyMatch(files -> files.contains(m.to()))) continue;
-            Runner was = runners.stream().filter(r -> r.runs(sides.old().dir, m.from())).findFirst().orElse(null);
-            if (was == null) continue;
-            FileRun old = run(was, sides.old().dir, List.of(m.from()), timeout).get(m.from());
-            String to = "moved to " + m.to() + ", where no runner of the check runs it";
-            if (gave(old) && old.retriesUnknown() != null) {
-                // a pass there may be one only when the runner ran the test again, which is not a test that ran (see blind)
-                out.add(new Verdict(m.from(), "", Kind.UNKNOWN, "the file was " + to + ". Run as it was before the change, " + old.retriesUnknown() + ": so it is not known "
-                        + "whether a test of the file passed at the first try or only when it was run again, and whether tests that ran before the change do not run now is not known",
-                        was.name(), Cover.NONE));
-                continue;
+        List<String> deleted = change.paths("D");
+        if (deleted.isEmpty()) return out;
+        Map<String, Integrity.Move> moves = Integrity.moves(change);
+        Map<Runner, List<String>> gone = new LinkedHashMap<>();
+        for (String path : deleted) {
+            Integrity.Move m = moves.get(path);
+            if (m != null && owned.values().stream().anyMatch(files -> files.contains(m.to()))) continue;
+            Runner was = runners.stream().filter(r -> r.runs(sides.old().dir, path)).findFirst().orElse(null);
+            if (was != null) gone.computeIfAbsent(was, k -> new ArrayList<>()).add(path);
+        }
+        for (Map.Entry<Runner, List<String>> e : gone.entrySet()) {
+            Runner was = e.getKey();
+            Map<String, FileRun> ran = run(was, sides.old().dir, e.getValue(), timeout);
+            for (String path : e.getValue()) {
+                FileRun old = ran.get(path);
+                Integrity.Move m = moves.get(path);
+                String to = m == null ? "deleted" : "moved to " + m.to() + ", where no runner of the check runs it";
+                if (gave(old) && old.retriesUnknown() != null) {
+                    // a pass there may be one only when the runner ran the test again, which is not a test that ran (see blind)
+                    out.add(new Verdict(path, "", Kind.UNKNOWN, "the file was " + to + ". Run as it was before the change, " + old.retriesUnknown() + ": so it is not known "
+                            + "whether a test of the file passed at the first try or only when it was run again, and whether tests that ran before the change do not run now is not known",
+                            was.name(), Cover.NONE));
+                    continue;
+                }
+                long passed = gave(old) ? passed(old.cases()) : 0;
+                if (passed > 0) out.add(new Verdict(path, "", Kind.NOT_RUN_NOW, "the file passed " + passed + " of its tests before the change and was " + to + ": at least " + passed
+                        + (passed == 1 ? " test that ran before the change does" : " tests that ran before the change do") + " not run now", was.name(), (int) passed, Cover.FILE));
+                else out.add(new Verdict(path, "", Kind.UNKNOWN, "the file was " + to + ". Run as it was before the change, it "
+                        + (old == null ? "gave no result" : old.problem() != null ? old.problem() : "passed no test") + ", so whether tests that ran before the change do not run now is not known", was.name(), Cover.NONE));
             }
-            long ran = gave(old) ? passed(old.cases()) : 0;
-            if (ran > 0) out.add(new Verdict(m.from(), "", Kind.NOT_RUN_NOW, "the file passed " + ran + " of its tests before the change and was " + to + ": at least " + ran
-                    + (ran == 1 ? " test that ran before the change does" : " tests that ran before the change do") + " not run now", was.name(), (int) ran, Cover.FILE));
-            else out.add(new Verdict(m.from(), "", Kind.UNKNOWN, "the file was " + to + ". Run as it was before the change, it "
-                    + (old == null ? "gave no result" : old.problem() != null ? old.problem() : "passed no test") + ", so whether tests that ran before the change do not run now is not known", was.name(), Cover.NONE));
         }
         return out;
     }

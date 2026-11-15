@@ -287,7 +287,7 @@ final class MandateTests {
         } finally {
             System.setErr(err);
         }
-        check("mandate: an unknown sub-command prints the usage and exits 3", code == 3 && sink.toString(StandardCharsets.UTF_8).contains("mandate check <ID>"));
+        check("mandate: an unknown sub-command prints the usage and exits 3", code == 3 && sink.toString(StandardCharsets.UTF_8).replace("\r\n", "\n").contains("mandate check <ID>"));
         check("mandate: check without an id is a usage error", Asserts.throwsUsage(() -> cli("mandate", "check")));
     }
 
@@ -313,7 +313,7 @@ final class MandateTests {
         } finally {
             System.setOut(out);
         }
-        return sink.toString(StandardCharsets.UTF_8);
+        return sink.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
     }
 
     private static void write(Path repo, String rel, String text) throws IOException {
