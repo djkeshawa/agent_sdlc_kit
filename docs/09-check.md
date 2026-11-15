@@ -44,7 +44,7 @@ Three parts:
 
 | Part | What it is |
 | --- | --- |
-| **Tests this change adds or edits** | Each such test is run after the change and before it. "Before" is the commit your branch started from, with only the change's test files laid over it. A test file the change edits is run a third time as it was, on that commit, to learn which tests it had. When the list of tests such a file reports changed (a name it did not report, one it no longer reports, or a name with more or fewer of its tests skipped), that file is run a fourth time as it was, on the code after the change |
+| **Tests this change adds or edits** | Each such test is run after the change and before it. "Before" is the commit your branch started from, with only the change's test files laid over it. A test file the change edits is run a third time as it was, on that commit, to learn which tests it had; so is a test file it only moved, at the path it had (see [Moved test files](#moved-test-files)). When the list of tests such a file reports changed (a name it did not report, one it no longer reports, or a name with more or fewer of its tests skipped), that file is run a fourth time as it was, on the code after the change |
 | **Integrity** | What the diff does to the things that check the change: tests switched off (the usual ways of writing a switch, linted from the lines the change adds to test files: a helper, not a guard, see Limits), test files deleted, secrets, changes to the build, the pipeline, dependencies and migrations. Nothing is run for it, so it is the early warning where no test runs |
 | **Not checked** | What this run did not look at, so silence is never read as approval |
 
@@ -61,6 +61,46 @@ Three parts:
 | Different results from run to run | Unstable. Not counted as sensitive. A test that passed only when the build ran it again (Surefire's `rerunFailingTestsCount`, Vitest's `retry`) is unstable. A test file whose runs say different things about how many tests that ran do not run now, or which tests are new or switched off, is unstable too, and so is an old test the change breaks that is gone or skipped in one run after the change and runs in another, or that fails as it was on the change in one run and not in another, and so is any test a run reported otherwise than another where no rule judged it (see below) |
 | Skipped | A test skipped in a file the change adds, or in a file none of whose tests ran before the change. Listed |
 | Already in the file, passes on both | A test of a name the file reported before the change, passing on both sides in every run. Not counted. The same for a test skipped under the same name before and after the change, in every run |
+| Test file moved | A test file the change deleted and added elsewhere, moved by the rule of the text check (see [Moved test files](#moved-test-files)), and run before the change by the runner that runs it now. Its tests are the tests it had: none is new, and one that passes on both sides is not counted. Said of the file, "moved from" the path it had, with how its lines are the same. Not counted |
+
+### Moved test files
+
+git sees a test file that is moved or renamed as one file deleted and one added. The check takes
+an added file for a deleted test file (named or placed like one, or under `paths.test`) moved by
+one rule, the text check's (Integrity), so that both
+parts of the tool agree on which pairs are moves: the added file has exactly the deleted file's
+lines; or, both being JVM sources (`.java`, `.kt`, `.groovy`, `.scala`), its lines but its
+`package` line (a class moved to another package); or its lines but its `package` and `import`
+lines. Nothing else is a move: no measure of how alike two files are, and not git's rename
+detection. Each added file is the move of one deleted file at most, and the other way round,
+exactly the same lines first, then the package line, then the imports, in the order of the
+paths: of two deleted copies and one added, one moved and the other is a deleted file; of one
+deleted and two added copies, one is the moved file and the other a new file. For the run the
+pair is a move only where the runner that runs the added file after the change runs the deleted
+one before it; otherwise the added file is judged as any file the change adds.
+
+A moved file is run as it was where it was, at its old path on the code before the change; the
+runs before and after the change run it at its new path, as any added file. What is judged:
+
+| What | How |
+| --- | --- |
+| New tests | None: its lines are the lines it had, so the change wrote no test in it. A test that passes on both sides is a test it had, not counted |
+| A failure after the change | Fails, as for any file |
+| Fails before, passes after | Sensitive, as for any file: the runs before and after the change both run it at its new path, so its tests are named alike there |
+| Tests that ran before the change do not run now | By the counts, as for an edited file: the file as it was passed R0 tests, after the change it runs R1; fewer is said and fails. An import the move changed can switch tests off. There is no fourth run (the old file has the same lines), so the line says that whether the move or the change of the code took them is not known. Where the file as it was gave no result, this could not be judged; where it reported a failure, fewer tests running could not be judged, as for an edited file |
+| Skipped | Listed, as in a file the change adds |
+| By names, between the file as it was and after the change | Nothing: the names a runner reports change with the path or the package (a Vitest suite is the file's path, a JUnit class name holds its package), so they are never compared across the move. Every difference of names between its run as it was and its runs after the change is answered by its "moved" line, not said as could not be judged; what differs from run to run is still said |
+
+Limits of this: a file moved and edited on the way, a test changed or one line more, is no move:
+the deleted file and the added one are judged as such (the deletion is a problem where the file
+is named like a test file or declares tests, and the added file's tests are new). For a script file (`.ts`, `.js`, ...) only exactly the same lines
+make a move: a spec moved to another folder with its relative import adjusted
+(`'./prod.js'` to `'../prod.js'`) is a deleted file and an added one. Where a JVM file's imports
+changed, its run judges how many of its tests run and whether they pass; an import that makes a
+test test less while it still passes (a stub in place of the class it tested) is not seen by any
+run, and the moved file's line says so. A test file moved to where no runner of the check runs it
+is no move for the run: the added file is listed under Not checked when it is named like a test
+file, and the text check still calls the deletion a move.
 
 ### Which tests are new, gone or switched off
 
@@ -455,8 +495,10 @@ Claude Code, in `.claude/settings.json`:
   said to have new tests that pass on both sides: the skipped case may stand for any number of
   tests. A test that passed before and is skipped now, alone or with its class, is still counted
   as a test that ran and does not run now.
-- A test file that is moved or renamed (git sees one file deleted and one added) has no earlier
-  version under its new name: all its tests count as new.
+- A test file that is moved or renamed (git sees one file deleted and one added) is judged as the
+  file it was only where its lines are the same (see [Moved test files](#moved-test-files));
+  moved and edited on the way, it has no earlier version under its new name: all its tests
+  count as new, and the deleted file is a test file deleted.
 - A test whose name changes from run to run (a time or a random value in it) looks new each time.
 - When one new test stops the others from compiling before the change, each changed test file
   is run on its own there, beside the other changed test files as the base has them (or without
@@ -684,9 +726,12 @@ Claude Code, in `.claude/settings.json`:
   added elsewhere with exactly the same lines is a note; so is a JVM test class moved to another
   package (only its package line differs). One whose import lines differ too is a note, "moved
   and its imports changed": an import can change what a name in it means, and the run of the
-  moved file is its judge. A line longer than 2,000 characters is never taken for a package or an
-  import line: the two files match only when such lines are the same as written. One edited
-  otherwise on the way is a problem. Each of these readings walks a line once, whatever it holds.
+  moved file is its judge (see [Moved test files](#moved-test-files): its counts and its failures,
+  not what an import makes a test test). A line longer than 2,000 characters is never taken for a
+  package or an import line: the two files match only when such lines are the same as written.
+  One edited otherwise on the way is a problem. Each added file is the move of one deleted file at
+  most, and the other way round: of two deleted copies and one added, the second is a test file
+  deleted. Each of these readings walks a line once, whatever it holds.
 - "Fewer assertions" is a note and a plain count: the calls that look like assertions on the
   lines an edit of a Java or script test file removes, against those on the lines it adds, each
   line read in pieces of 2,000 characters.

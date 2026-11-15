@@ -132,6 +132,15 @@ another under its own name, in a file whose list of tests stayed the same, is no
 limits of
 [sdlc check](09-check.md#limits)).
 
+A test file the change only moved (deleted, and added elsewhere with the same lines, or for a
+JVM class the same but for its `package` and `import` lines: see
+[Moved test files](09-check.md#moved-test-files)) holds the tests it had: none of them is new,
+and none is removed. Its detail line says it moved and from where; it counts toward none of the
+numbers of the line. Its run as it was, at its old path, is compared with it by how many of its
+tests run, so a move after which fewer tests run, or a test fails, is `violated` as for any file;
+a pure move is not. A test file moved and edited on the way is a deleted file and an added one,
+whose tests are new.
+
 The command fails (exit code 1) for `OUTSIDE` or a `violated` line. `AMENDED` and `unknown` do
 not fail it; they are there for you to read.
 

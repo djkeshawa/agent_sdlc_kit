@@ -31,7 +31,10 @@ def _vitest_checks(build, mods, work):
                             "-c", "core.hooksPath=/dev/null", *a], cwd=d, capture_output=True, text=True, env=env)
         assert r.returncode == 0, r.stderr
 
+    last = [""]  # the whole output of the last shape, Integrity and all
+
     def shape(name, base, change, cfg=""):
+        """change: per file its text after the change, or None for a file the change deletes."""
         d = work / name
         if d.exists():
             shutil.rmtree(d)
@@ -41,15 +44,21 @@ def _vitest_checks(build, mods, work):
         os.symlink(mods, d / "node_modules")
         (d / "vitest.config.js").write_text(config % cfg)
         for f, t in base.items():
+            (d / f).parent.mkdir(parents=True, exist_ok=True)
             (d / f).write_text(t, encoding="utf-8", errors="surrogatepass")
         git(d, "init", "-q", "-b", "main")
         git(d, "add", ".")
         git(d, "commit", "-qm", "base")
         for f, t in change.items():
+            if t is None:
+                (d / f).unlink()
+                continue
+            (d / f).parent.mkdir(parents=True, exist_ok=True)
             (d / f).write_text(t, encoding="utf-8", errors="surrogatepass")
         r = subprocess.run(["java", "-cp", str(build), "sdlc.Main", "check", "--base", "main", "--runs", "2"], cwd=d, capture_output=True, text=True,
                            env=env, timeout=900)
         out = r.stdout + r.stderr
+        last[0] = out
         body = out[out.find("Tests this change adds or edits"):out.find("Integrity")].rstrip()
         return r.returncode, body
 
@@ -130,6 +139,24 @@ def _vitest_checks(build, mods, work):
                        {"prod.js": prod1, "app.test.js": imp + "test('kept', () => expect(1).toBe(1));\ntest('amp &\\uDC00x', () => expect(1).toBe(1));\n" + added})
     check("real vitest: a title that makes vitest's report not XML is said, not passed in silence",
           "could not be judged" in body and "cannot be read" in body, body)
+
+    # 12. a spec file moved to another folder, its lines the same (its import still finds the code): Vitest names its suite by its path, so every
+    # name changed; its tests are the tests it had, judged by their counts, and the move passes
+    spec = "import {test,expect} from 'vitest'; import {compute} from '../prod.js';\ntest('kept', () => expect(compute()).toBe(1));\ntest('also', () => expect(2).toBe(2));\n"
+    code, body = shape("moved", {"prod.js": prod0, "a/app.test.js": spec}, {"a/app.test.js": None, "b/app.test.js": spec})
+    check("real vitest: a spec file moved to another folder with the same lines is a moved file: exit 0, nothing new, nothing lost, nothing that could not be judged",
+          code == 0 and "1 test file moved (not counted)" in body and "moved from a/app.test.js (its lines are the same)" in body
+          and "2 tests that were already in the edited or moved files pass before and after" in body and "could not be judged" not in body
+          and "not test the change" not in body and "do not run now" not in body and "does not run now" not in body and "from run to run" not in body
+          and "note     test file moved: a/app.test.js  the same file is now at b/app.test.js" in last[0], last[0])
+
+    # 13. moved one folder deeper with its relative import adjusted: the import line is an edit, and for a script file only the exact lines make a move.
+    # A deleted test file (a problem) and an added one whose tests are new and pass on both sides, as before the rule for moves
+    flat = spec.replace("'../prod.js'", "'./prod.js'")
+    code, body = shape("moved-reimported", {"prod.js": prod0, "app.test.js": flat}, {"app.test.js": None, "a/app.test.js": spec})
+    check("real vitest: a spec file moved with its relative import adjusted is a deleted file and an added one: the deletion is a problem and its tests are new",
+          code == 1 and "moved" not in body and "2 new tests pass before and after, so they do not test the change" in body
+          and "PROBLEM  test file deleted: app.test.js" in last[0], last[0])
 
 
 def _main_in_flow():
