@@ -1,3 +1,10 @@
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # flow.py runs this file inside its own namespace (exec), so these names are flow.py's. They are
+    # named here, one by one, so that the lint knows them and still reports any other undefined name.
+    from flow import PORT, PROJ, TEMPLATE, WORK, admin, agent_write, bash, check, commit, git, hook, json, sdlc, state, write  # noqa: F401
+
 admin("/__gh/commits", {"commits": [
     {"repo": "acme/payments-service", "sha": "a1", "message": "feat(PAY-100): refund endpoint"},
     {"repo": "acme/orders-service", "sha": "b1", "message": "feat(PAY-101): show refund status (carries a sub-task's key)"},

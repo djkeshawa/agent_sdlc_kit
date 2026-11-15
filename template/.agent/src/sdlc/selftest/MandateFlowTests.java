@@ -253,6 +253,31 @@ final class MandateFlowTests {
         check("mandate: with only production code changed, a test that fails on the base is seen to fail before the change",
                 prodOnly.contains("violated  what must stay true passes before and after: 0 of 1") && prodOnly.contains("fails before the change"));
 
+        // the folder of mandates is itself a link to a folder outside the repository: the file in it is a plain file, reached through the link
+        Path outsideDir = Files.createTempDirectory("sdlc-elsewhere-dir"), mandates = repo.resolve("docs/mandates"), kept = repo.resolve("docs/mandates.kept");
+        try {
+            Files.writeString(outsideDir.resolve("away.json"), Files.readString(mandates.resolve("prodonly.json")).replace("prodonly", "away"));
+            Files.move(mandates, kept);
+            try {
+                Files.createSymbolicLink(mandates, outsideDir);
+                String why = "";
+                try {
+                    Mandate.load(repo, "away");
+                } catch (sdlc.core.UsageException e) {
+                    why = e.getMessage();
+                }
+                check("mandate: a mandate reached through a linked folder that leaves the repository is refused", why.contains("is reached through a link that leaves the repository"));
+            } finally {
+                Files.deleteIfExists(mandates);
+                Files.move(kept, mandates);
+            }
+        } catch (IOException | UnsupportedOperationException e) {
+            if (Files.exists(kept) && !Files.exists(mandates)) Files.move(kept, mandates);
+        } finally {
+            Files.deleteIfExists(outsideDir.resolve("away.json"));
+            Files.deleteIfExists(outsideDir);
+        }
+
         Path outsideFile = Files.createTempFile("sdlc-elsewhere", ".json");
         try {
             Files.writeString(outsideFile, Files.readString(repo.resolve("docs/mandates/prodonly.json")).replace("prodonly", "linked"));

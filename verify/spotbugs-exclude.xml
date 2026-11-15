@@ -1,21 +1,34 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   What SpotBugs is not asked about, each with its reason. Everything else must be clean:
-  verify/run.sh fails on any finding that is left.
+  verify/run.sh fails on any finding that is left. An exclusion names a pattern, or a field of a
+  class: nothing is excluded for the whole tool but EI and the two notes on size and speed.
 -->
 <FindBugsFilter>
-  <!-- EI, EI2: a record or a method hands out a list or a map it holds. The tool is one process
-       that runs one command and ends; nothing else holds these objects. -->
+  <!-- EI, EI2: a record, a constructor or a method keeps or hands out a list, a map, an array or
+       another object it was given, without a copy. The tool's data objects are records that are
+       built once and read; copying each would change nothing a user sees. What is lost by this
+       exclusion: a caller that changes such an object changes the holder's too. The one place
+       where that would matter, the cache of test locks (core.Locks), hands out maps and lists
+       that cannot be changed. -->
   <Match><Bug code="EI,EI2"/></Match>
-  <!-- MS, USO: mutable static fields and static locks "open to malicious code in the same JVM".
-       The tool loads no code but its own; Ctx.root, Ctx.cfg and the like are set once per command. -->
-  <Match><Bug code="MS,USO"/></Match>
   <!-- HSC, WMI: size and speed notes (a long constant kept in several classes, keySet in a loop).
        No defect. -->
   <Match><Bug code="HSC,WMI"/></Match>
   <!-- A newline written as \n in a formatted text. The tool writes files that git stores, and the
        self tests write fixtures: both want \n on every platform, not the platform's line end. -->
   <Match><Bug pattern="VA_FORMAT_STRING_USES_NEWLINE"/></Match>
+
+  <!-- MS: a static field that is not final. Each one below is set once when a command starts, or
+       is a switch that only the self tests set; none is set from anything a repository holds.
+       Any other mutable static is a finding. -->
+  <Match><Class name="sdlc.core.Ctx"/><Field name="root"/><Bug code="MS"/></Match>
+  <Match><Class name="sdlc.core.Ctx"/><Field name="cfg"/><Bug code="MS"/></Match>
+  <Match><Class name="sdlc.core.Trusted"/><Field name="env"/><Bug code="MS"/></Match>
+  <Match><Class name="sdlc.util.Http"/><Field name="proxy"/><Bug code="MS"/></Match>
+  <Match><Class name="sdlc.util.Http"/><Field name="allowPlainHttp"/><Bug code="MS"/></Match>
+  <Match><Class name="sdlc.check.Change"/><Field name="wholeRead"/><Bug code="MS"/></Match>
+
   <!-- The self tests keep the last exit code in a static field and run on one thread. -->
   <Match><Package name="sdlc.selftest"/><Bug code="AT"/></Match>
 </FindBugsFilter>

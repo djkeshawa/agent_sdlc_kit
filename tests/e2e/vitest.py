@@ -3,6 +3,12 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # flow.py runs this file inside its own namespace (exec), so these names are flow.py's. They are
+    # named here, one by one, so that the lint knows them and still reports any other undefined name.
+    from flow import PROJ, SELFTEST_OUT, WORK  # noqa: F401
 
 if "RESULTS" not in globals():
     RESULTS = []
