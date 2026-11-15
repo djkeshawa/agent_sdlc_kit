@@ -40,6 +40,8 @@ import sdlc.check.JUnitXml.Status;
  *   error-varies WORD   passes where prod.txt holds the word; else throws, IllegalStateException in the first, third, ... run in that checkout and UnsupportedOperationException in the others
  *   retried-with WORD   passes; where prod.txt holds the word, only when the runner ran it again (vitest's retry: a test that fails at the first try on that code)
  *   retried-without WORD  passes; where prod.txt lacks the word, only when the runner ran it again
+ *   cut-later WORD      passes; where prod.txt holds the word, the whole file gives no result from the second run in that checkout on
+ *   cut-once WORD       passes; where prod.txt holds the word, the whole file gives no result in the first run in that checkout
  *   agrees FILE WORD    passes where prod.txt and the checkout's FILE both hold the word or both lack it, else fails by assertion: a test that
  *                       compares the code with what a helper in another test file expects
  * A line "retries not said" (no ": ") makes the file's runs not say which passes were at the first try,
@@ -137,8 +139,9 @@ final class SelfTestRunner implements Runner {
                 Files.createDirectories(built.getParent());
                 Files.writeString(built, "");
                 final String words = prod;
-                boolean late = call > 1 && Files.readAllLines(checkout.resolve(f)).stream().anyMatch(line -> line.matches(".*: timeout-later \\S+") && words.contains(line.substring(line.lastIndexOf(' ') + 1)));
-                if (late || Files.readAllLines(checkout.resolve(f)).stream().anyMatch(line -> line.endsWith(": timeout"))) {
+                boolean late = call > 1 && Files.readAllLines(checkout.resolve(f)).stream().anyMatch(line -> line.matches(".*: (timeout|cut)-later \\S+") && words.contains(line.substring(line.lastIndexOf(' ') + 1)));
+                boolean once = call == 1 && Files.readAllLines(checkout.resolve(f)).stream().anyMatch(line -> line.matches(".*: cut-once \\S+") && words.contains(line.substring(line.lastIndexOf(' ') + 1)));
+                if (late || once || Files.readAllLines(checkout.resolve(f)).stream().anyMatch(line -> line.endsWith(": timeout"))) {
                     out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
                     continue;
                 }
@@ -154,7 +157,7 @@ final class SelfTestRunner implements Runner {
                     if (how[0].equals("pass-without") && has) continue; // a row the code no longer gives where it holds the word
                     if (how[0].equals("gone-later") && has && call > 1) continue;
                     Status s = switch (how[0]) {
-                        case "pass", "pass-with", "pass-later", "pass-without", "gone-later", "pass-retried", "retried-with", "retried-without" -> Status.PASSED;
+                        case "pass", "pass-with", "pass-later", "pass-without", "gone-later", "pass-retried", "retried-with", "retried-without", "cut-later", "cut-once" -> Status.PASSED;
                         case "fail", "fail-retried" -> Status.FAILED;
                         case "error-retried" -> Status.ERRORED;
                         case "fails-later" -> has && call > 1 ? Status.FAILED : Status.PASSED;

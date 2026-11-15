@@ -328,6 +328,8 @@ final class CheckTests {
         write(repo, "checks/code.t", CODE);
         write(repo, "checks/guarded.t", GUARDED);
         write(repo, "checks/r4.t", R4);
+        write(repo, "checks/cut.t", CUT);
+        write(repo, "checks/cut2.t", CUT.replace("cut-later", "cut-once"));
         write(repo, "checks/pa.t", PA);
         write(repo, "checks/pb.t", PB);
         write(repo, ".gitignore", "ignored/\n");
@@ -1853,6 +1855,9 @@ final class CheckTests {
     /** A test file of the base with two tests; on the code of the fix the second passes only when the runner runs it again. */
     private static final String R4 = "a: pass\nb: retried-with fixed\n";
 
+    /** A test file of the base with a row the code of the fix no longer gives (b), and a test whose file, as it was, gives no result from the second run on the code of the fix. */
+    private static final String CUT = "a: pass\nb: pass-without fixed\nslow: cut-later fixed\n";
+
     /** A test file of the base whose guard compares the code with what a helper in another test file (pb.t) expects. */
     private static final String PA = "guard: agrees checks/pb.t two\nother: pass\n";
 
@@ -1860,8 +1865,9 @@ final class CheckTests {
     private static final String PB = "steady: pass\n";
 
     /**
-     * The fifth audit: retries a runner does not report (CR5-1), and a file run alone before the
-     * change whose companions changed (CR5-2).
+     * The fifth audit: retries a runner does not report (CR5-1), a file run alone before the change
+     * whose companions changed (CR5-2), a fourth run that gave no result beside one that did
+     * (CR5-3), and a test that passed only when run again in the fourth run (CR5-4).
      */
     private static void retriesAndCompanions(Path repo) throws IOException {
         // CR5-1: the guard replaced by a vacuous test beside a sensitive one. Its old version fails at the first try on the code of the fix and passes
@@ -1902,6 +1908,35 @@ final class CheckTests {
                 blindEdited.contains("nothing is said of the file but its failures after the change") && blindEdited.contains("b (as it was: passed; after the change: not reported)")
                 && !lostSaid(blindEdited) && code == 0);
         write(repo, "checks/r4.t", R4);
+
+        // CR5-4: a test deleted beside one that, as it was, passes on the code after the change only when run again: R4 counts what passed at the first
+        // try only, so the old file runs no more tests there than the new one: not a definite line
+        write(repo, "checks/r4.t", "a: pass\n");
+        String r4 = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("R4: a case that passes only when run again in the fourth run is not counted there, so a test deleted beside it is not said definite",
+                !lostSaid(r4) && r4.contains("      checks/r4.t  [self test]\n        the old tests could not all be judged on the code after the change") && code == 0);
+        write(repo, "checks/r4.t", R4);
+
+        // CR5-3: a row the code took and a test deleted; the fourth run counts as many as run now, and a repeat of it gives no result. Every usable
+        // fourth report counts: the one that shows R4 <= R1 keeps it from being definite, in either order, and the run that gave none is said apart
+        for (String path : new String[] {"checks/cut.t", "checks/cut2.t"}) {
+            String was = Files.readString(repo.resolve(path));
+            write(repo, path, "a: pass\nslow: pass\n");
+            String mixedR4 = report(Map.of("selftest-runner", "true", "runs", "2"));
+            check("R4: a usable fourth run that counts no more than run now keeps the line from being definite, whatever another run of it gave (" + path + ")",
+                    !lostSaid(mixedR4) && mixedR4.contains("      " + path + "  [self test]\n        the old tests could not") && code == 0);
+            check("R4: and the fourth run that gave no result is said apart (" + path + ")",
+                    mixedR4.contains("the file was reported differently from run to run, in ways " + NO_RULE + ": the file as it was, on the code after the change (one run gave no result "
+                            + "and another gave one)"));
+            write(repo, path, was);
+        }
+        // where every usable fourth report counts more than run now, the line is definite, and says the run that gave none
+        write(repo, "checks/cut.t", "a: pass\n");
+        String definite = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("R4: where every usable fourth run counts more than run now, the line is definite and says the run that gave no result",
+                definite.contains("at least 2 tests that ran before the change do not run now\n      checks/cut.t  [self test]\n") && definite.contains(". In 1 of the 2 runs of the file "
+                        + "as it was on the code after the change it timed out after 900 s; the count there is that of the other runs") && code == 1);
+        write(repo, "checks/cut.t", CUT);
 
         // CR5-2: tests that compare the code with a helper in another changed test file, while a new test file stops the others from compiling
         // before the change, so each is run alone there, beside the other changed test files as the base has them

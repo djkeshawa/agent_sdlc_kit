@@ -296,8 +296,10 @@ final class Witness {
      * whichever repeat made them: a run made is a run used, and a repeat added later cannot be
      * left out of a decision. A file run alone (see runAlone) is run so before the change in every
      * run, and those runs are its reports before the change; its one run alone after the change
-     * only rules out a failure before that comes from another changed test file, and is not kept
-     * with the reports after the change, which are of the files run together.
+     * only tells which of its tests pass after the change only beside the other changed test files
+     * (see read), and is not kept with the reports after the change, which are of the files run
+     * together. Nor is the fourth run of an old file alone (see fourth), which only tells whether
+     * an old test fails there without the other old files beside it.
      */
     private static final class Seen {
         private final Map<Side, Map<String, List<FileRun>>> runs = new EnumMap<>(Side.class);
@@ -825,9 +827,13 @@ final class Witness {
      * The checkout is the tree after the change with only these test files put back as the base
      * has them (Sides.oldTests, one checkout for each runner): production code, build files,
      * fixtures, helpers and the other changed test files stay as the change has them. The files of
-     * one runner that this run needs go back together, as they ran together in the third run. So a test renamed and not otherwise edited
-     * runs here exactly as its new name runs after the change, and cannot be accused for the
-     * rename. A test whose fixture the change rewrote or deleted may fail here because of that
+     * one runner that this run needs go back together, as they ran together in the third run. So an
+     * old test runs here beside the other old files of the run too: an old helper of another test
+     * file against the new code. Where more than one file went back, an old test that fails here
+     * and is not run after the change is run once more with its file alone put back, and it is
+     * said to be broken only where it fails there too (see companions). So a test renamed and not
+     * otherwise edited is judged by a run exactly as its new name runs after the change, and
+     * cannot be accused for the rename. A test whose fixture the change rewrote or deleted may fail here because of that
      * and not because of the production code; that is still a test that passed before, fails on
      * what the change wrote, and the report says no more than that. A test
      * file that does not compile or load here (the change renamed what it used), or gives no
@@ -1376,24 +1382,31 @@ final class Witness {
      * if the change of the tests took nothing, the file as the change has it runs every test the
      * file as it was runs, so r1 is at least r4 (a count, true under any naming). So:
      *
-     *   r4 > r1 in every pair of runs: the change of the tests itself runs fewer tests on the same
-     *   code. Said, definite, with r4 where it is below r0 (the code may have taken some too).
-     *   r4 <= r1 in some pair: on the code after the change the file as it was runs no more tests
-     *   than it does now, so the change of the code may have taken all of them: could not be
-     *   judged, with the counts. Where the fourth run's own line says what it did not report
-     *   (see untold), that line says it, and this rule adds no line of its own; what that line
-     *   does not name (a test switched off beside the rows the code took) is said by reconcile.
-     *   No usable fourth run (the old file does not compile or load on the code after the change,
-     *   timed out, or a failure stands in place of its tests: a case that failed or threw that is
-     *   not one of its old tests): definite, with a sentence that says the old file could not be
-     *   run on the changed code and so whether the change of the tests or of the code took them
+     * Every usable fourth report counts (r4 is the fewest of them); one that is not usable (the old
+     * file does not compile or load on the code after the change, timed out, or a failure stands
+     * in place of its tests: a case that failed or threw that is not one of its old tests) says
+     * nothing of r4, and never outweighs a usable one:
+     *
+     *   r4 > r1 in every pair of a usable fourth report and a run after the change: the change of
+     *   the tests itself runs fewer tests on the same code. Said, definite, with r4 where it is
+     *   below r0 (the code may have taken some too), and, where a fourth run beside them was not
+     *   usable, with in how many runs and why: the count is that of the others.
+     *   r4 <= r1 in some such pair, whatever the other fourth reports are: on the code after the
+     *   change the file as it was runs no more tests than it does now, so the change of the code
+     *   may have taken all of them: could not be judged, with the counts. Where the fourth run's
+     *   own line says what it did not report (see untold), that line says it, and this rule adds
+     *   no line of its own; what that line does not name (a test switched off beside the rows the
+     *   code took) is said by reconcile, and so is a fourth run that gave no result beside one
+     *   that gave one (unstable).
+     *   No usable fourth report at all: definite, with a sentence that says the old file could not
+     *   be run on the changed code and so whether the change of the tests or of the code took them
      *   is not known. This is a choice: that tests that ran do not run now is true either way,
      *   and a person must look; the alternative, calling it could not be judged, would let any
      *   change that also breaks the old file (a rename the tests had to follow) delete tests
      *   without failing.
      *
      * It must hold in every run: r0 - r1 > 0 for every pair (a run as it was with a run after the
-     * change), and r4 > r1 for every pair of a fourth run and a run after the change. Where fewer
+     * change), and r4 > r1 for every pair of a usable fourth run and a run after the change. Where fewer
      * tests run than passed as it was in some pairs only, it is unstable. Where a run as it was
      * holds a case that failed or threw, nothing is said definite: the owner's choice, as a file
      * that did not pass as it was may be under repair, and a failure there may stand for a fault
@@ -1439,24 +1452,30 @@ final class Witness {
         Set<String> oldKeys = new LinkedHashSet<>();
         for (FileRun r : okOld) for (JUnitXml.Case c : r.cases()) if (out(c) == Out.PASSED || out(c) == Out.RETRIED) oldKeys.add(key(c));
         List<FileRun> fourths = seen.of(Side.OLD_TESTS, f);
-        String why4 = null;
-        long r4 = Long.MAX_VALUE;
+        // every usable fourth report counts (r4: the fewest of them); an unusable one is a run that says nothing of r4, said apart (unusable),
+        // and why4 is said only where no fourth report is usable at all
+        String why4 = null, unusable = null;
+        long r4 = Long.MAX_VALUE, usable = 0, bad = 0;
         if (fourths.isEmpty()) {
             FileRun set = fourth.first().get(f);
             why4 = set != null && set.problem() != null ? set.problem() : "was not run, as the first runs lost no test";
         }
         for (FileRun r : fourths) {
-            if (!gave(r)) {
-                why4 = r == null ? "gave no result" : r.problem();
-                break;
+            String no = null;
+            if (!gave(r)) no = r == null ? "gave no result" : r.problem();
+            else {
+                List<String> stand = r.cases().stream().filter(c -> failed(out(c)) && !oldKeys.contains(key(c))).map(c -> shown(n.shown(), key(c))).toList();
+                if (!stand.isEmpty()) no = "reported a failure that is not one of its old tests (" + shortList(stand) + ")" + FAILURES;
             }
-            List<String> stand = r.cases().stream().filter(c -> failed(out(c)) && !oldKeys.contains(key(c))).map(c -> shown(n.shown(), key(c))).toList();
-            if (!stand.isEmpty()) {
-                why4 = "reported a failure that is not one of its old tests (" + shortList(stand) + ")" + FAILURES;
-                break;
+            if (no != null) {
+                bad++;
+                if (unusable == null) unusable = no;
+                continue;
             }
+            usable++;
             r4 = Math.min(r4, r.cases().stream().filter(c -> out(c) != Out.SKIPPED && out(c) != Out.RETRIED).count());
         }
+        if (!fourths.isEmpty() && usable == 0) why4 = unusable;
         String t4 = t > 0 ? ". At most " + t + (t == 1 ? " of them is an old test" : " of them are old tests") + " said above to be taken out of the way, so at least " + (total - t) + " more" : "";
         if (whole && total - t > 0) {
             String head = counts + ": at least " + total + (total == 1 ? " test that ran before the change does" : " tests that ran before the change do") + " not run now" + shows;
@@ -1474,6 +1493,9 @@ final class Witness {
                     .append(": the change of the code may have taken some of them, and on that code the change of the tests runs fewer tests than the file as it was");
             if (why4 != null) d.append(". The file as it was could not be run on the code after the change (there it ").append(why4)
                     .append("), so whether the change of the tests or of the code took them is not known; either way they ran before the change and do not run now");
+            // a fourth report that says nothing of r4 beside usable ones: said, as the count rests on the others
+            else if (bad > 0) d.append(". In ").append(bad).append(" of the ").append(fourths.size()).append(" runs of the file as it was on the code after the change it ").append(unusable)
+                    .append("; the count there is that of the other runs");
             d.append(t4);
             if (okAfter.stream().anyMatch(r -> failing(r.cases()))) d.append(". After the change the file reports failures, and a build that stops after a failure "
                     + "(Surefire's skipAfterFailureCount) skips the tests after it, so some of them may not run for that");
