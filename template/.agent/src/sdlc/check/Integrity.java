@@ -3,6 +3,7 @@ package sdlc.check;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -36,7 +37,8 @@ import sdlc.workflow.Checks;
  * A test file that moves shows as a deletion and an addition. It is reported as a NOTE ("test file
  * moved") when a file the change adds has the same text, or (a JVM class) the same text but its
  * package line; as a NOTE too when only its package and import lines differ; otherwise its
- * deletion is a PROBLEM (see deletedTestFiles).
+ * deletion is a PROBLEM (see deletedTestFiles). Which pairs are moves is one rule, which the run
+ * uses too (see moves).
  */
 public final class Integrity {
     private static final int MAX_DETAIL = 140;
@@ -2130,42 +2132,94 @@ public final class Integrity {
                 && !(imports && IMPORT_LINE.matcher(new Counted(l)).matches())).toList();
     }
 
+    /** How a moved file's lines are the same as the lines it had (see moves): all of them, all but its package line, or all but its package and import lines. */
+    enum How {
+        SAME("its lines are the same"), PACKAGE("its lines are the same but for its package line"), IMPORTS("its lines are the same but for its package and import lines");
+
+        final String words;
+
+        How(String words) {
+            this.words = words;
+        }
+    }
+
+    /** A deleted test file (from) found again in a file the change adds (to), and how its lines are the same (see moves). */
+    record Move(String from, String to, How how) {}
+
+    /**
+     * The one rule for a moved test file, for the text check (see deletedTestFiles) and the run
+     * (Witness): per deleted test file (built-in or by paths.test) that moved, the file the change
+     * adds that it moved to. A deleted file is read by the lines the change removes, an added one
+     * by the lines it adds, which are all of their lines. A deleted file moved to an added file
+     * that has exactly its lines (SAME), or, both of them JVM sources, its lines but its package
+     * line (PACKAGE: a class moved to another package), or its lines but its package and import
+     * lines (IMPORTS). Nothing else is a move: no measure of how alike two files are, and not
+     * git's rename detection. Each added file is the move of one deleted file at most, and each
+     * deleted file moves to one added file at most: of two deleted copies of one file and one
+     * added, one moved and the other is deleted; of one deleted and two added copies, one is the
+     * moved file and the other a new file. The pairs are made SAME first, then PACKAGE, then
+     * IMPORTS, each in the order of the paths, so the same change always gives the same pairs.
+     */
+    static Map<String, Move> moves(Change change) {
+        boolean any = false;
+        for (String path : change.paths("D")) any |= anyTestFile(path);
+        return any ? moves(change, change.addedLines(), change.removedLines()) : Map.of();
+    }
+
+    private static Map<String, Move> moves(Change change, Map<String, List<String>> added, Map<String, List<String>> removed) {
+        Map<String, Move> out = new LinkedHashMap<>();
+        List<String> gone = change.paths("D").stream().filter(Integrity::anyTestFile).toList();
+        if (gone.isEmpty()) return out;
+        Set<String> taken = new HashSet<>();
+        for (How how : How.values()) {
+            // each added file not yet taken is read once, by its lines as this way compares them: a deleted file finds its twin by a lookup, so
+            // many deleted and many added files cost their lines, not their product
+            Map<List<String>, java.util.ArrayDeque<String>> by = new HashMap<>();
+            for (String a : change.paths("A")) {
+                if (taken.contains(a) || how != How.SAME && !JVM.matcher(a).matches()) continue;
+                by.computeIfAbsent(compared(added.getOrDefault(a, List.of()), how), k -> new java.util.ArrayDeque<>()).add(a);
+            }
+            for (String d : gone) {
+                if (out.containsKey(d) || how != How.SAME && !JVM.matcher(d).matches()) continue;
+                java.util.ArrayDeque<String> twins = by.get(compared(removed.getOrDefault(d, List.of()), how));
+                if (twins == null || twins.isEmpty()) continue;
+                String a = twins.poll();
+                taken.add(a);
+                out.put(d, new Move(d, a, how));
+            }
+        }
+        return out;
+    }
+
+    /** A file's lines as a way of moves compares them. */
+    private static List<String> compared(List<String> lines, How how) {
+        return how == How.SAME ? lines : body(lines, how == How.IMPORTS);
+    }
+
     /**
      * A deleted test file (built-in or by paths.test) is read by the lines the change removes,
      * which are all of its lines. It moved when a file the change adds has exactly those lines,
      * or (a JVM source) those lines but its package line: a class moved to another package. A JVM
      * test file whose lines differ from an added one's only in its package and import lines moved
      * too, and its imports changed: a note, as an import can change what a name in it means, and
-     * the run of the moved file is its judge now (sdlc check runs it as a new file). It is a test
-     * file deleted when it is named like a test file or the code of a line declares tests; a note
-     * when only a comment or a string mentions a test; otherwise it is a support file (a fixture,
-     * a helper).
+     * the run of the moved file is its judge now. Which pairs are moves is one rule with the run
+     * (see moves). It is a test file deleted when it is named like a test file or the code of a
+     * line declares tests; a note when only a comment or a string mentions a test; otherwise it
+     * is a support file (a fixture, a helper).
      */
     private void deletedTestFiles() {
-        // each file the change adds is read once, by its lines and (a JVM source) by its body without its package and import
-        // lines: a deleted file finds its twin by a lookup, so many deleted and many added files cost their lines, not their product
-        Map<List<String>, String> byLines = new HashMap<>(), byPackage = new HashMap<>(), byImports = new HashMap<>();
         boolean any = false;
         for (String path : change.paths("D")) any |= anyTestFile(path);
         if (!any) return;
-        for (String a : change.paths("A")) {
-            List<String> lines = whole.getOrDefault(a, List.of());
-            byLines.putIfAbsent(lines, a);
-            if (!JVM.matcher(a).matches()) continue;
-            byPackage.putIfAbsent(body(lines, false), a);
-            byImports.putIfAbsent(body(lines, true), a);
-        }
+        Map<String, Move> moves = moves(change, whole, wholeRemoved);
         for (String path : change.paths("D")) {
             if (!anyTestFile(path)) continue;
             List<String> was = wholeRemoved.getOrDefault(path, List.of());
-            String twin = byLines.get(was);
-            boolean jvm = JVM.matcher(path).matches();
-            String repackaged = twin != null || !jvm ? null : byPackage.get(body(was, false));
-            String reimported = twin != null || repackaged != null || !jvm ? null : byImports.get(body(was, true));
-            String declared = declaresTests(path, was);
-            if (twin != null) note("test file moved", path, "the same file is now at " + twin);
-            else if (repackaged != null) note("test file moved", path, "the same file is now at " + repackaged + ", in another package");
-            else if (reimported != null) note("test file moved and its imports changed", path, "the same tests are now at " + reimported + ", with other imports: its run judges it");
+            Move m = moves.get(path);
+            String declared = m != null ? null : declaresTests(path, was);
+            if (m != null && m.how() == How.SAME) note("test file moved", path, "the same file is now at " + m.to());
+            else if (m != null && m.how() == How.PACKAGE) note("test file moved", path, "the same file is now at " + m.to() + ", in another package");
+            else if (m != null) note("test file moved and its imports changed", path, "the same tests are now at " + m.to() + ", with other imports: its run judges it");
             else if (testNamed(path) || "code".equals(declared)) problem("test file deleted", path, "the file is gone");
             else if ("unread".equals(declared)) note("test support file deleted", path, "a line of it is longer than " + LONGEST + " characters and was not read; no line that was read declares a test");
             else if ("text".equals(declared)) note("test support file deleted", path, "only a comment or a string in it mentions a test; no line of its code declares one");

@@ -272,6 +272,35 @@ final class IntegrityTests {
         check("integrity: a Java test file moved and edited in its body on the way is a test file deleted",
                 only(scan(repo), Level.PROBLEM, "test file deleted", "src/test/java/demo/CalcTest.java", "the file is gone"));
         reset(repo);
+        // one rule with the run (Integrity.moves): an added file is the move of one deleted file at most, and the other way round
+        write(repo, "web/copy.test.ts", SUM_TEST);
+        git(repo, "add", "-A");
+        git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a copy");
+        Files.delete(repo.resolve("web/sum.test.ts"));
+        Files.delete(repo.resolve("web/copy.test.ts"));
+        write(repo, "web/all/sum.test.ts", SUM_TEST);
+        List<Finding> twoGone = scan(repo);
+        check("integrity: of two deleted copies of a test file and one added, the first by path moved and the second is a test file deleted",
+                only(twoGone, Level.NOTE, "test file moved", "web/copy.test.ts", "the same file is now at web/all/sum.test.ts")
+                && only(twoGone, Level.PROBLEM, "test file deleted", "web/sum.test.ts", "the file is gone") && count(twoGone, "test file moved") == 1);
+        git(repo, "reset", "-q", "--hard", "HEAD~1");
+        reset(repo);
+        Files.delete(repo.resolve("web/sum.test.ts"));
+        write(repo, "web/a/sum.test.ts", SUM_TEST);
+        write(repo, "web/b/sum.test.ts", SUM_TEST);
+        List<Finding> twoAdded = scan(repo);
+        check("integrity: one deleted test file and two added copies of it: one move, said once, and nothing deleted",
+                only(twoAdded, Level.NOTE, "test file moved", "web/sum.test.ts", "the same file is now at web/a/sum.test.ts") && problems(twoAdded) == 0);
+        reset(repo);
+        // the exact lines first: a JVM class deleted in two packages, one added copy as the first was and one in a third package
+        Files.delete(repo.resolve("src/test/java/demo/CalcTest.java"));
+        write(repo, "src/test/java/demo/b/CalcTest.java", CALC_TEST.replace("package demo;", "package demo.calc;"));
+        write(repo, "src/test/java/demo/a/CalcTest.java", CALC_TEST);
+        List<Finding> tiers = scan(repo);
+        check("integrity: a deleted file pairs with the added file of exactly its lines before one that differs in its package line",
+                only(tiers, Level.NOTE, "test file moved", "src/test/java/demo/CalcTest.java", "the same file is now at src/test/java/demo/a/CalcTest.java") && problems(tiers) == 0
+                && !tiers.toString().contains("in another package"));
+        reset(repo);
 
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("void subtracts()", "void minus()"));
         check("integrity: a Java test renamed is not read from the source: nothing is said (its run judges it)", scan(repo).isEmpty());
