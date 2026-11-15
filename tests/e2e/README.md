@@ -21,6 +21,8 @@ temporary folder, then stops the mock.
 | `bin/gh` | a fake GitHub CLI: `pr create`, `pr view`, `pr checks`, `auth status` |
 | `flow.py` | the test itself: installs the template into a scratch repository and walks the flow |
 | `vitest.py` | `sdlc check` against real Vitest, run by `flow.py` in its namespace (below) |
+| `maven.py` | `sdlc check` against real Maven, Surefire and JUnit 4 and 5: `python3 tests/e2e/maven.py BUILD WORKDIR`. Not part of `run.py`; `sh verify/run.sh real` runs it |
+| `vitest-runtime/` | the pinned Vitest that `vitest.py` runs against (`npm ci` there; `verify/run.sh real` does it) |
 | `multi.py` | the multi-component checks (scoping eval, catalog, solution design, stories, contracts, locks, hold-outs), run by `flow.py` in its namespace |
 | `run.py` | starts and stops everything |
 

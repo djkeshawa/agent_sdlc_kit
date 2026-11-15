@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  What SpotBugs is not asked about, each with its reason. Everything else must be clean:
+  verify/run.sh fails on any finding that is left.
+-->
+<FindBugsFilter>
+  <!-- EI, EI2: a record or a method hands out a list or a map it holds. The tool is one process
+       that runs one command and ends; nothing else holds these objects. -->
+  <Match><Bug code="EI,EI2"/></Match>
+  <!-- MS, USO: mutable static fields and static locks "open to malicious code in the same JVM".
+       The tool loads no code but its own; Ctx.root, Ctx.cfg and the like are set once per command. -->
+  <Match><Bug code="MS,USO"/></Match>
+  <!-- HSC, WMI: size and speed notes (a long constant kept in several classes, keySet in a loop).
+       No defect. -->
+  <Match><Bug code="HSC,WMI"/></Match>
+  <!-- A newline written as \n in a formatted text. The tool writes files that git stores, and the
+       self tests write fixtures: both want \n on every platform, not the platform's line end. -->
+  <Match><Bug pattern="VA_FORMAT_STRING_USES_NEWLINE"/></Match>
+  <!-- The self tests keep the last exit code in a static field and run on one thread. -->
+  <Match><Package name="sdlc.selftest"/><Bug code="AT"/></Match>
+</FindBugsFilter>

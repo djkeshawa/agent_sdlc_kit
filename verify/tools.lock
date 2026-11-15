@@ -1,0 +1,10 @@
+# Tools used only to verify the kit. The kit that users install (template/) depends on none of them.
+# One tool per line: name, version, SHA-256 of the download, URL. verify/fetch.sh refuses a download whose SHA-256 differs.
+spotbugs 4.10.5 cce3244900cc215ccd9f5a8db29ed9468fc47824faf662f4fad005343d96007e https://github.com/spotbugs/spotbugs/releases/download/4.10.5/spotbugs-4.10.5.tgz
+jacoco-agent 0.8.16 37ae2f374ad77e85c59c6e5b46565226c3ac3cb460ac19de0bcb844ac2f43e33 https://repo1.maven.org/maven2/org/jacoco/org.jacoco.agent/0.8.16/org.jacoco.agent-0.8.16-runtime.jar
+jacoco-cli 0.8.16 1f2a806225623fbd9f53d1ee0e42a6975323de0adebe01c12fc464ed147d756a https://repo1.maven.org/maven2/org/jacoco/org.jacoco.cli/0.8.16/org.jacoco.cli-0.8.16-nodeps.jar
+shellcheck-linux-x86_64 0.11.0 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198 https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
+shellcheck-darwin-arm64 0.11.0 56affdd8de5527894dca6dc3d7e0a99a873b0f004d7aabc30ae407d3f48b0a79 https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.darwin.aarch64.tar.xz
+actionlint-linux-x86_64 1.7.12 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+actionlint-darwin-arm64 1.7.12 aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_darwin_arm64.tar.gz
+ruff 0.14.10 - pip:ruff==0.14.10

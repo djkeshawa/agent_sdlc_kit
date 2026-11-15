@@ -83,6 +83,7 @@ agent_sdlc_kit/
 | 8 | [Features across several components and repositories](docs/08-multi-component.md) - scoping eval, catalog, solution design, contracts, locked and hold-out tests | when you need it |
 | 9 | [`sdlc check`](docs/09-check.md) - the change in front of you, with nothing to configure: do its own tests notice it? | 10 min |
 | 10 | [Mandates](docs/10-mandate.md) - say what a change may do, approve it without the diff, check the change against it | 10 min |
+| 11 | [How the kit itself is verified](docs/11-verification.md) - for people who change the kit: the layers of checks and `sh verify/run.sh` | 5 min |
 
 ## Quick start (if you already know the tools)
 
