@@ -142,8 +142,10 @@ A fourth run that gives no usable report (the old file does not compile or load 
 the change, it times out, or a failure stands in place of its tests) says nothing of R4: beside
 usable ones it is said apart, in the definite line (in how many runs, and why) or from run to run.
 Where no fourth run gives a usable report at all, the line fails the check all the same and says
-that the file as it was could not be run on the code after the change, so whether the change of the
-tests or of the code took them is not known. This is a choice: that tests that ran do not run now
+that the file as it was gave no report usable for this count on the code after the change, with
+why (it did not compile or load, it timed out, or it reported a failure that is not one of its old
+tests, such as a tear-down that failed after the tests ran), so whether the change of the tests or
+of the code took them is not known. This is a choice: that tests that ran do not run now
 is true either way, and a person must look.
 
 | In the file | Result |

@@ -502,6 +502,7 @@ final class CheckTests {
         write(repo, "checks/judged.t", JUDGED);
         write(repo, "checks/legacy.t", LEGACY);
         write(repo, "checks/era.t", ERA);
+        write(repo, "checks/hook.t", HOOK);
         write(repo, "checks/grow.t", GROW);
         write(repo, "checks/shy.t", SHY);
         write(repo, "checks/named.t", NAMED);
@@ -1730,10 +1731,21 @@ final class CheckTests {
         String unrun = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("lost: a test deleted where the file as it was cannot run on the code after the change is still a test lost, with why its cause is not known",
                 unrun.contains(L1 + "      checks/era.t  [self test]\n        the file as it was passed 2 of its tests, and after the change it runs 1: at least 1 test that ran "
-                        + "before the change does not run now (no longer reported: lasting). The file as it was could not be run on the code after the change (there it does not "
-                        + "compile), so whether the change of the tests or of the code took them is not known; either way they ran before the change and do not run now\n")
+                        + "before the change does not run now (no longer reported: lasting). The file as it was gave no report usable for this count on the code after the change "
+                        + "(there it does not compile), so whether the change of the tests or of the code took them is not known; either way they ran before the change and do not "
+                        + "run now\n")
                 && code == 1);
         write(repo, "checks/era.t", ERA);
+        // CR6-2: as it was, on the code after the change, the file ran and passed its old tests, then a tear-down failed (a case of its own): that run did
+        // run, and its report is not usable for the count. Said so, with the reason, not as a file that could not be run
+        write(repo, "checks/hook.t", "a: pass\n");
+        String torn = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("lost: a fourth run whose report is not usable for the count (a tear-down failed after the tests ran) is said so, with why, not as a run that could not be made",
+                torn.contains(L1 + "      checks/hook.t  [self test]\n        the file as it was passed 2 of its tests, and after the change it runs 1: at least 1 test that ran "
+                        + "before the change does not run now (no longer reported: b). The file as it was gave no report usable for this count on the code after the change (there it "
+                        + "reported a failure that is not one of its old tests (teardown)")
+                && !torn.contains("could not be run on the code after the change") && code == 1);
+        write(repo, "checks/hook.t", HOOK);
         write(repo, "prod.txt", "v1\nfixed\n");
     }
 
@@ -2215,6 +2227,9 @@ final class CheckTests {
 
     /** A test file of the base that, as it is there, compiles only on the base's code. */
     private static final String ERA = "era: compile-needs v1\nlasting: pass\n";
+
+    /** A test file of the base whose tear-down fails once the code holds "fixed", after its tests ran (a failing afterAll in vitest). */
+    private static final String HOOK = "a: pass\nb: pass\nteardown: tears-down-with fixed\n";
 
     /** A test file of the base with a parameterized test whose first row the fix breaks, that compiles only on the base's code. */
     private static final String GROW = "rows(int)[1]: fails-with fixed\nrows(int)[2]: pass\nloads: compile-needs v1\n";

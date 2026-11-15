@@ -32,6 +32,8 @@ import sdlc.check.JUnitXml.Status;
  *   pass-without WORD   passes where prod.txt lacks the word; where it holds it, the case does not exist (a row the code no longer gives once it has the word)
  *   gone-later WORD     where it holds the word, passes in the first run in that checkout and is not reported in later ones; else passes
  *   fails-later WORD    where it holds the word, passes in the first run in that checkout and fails by assertion in later ones; else passes
+ *   tears-down-with WORD  where prod.txt holds the word, a failed case of its own (a tear-down that fails after the tests ran, as vitest
+ *                       reports a failing afterAll); where it lacks it, the case does not exist
  *   pass-retried        failed, and passed when the build ran it again (Surefire's flakyFailure)
  *   fail-retried        failed by assertion every time the build ran it (failure, then rerunFailure)
  *   error-retried       threw every time the build ran it (error, then rerunError), as a set-up that fails does
@@ -156,9 +158,10 @@ final class SelfTestRunner implements Runner {
                     if (how[0].equals("pass-with") && !has) continue; // a row the code gives only where it holds the word
                     if (how[0].equals("pass-without") && has) continue; // a row the code no longer gives where it holds the word
                     if (how[0].equals("gone-later") && has && call > 1) continue;
+                    if (how[0].equals("tears-down-with") && !has) continue;
                     Status s = switch (how[0]) {
                         case "pass", "pass-with", "pass-later", "pass-without", "gone-later", "pass-retried", "retried-with", "retried-without", "cut-later", "cut-once" -> Status.PASSED;
-                        case "fail", "fail-retried" -> Status.FAILED;
+                        case "fail", "fail-retried", "tears-down-with" -> Status.FAILED;
                         case "error-retried" -> Status.ERRORED;
                         case "fails-later" -> has && call > 1 ? Status.FAILED : Status.PASSED;
                         case "skip", "skip-without", "skip-later" -> Status.SKIPPED;

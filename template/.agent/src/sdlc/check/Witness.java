@@ -1491,7 +1491,7 @@ final class Witness {
             if (maxR0 - minR1 > total) d.append(", and up to ").append(maxR0 - minR1).append(" in some runs: what the file reports is not the same in every run");
             if (why4 == null && r4 < maxR0) d.append(". As it was, on the code after the change, the file runs ").append(r4).append(", and as the change has it ").append(maxR1)
                     .append(": the change of the code may have taken some of them, and on that code the change of the tests runs fewer tests than the file as it was");
-            if (why4 != null) d.append(". The file as it was could not be run on the code after the change (there it ").append(why4)
+            if (why4 != null) d.append(". The file as it was gave no report usable for this count on the code after the change (there it ").append(why4)
                     .append("), so whether the change of the tests or of the code took them is not known; either way they ran before the change and do not run now");
             // a fourth report that says nothing of r4 beside usable ones: said, as the count rests on the others
             else if (bad > 0) d.append(". In ").append(bad).append(" of the ").append(fourths.size()).append(" runs of the file as it was on the code after the change it ").append(unusable)
