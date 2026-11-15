@@ -378,7 +378,8 @@ public record Mandate(String version, String id, String intent, List<Truth> must
     }
 
     private static boolean control(String s) {
-        return s.codePoints().anyMatch(Mandate::unprintable) || s.chars().anyMatch(c -> Character.isSurrogate((char) c) && !paired(s));
+        // one pass for the pairs: a text without a surrogate is paired, so this is the same as asking it of each surrogate, without reading the text again for each
+        return s.codePoints().anyMatch(Mandate::unprintable) || !paired(s);
     }
 
     /**

@@ -160,6 +160,16 @@ final class MandateTests {
                 && sdlc.check.TestNames.plain("ATest.java", "refunds(int)[2]").equals("refunds") && sdlc.check.TestNames.plain("ATest.java", "rows{1}").equals("rows"));
         check("mandate: such characters in other text (a file name, a name from git) are shown as a question mark",
                 sdlc.mandate.MandateCard.safe("a\u202eb\u200bc\u001bd\ud83d\ude00").equals("a?b?c?d\ud83d\ude00"));
+        rule("mandate: half of a surrogate pair alone is refused", EXAMPLE.replace("returns an empty list", "returns an \\ud83d empty list"), "intent has a control character");
+        rule("mandate: so is the other half alone, in a key", EXAMPLE.replace("\"scope\": {", "\"scope\": { \"apis\": {\"x\\ude00\": \"y\"},"), "a key under scope.apis has a control character");
+        // the pairs of a text are read once: a mandate of the largest size, all of it emoji, is read in well under a second
+        String emoji = "😀".repeat(62_000);
+        long t0 = System.nanoTime();
+        String big = message("x", EXAMPLE.replace("fix-search", "x").replace("\"scope\": {", "\"scope\": { \"apis\": {\"openapi\": \"" + emoji + "\"},"));
+        long ms = (System.nanoTime() - t0) / 1_000_000;
+        check("mandate: a mandate of 250 KB of emoji is valid and read in under a second", big.equals("(parsed)") && ms < 1000
+                && EXAMPLE.length() + emoji.getBytes(StandardCharsets.UTF_8).length > 240 * 1024);
+        if (!big.equals("(parsed)") || ms >= 1000) System.out.println("    got: " + big.substring(0, Math.min(200, big.length())) + " in " + ms + " ms");
         rule("mandate: a path with a sign that is not a wildcard of the format is refused", EXAMPLE.replace("src/main/java/com/acme/search/**", "src/main/{java,kotlin}/**"), "only * and ** are");
         rule("mandate: a duplicate key is refused and named", EXAMPLE.replace("\"intent\":", "\"id\": \"fix-search\", \"intent\":"), "the key \"id\" appears twice");
         rule("mandate: so is a file that is not one object", "[]", "must hold one JSON object");
