@@ -20,6 +20,7 @@ temporary folder, then stops the mock.
 | `mock.py` | Jira Cloud, Confluence Cloud, Jenkins and SonarQube in one small HTTP server, plus a PR store for the fake `gh`. Test control is under `/__admin/*` |
 | `bin/gh` | a fake GitHub CLI: `pr create`, `pr view`, `pr checks`, `auth status` |
 | `flow.py` | the test itself: installs the template into a scratch repository and walks the flow |
+| `vitest.py` | `sdlc check` against real Vitest, run by `flow.py` in its namespace (below) |
 | `multi.py` | the multi-component checks (scoping eval, catalog, solution design, stories, contracts, locks, hold-outs), run by `flow.py` in its namespace |
 | `run.py` | starts and stops everything |
 
@@ -35,6 +36,23 @@ It also replays the spellings that once got past the guard, and must stay refuse
 escaped and decoded secret paths, `-DskipTests` through a wrapper shell or `MAVEN_OPTS`, git
 settings that run a program, `gh pr new`, `gh pr review -a`, `cd` followed by a relative path,
 a symbolic link in the drafts folder, patches and archives, and scripts nobody reviewed.
+
+## Real Vitest
+
+The self test runs the check's own reporter for Vitest under `node` when `node` is on the PATH
+(it says in one line when it is not); the flow then checks that it ran. `vitest.py` runs `sdlc
+check` against real Vitest on throw-away repositories (retries, a guard replaced, ordinary work,
+titles with line breaks, tabs and the characters XML changes) only where it is told where Vitest
+is installed, as the test installs nothing from the network:
+
+```bash
+SDLC_E2E_VITEST_NODE_MODULES=/path/to/node_modules python3 tests/e2e/run.py
+```
+
+The folder is linked into each repository, never changed by the test (Vitest writes its own cache
+there, under `.vite`). Without the variable the flow prints one `SKIP` line for these checks. By
+hand: `python3 -I tests/e2e/vitest.py BUILD NODE_MODULES WORKDIR`, with BUILD a copy of a self-test
+copy's `.agent/.build` outside any `.agent` folder.
 
 ## When to run it
 

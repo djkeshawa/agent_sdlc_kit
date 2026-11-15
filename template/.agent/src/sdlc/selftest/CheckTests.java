@@ -161,6 +161,7 @@ final class CheckTests {
                 sdlc.check.Runners.vitestReport(xml, retries, "src/refund.test.ts").equals("ERRORED refunds > rejects; PASSED refunds > accepts"));
         vitestRetries(repo, xml, retries, none);
         vitestNames(xml, retries, none);
+        vitestReporterRuns(repo);
         Files.delete(xml);
         Files.delete(retries);
 
@@ -405,6 +406,76 @@ final class CheckTests {
         Files.writeString(xml, "<testsuites><testsuite name=\"dir\\app.test.js\"><testcase classname=\"dir\\app.test.js\" name=\"t\"/></testsuite></testsuites>");
         String other = sdlc.check.Runners.vitestReport(xml, none, "dir/app.test.js");
         check("vitest names: a report of dir\\app.test.js is of dir/app.test.js on Windows only", Proc.WINDOWS ? other.startsWith("PASSED t") : other.startsWith("no result"));
+    }
+
+    /**
+     * CR6-3: the check's reporter itself, run under node against task objects of the shape Vitest
+     * 3.2.4 hands it (a file, nested groups, retries, a skipped and a to-do test, a test without a
+     * result after a bail, names with line breaks and the characters XML changes), through both of
+     * its entry points. What it writes is read beside the JUnit report Vitest 3.2.4 wrote for the
+     * same tests. Where node is not on the PATH this is said in one line and not counted.
+     */
+    private static void vitestReporterRuns(Path repo) throws IOException {
+        if (Proc.run(repo, "node", "--version").code() == 127) {
+            System.out.println("(the check's reporter for vitest was not run: node is not on the PATH)");
+            return;
+        }
+        Path dir = Files.createTempDirectory("sdlc-reporter");
+        try {
+            Files.writeString(dir.resolve("retries.mjs"), sdlc.check.Runners.vitestReporter());
+            Files.writeString(dir.resolve("drive.mjs"), """
+                    // the reporter as vitest calls it: onInit, then onFinished (vitest 3) or onTestRunEnd (later versions; vitest 3.2 calls both)
+                    import Reporter from './retries.mjs';
+                    import { join } from 'node:path';
+                    const root = process.cwd();
+                    const test = (name, mode, retry, result) => ({ type: 'test', name, mode, retry, result });
+                    const suite = (name, tasks) => ({ type: 'suite', name, mode: 'run', result: { state: 'pass' }, tasks });
+                    const file = { type: 'suite', name: 'app.test.js', filepath: join(root, 'app.test.js'), mode: 'run', result: { state: 'fail' }, tasks: [
+                      test('guard', 'run', 2, { state: 'pass', retryCount: 1 }),
+                      suite('group', [suite('inner\\nline', [test('plain\\ttab', 'run', undefined, { state: 'pass', retryCount: 0 })])]),
+                      test('off', 'skip', undefined, undefined),
+                      test('later', 'todo', undefined, undefined),
+                      test('broken', 'run', 1, { state: 'fail', retryCount: 1 }),
+                      test('<&>"\\' \\x1b[1m x\\0y \\uD800 a\\uDC00b \\u{1F600} \\u{10FFFE}z \\r\\n', 'run', undefined, { state: 'pass', retryCount: 0 }),
+                      test('handles a\\nb', 'run', undefined, { state: 'pass', retryCount: 0 }),
+                      test('bailed', 'run', undefined, undefined),
+                    ] };
+                    const other = { type: 'suite', name: 'dir/b.test.js', filepath: join(root, 'dir', 'b.test.js'), tasks: [test('b', 'run', 3, { state: 'pass', retryCount: 2 })] };
+                    const r = new Reporter();
+                    r.onInit({ config: { root } });
+                    if (process.argv[2] === 'finished') r.onFinished([file, other]); else r.onTestRunEnd([{ task: file }, { task: other }]);
+                    """);
+            // what Vitest 3.2.4 wrote for these tests (its failure's text shortened); the name of a case holds a line feed, a tab, a CR LF
+            Path xml = dir.resolve("report.xml");
+            Files.writeString(xml, "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n<testsuites name=\"vitest tests\" tests=\"8\" failures=\"1\" errors=\"0\" time=\"0.008\">\n"
+                    + "<testsuite name=\"app.test.js\" tests=\"8\" failures=\"1\" errors=\"0\" skipped=\"2\" time=\"0.008\">\n"
+                    + "<testcase classname=\"app.test.js\" name=\"guard\" time=\"0.006\">\n</testcase>\n"
+                    + "<testcase classname=\"app.test.js\" name=\"group &gt; inner\nline &gt; plain\ttab\" time=\"0.0001\">\n</testcase>\n"
+                    + "<testcase classname=\"app.test.js\" name=\"off\" time=\"0\">\n<skipped/>\n</testcase>\n"
+                    + "<testcase classname=\"app.test.js\" name=\"later\" time=\"0\">\n<skipped/>\n</testcase>\n"
+                    + "<testcase classname=\"app.test.js\" name=\"broken\" time=\"0.0009\">\n<failure message=\"expected 1 to be 2 // Object.is equality\" type=\"AssertionError\">\nAssertionError\n</failure>\n</testcase>\n"
+                    + "<testcase classname=\"app.test.js\" name=\"&lt;&amp;&gt;&quot;&apos; [1m xy  b \uD83D\uDE00  \r\n\" time=\"0.0001\">\n</testcase>\n"
+                    + "<testcase classname=\"app.test.js\" name=\"handles a\nb\" time=\"0.0001\">\n</testcase>\n"
+                    + "<testcase classname=\"app.test.js\" name=\"bailed\" time=\"0\">\n</testcase>\n"
+                    + "</testsuite>\n<testsuite name=\"dir/b.test.js\" tests=\"1\"><testcase classname=\"dir/b.test.js\" name=\"b\"/></testsuite>\n</testsuites>\n");
+            String want = "PASSED guard (run again); PASSED group > inner line > plain tab; SKIPPED off; SKIPPED later; FAILED broken (run again); PASSED <&>\"' [1m xy  b \uD83D\uDE00   ; "
+                    + "PASSED handles a b; SKIPPED bailed";
+            String[] written = new String[2];
+            for (int i = 0; i < 2; i++) {
+                Path json = dir.resolve("retries-" + i + ".json");
+                Proc p = Proc.runWithEnv(dir, Map.of("SDLC_VITEST_RETRIES", json.toString()), null, 60, "node", "drive.mjs", i == 0 ? "finished" : "run-end");
+                String got = sdlc.check.Runners.vitestReport(xml, json, "app.test.js");
+                boolean ok = p.ok() && got.equals(want) && sdlc.check.Runners.vitestReport(xml, json, "dir/b.test.js").equals("PASSED b (run again)");
+                check("vitest reporter, run under node (" + (i == 0 ? "onFinished" : "onTestRunEnd") + "): every test is named as the JUnit report gives it, with vitest's own retries", ok);
+                if (!ok) System.out.println("    node exit " + p.code() + " " + (p.out() + p.err()).strip() + "\n    got: " + got);
+                written[i] = Files.isRegularFile(json) ? Files.readString(json) : "";
+            }
+            check("vitest reporter: both of its entry points write the same account", !written[0].isEmpty() && written[0].equals(written[1]));
+        } finally {
+            try (Stream<Path> s = Files.walk(dir)) {
+                for (Path p : s.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(p);
+            }
+        }
     }
 
     private static void reactor(Path repo) throws IOException {

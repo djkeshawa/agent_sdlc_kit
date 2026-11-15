@@ -532,8 +532,12 @@ gen = json.loads((PROJ / ".claude/settings.json").read_text())
 check("Claude settings wire PreToolUse to the guard", "PreToolUse" in json.dumps(gen) and "hook pre-tool-use" in json.dumps(gen))
 code, out = sdlc("selftest")
 check("selftest in the project", code == 0 and "SELFTEST PASSED" in out, out[-400:])
+SELFTEST_OUT = out
 
-# =============================== 7. multi-component delivery (tests/e2e/multi.py) ===============================
+# =============================== 7. sdlc check against real Vitest (tests/e2e/vitest.py) ===============================
+exec((HERE / "vitest.py").read_text())
+
+# =============================== 8. multi-component delivery (tests/e2e/multi.py) ===============================
 exec((HERE / "multi.py").read_text())
 
 passed = sum(1 for _, ok in RESULTS if ok)
