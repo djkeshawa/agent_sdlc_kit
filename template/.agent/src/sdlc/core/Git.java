@@ -9,11 +9,9 @@ import java.util.Set;
 
 import sdlc.util.Proc;
 
-/** Read-only git helpers. */
 public final class Git {
     private Git() {}
 
-    /** The current branch; in CI (detached HEAD) the PR's source branch from Jenkins or GitHub Actions. */
     public static String branch() {
         return branch(Ctx.root);
     }
@@ -42,12 +40,10 @@ public final class Git {
         return Proc.run(Ctx.root, "git", "rev-parse", "--verify", "-q", ref).ok();
     }
 
-    /** origin/BRANCH of the base branch: named by the CI event in a pull request build, else by delivery.baseBranch. */
     public static String base() {
         return Trusted.baseRef();
     }
 
-    /** Files changed but not committed (tracked and untracked, not ignored). */
     public static List<String> dirtyFiles() {
         List<String> out = new ArrayList<>();
         for (String l : Proc.run(Ctx.root, "git", "status", "--porcelain", "--untracked-files=all").out().split("\n")) {
@@ -60,18 +56,12 @@ public final class Git {
         return out;
     }
 
-    /** Files changed on this branch since the base branch, plus uncommitted changes. */
     public static Set<String> branchFiles() {
         Set<String> files = new LinkedHashSet<>(dirtyFiles());
         if (refExists(base())) files.addAll(lines(Proc.run(Ctx.root, "git", "diff", "--name-only", base() + "...HEAD").out()));
         return files;
     }
 
-    /**
-     * The file names of a `git diff --name-only` with the given further arguments, exactly as git
-     * holds them (NUL-separated, never quoted). A diff that fails is an error, not an empty list:
-     * a check that sees no changes must not pass because git could not answer.
-     */
     public static List<String> changed(String... diffArgs) {
         List<String> cmd = new ArrayList<>(List.of("git", "diff", "--name-only", "-z", "--no-renames"));
         cmd.addAll(List.of(diffArgs));
@@ -82,11 +72,7 @@ public final class Git {
         return out;
     }
 
-    /**
-     * The unified diff with no context that the content scanners read. --text: a pull request
-     * cannot hide its lines by marking a file as binary in .gitattributes; no external diff or
-     * text conversion either.
-     */
+    // --text, --no-ext-diff, --no-textconv: a pull request's .gitattributes must not hide its lines.
     public static String patch(String... diffArgs) {
         List<String> cmd = new ArrayList<>(List.of("git", "-c", "core.quotePath=false", "diff", "--unified=0", "--no-color", "--no-ext-diff", "--no-textconv", "--text", "--no-renames"));
         cmd.addAll(List.of(diffArgs));
@@ -101,16 +87,11 @@ public final class Git {
         return out;
     }
 
-    /**
-     * Added lines per file of a unified diff. File headers are read only between "diff --git" and
-     * the first hunk: inside a hunk, an added line whose text starts with "++ " also begins with
-     * "+++ ", and must not be taken for the header of another file.
-     */
+    // Inside a hunk an added line whose text starts with "++ " also begins with "+++ ": file headers are read only before the first hunk.
     public static Map<String, List<String>> addedLines(String diff) {
         return changedLines(diff, '+');
     }
 
-    /** Removed lines per file of a unified diff, read the same way. */
     public static Map<String, List<String>> removedLines(String diff) {
         return changedLines(diff, '-');
     }
@@ -138,7 +119,6 @@ public final class Git {
         return out;
     }
 
-    /** A file name as git writes it in a patch header: in double quotes with escapes when it holds unusual characters. */
     private static String unquote(String name) {
         if (name.length() < 2 || !name.startsWith("\"") || !name.endsWith("\"")) return name;
         StringBuilder out = new StringBuilder();
@@ -154,7 +134,7 @@ public final class Git {
                 case 't' -> '\t';
                 case 'n' -> '\n';
                 case 'r' -> '\r';
-                default -> n; // \\ and \"
+                default -> n;
             });
         }
         return out.toString();

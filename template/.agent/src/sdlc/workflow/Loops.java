@@ -18,7 +18,6 @@ import sdlc.core.UsageException;
 import sdlc.core.Work;
 import sdlc.util.Json;
 
-/** `review record` and `qa record`: file each round's report, count rounds, log mistakes. */
 public final class Loops {
     private static final Pattern VERDICT = Pattern.compile("(?m)^\\s*VERDICT:\\s*([A-Z_]+)");
     private static final Pattern COMMIT = Pattern.compile("(?m)^\\s*REVIEWED_COMMIT:\\s*([0-9a-fA-F]{7,40})");

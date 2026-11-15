@@ -10,10 +10,6 @@ import sdlc.core.Config;
 import sdlc.core.Ctx;
 import sdlc.util.Proc;
 
-/**
- * Built-in tests: java .agent/Sdlc.java selftest. They run in a temporary git repository.
- * This class sets that repository up and runs the test classes of this package, one per area.
- */
 public final class SelfTest {
     private SelfTest() {}
 

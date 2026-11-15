@@ -20,17 +20,7 @@ import sdlc.integrations.GitHub;
 import sdlc.util.Json;
 import sdlc.util.Yaml;
 
-/**
- * The federated component catalog. Each repository describes itself in catalog-info.yaml, in
- * Backstage's descriptor format (kind Component and kind API), plus two annotations a scan
- * cannot know:
- *   sdlc/owns        domain nouns the component is the source of truth for ("refund, payment")
- *   sdlc/invariants  rules that must stay true ("a captured payment is never deleted")
- * `catalog sync` copies the files of the related repositories into .sdlc/catalog/repos/, with
- * the API definitions they point to, so agents and checks can read every component offline.
- */
 public final class Catalog {
-    /** An API a component provides: its spec file (path inside the component's repository) and type. */
     public record Api(String name, String type, String component, String definition, Path localCopy) {}
 
     public record Component(String name, String repo, String owner, String system, List<String> owns, List<String> invariants,
@@ -50,7 +40,6 @@ public final class Catalog {
         return Ctx.work("catalog");
     }
 
-    /** This repository's catalog plus every synced one. Empty when nothing is there. */
     public static Catalog load() {
         Catalog c = new Catalog();
         if (Files.isRegularFile(file())) c.add(read(file()), "", true, Ctx.root);
@@ -68,7 +57,6 @@ public final class Catalog {
         return c;
     }
 
-    /** This repository's catalog from text (catalog-info.yaml as committed at some ref); empty for blank text. */
     static Catalog parse(String text) {
         Catalog c = new Catalog();
         if (!text.isBlank()) c.add(text, "", true, Ctx.root);
@@ -83,7 +71,6 @@ public final class Catalog {
         }
     }
 
-    /** Parses one catalog-info.yaml (several documents separated by ---) into this catalog. */
     @SuppressWarnings("unchecked")
     void add(String text, String repo, boolean self, Path apiBase) {
         for (String doc : documents(text)) {
@@ -134,11 +121,10 @@ public final class Catalog {
         return out;
     }
 
-    /** "$text: ./api/openapi.yaml" (or a plain string) -> api/openapi.yaml. */
     private static String definition(Object def) {
         String s = def instanceof Map<?, ?> m ? Work.str(m.get("$text")) : Work.str(def);
         s = s.strip();
-        if (s.startsWith("http") || s.contains("\n")) return ""; // inline definitions and URLs are not files here
+        if (s.startsWith("http") || s.contains("\n")) return "";
         while (s.startsWith("./")) s = s.substring(2);
         return s;
     }
@@ -148,7 +134,6 @@ public final class Catalog {
         return dot < 0 ? ".yaml" : def.substring(dot);
     }
 
-    /** "group:team-payments" or "component:default/orders" -> the name. */
     private static String entity(String ref) {
         String s = ref.strip();
         if (s.contains(":")) s = s.substring(s.indexOf(':') + 1);
@@ -178,18 +163,15 @@ public final class Catalog {
         return components.isEmpty();
     }
 
-    /** This repository's component, or null when it has no catalog-info.yaml. */
     public Component self() {
         return components.values().stream().filter(Component::self).findFirst().orElse(null);
     }
 
-    /** The name of this repository's component: catalog-info.yaml, else project.name. */
     public static String selfName() {
         Component s = load().self();
         return s != null ? s.name() : Ctx.cfg.str("project.name").toLowerCase(Locale.ROOT);
     }
 
-    /** API definition files of this repository (paths from the root): the files a change to a contract touches. */
     public List<String> contractFiles() {
         List<String> out = new ArrayList<>();
         Component s = self();
@@ -201,7 +183,6 @@ public final class Catalog {
         return out;
     }
 
-    /** The component name for a repository (owner/name): the synced catalog, github.relatedRepos, else the repository's own name. */
     public static String componentOfRepo(String repo) {
         String r = repo.strip();
         for (Component c : load().components.values()) if (r.equalsIgnoreCase(c.repo())) return c.name();
@@ -211,7 +192,6 @@ public final class Catalog {
         return r.substring(r.lastIndexOf('/') + 1).toLowerCase(Locale.ROOT);
     }
 
-    /** Repositories (owner/name) the tool knows: this one, github.relatedRepos and catalog.repos. */
     public static List<String> knownRepos() {
         Set<String> out = new LinkedHashSet<>();
         String origin = GitHub.originRepo();
@@ -221,9 +201,6 @@ public final class Catalog {
         return new ArrayList<>(out);
     }
 
-    // ---------------- commands ----------------
-
-    /** sdlc catalog check: this repository's catalog-info.yaml is complete and its API files exist. */
     public static int check() {
         List<String> p = checkProblems();
         if (p.isEmpty()) {
@@ -260,11 +237,6 @@ public final class Catalog {
         return p;
     }
 
-    /**
-     * sdlc catalog sync: copies the catalog-info.yaml of every related repository (github.relatedRepos
-     * and catalog.repos), and the API definitions it names, into .sdlc/catalog/. Local copies from
-     * `repos sync` are used when present, else gh reads the default branch.
-     */
     public static int sync() {
         Set<String> repos = new LinkedHashSet<>();
         Map<String, String> local = new LinkedHashMap<>();
@@ -326,10 +298,8 @@ public final class Catalog {
         }
     }
 
-    /** Where `catalog scan --write` puts this repository's scanned edges, for other repositories' sync. */
     public static final String EDGES_FILE = "docs/agent/catalog-edges.json";
 
-    /** sdlc catalog graph: one Markdown page with every component, API, operation and scanned dependency, for agents. */
     public static int graph() {
         Catalog c = load();
         if (c.isEmpty()) throw new UsageException("the catalog is empty: add catalog-info.yaml (catalog check) and run: java .agent/Sdlc.java catalog sync");
@@ -370,7 +340,6 @@ public final class Catalog {
             try {
                 sb.append('\n').append(Files.readString(co).strip()).append('\n');
             } catch (IOException e) {
-                // the graph stands without it
             }
         }
         return sb.toString();

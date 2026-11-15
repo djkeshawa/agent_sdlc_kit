@@ -17,13 +17,6 @@ import sdlc.core.Ctx;
 import sdlc.core.UsageException;
 import sdlc.core.Work;
 
-/**
- * Test scenarios (TS-..) of the story's tasks must each link to a real test in
- * docs/test-links/<STORY>.md (committed, so reviewers see it):
- *   | TS-01 | src/test/java/.../RefundServiceTest.java#refusesUnpaidOrder |
- *   | TS-04 | src/orders/refund.test.ts#refuses an unpaid order |
- *   | TS-09 | manual: covered by the perf environment run |
- */
 public final class Trace {
     private static final Pattern ROW = Pattern.compile("^\\|\\s*(TS-[0-9]+)\\s*\\|\\s*([^|]+?)\\s*\\|.*$");
 

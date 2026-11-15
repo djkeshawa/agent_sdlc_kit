@@ -8,7 +8,6 @@ import sdlc.core.Ctx;
 import sdlc.core.Work;
 import sdlc.util.Proc;
 
-/** Shallow, read-only local copies of other teams' repositories in .sdlc/repos/ for agents to read. */
 public final class Repos {
     private Repos() {}
 
@@ -29,7 +28,6 @@ public final class Repos {
             if (Files.isDirectory(dir.resolve(".git"))) {
                 p = Proc.run(dir, "git", "pull", "--ff-only", "--depth", "1");
             } else {
-                // "--": an address or branch from the settings is never read as a git option
                 if (branch.isBlank()) p = Proc.run(Ctx.root, "git", "clone", "--depth", "1", "--", url, dir.toString());
                 else p = Proc.run(Ctx.root, "git", "clone", "--depth", "1", "--branch=" + branch, "--", url, dir.toString());
             }

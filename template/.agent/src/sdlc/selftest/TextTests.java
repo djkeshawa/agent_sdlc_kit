@@ -22,7 +22,6 @@ import sdlc.workflow.Loops;
 import sdlc.workflow.MindMap;
 import sdlc.workflow.Tasks;
 
-/** Self test: helpers that turn text into text: Markdown to wiki storage, task lists, CI digests, hook output. */
 final class TextTests {
     private TextTests() {}
 

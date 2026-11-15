@@ -17,17 +17,6 @@ import sdlc.mandate.Mandate;
 import sdlc.mandate.SelfApproval;
 import sdlc.util.Proc;
 
-/**
- * sdlc check --mandate ID: the change compared with what it was authorised to do
- * (spec/mandate-v0.md). Two results that are never merged into one:
- *
- *   scope     did every changed file stay inside the mandate, and is the mandate approved as it is now
- *   evidence  what is known about each obligation: satisfied, violated, unknown or not run, and
- *             whether the fact is read from git alone (independent) or is the result of running
- *             the change's own build (candidate-influenced)
- *
- * A green scope says nothing about correctness, and "unknown" is an answer, not a pass.
- */
 final class MandateVerdict {
     private MandateVerdict() {}
 
@@ -39,7 +28,6 @@ final class MandateVerdict {
         }
     }
 
-    /** One obligation's result. independent is false for anything that comes from running the change's build. */
     record Line(State state, String what, boolean independent, List<String> details) {}
 
     record Result(String scope, List<String> outside, String approval, List<Line> lines, String unresolved) {
@@ -48,7 +36,6 @@ final class MandateVerdict {
         }
     }
 
-    /** Files that decide how the tests are built and run. When one changed, no test result of this run can be relied on. */
     private static final Pattern BUILD = Pattern.compile("(.*/)?(pom\\.xml|mvnw|mvnw\\.cmd|build\\.gradle[^/]*|settings\\.gradle[^/]*|gradle\\.properties|gradlew[^/]*"
             + "|package\\.json|package-lock\\.json|npm-shrinkwrap\\.json|yarn\\.lock|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|bun\\.lockb?|\\.npmrc|\\.yarnrc[^/]*"
             + "|vite\\.config\\.[^/]+|vitest\\.config\\.[^/]+|vitest\\.workspace\\.[^/]+|jest\\.config\\.[^/]+|babel\\.config\\.[^/]+|\\.babelrc[^/]*|tsconfig[^/]*\\.json)"
@@ -57,7 +44,6 @@ final class MandateVerdict {
     static int run(Map<String, String> opt, List<Runner> runners, int runs, int timeout) {
         String id = opt.get("mandate");
         Mandate.requireId(id);
-        // read once: the text that is checked is the text whose blob is compared with the approval
         Mandate.Loaded read = Mandate.loaded(Ctx.root, id);
         Mandate m = read.mandate();
         Change change = Change.of(opt.get("base"));
@@ -72,7 +58,6 @@ final class MandateVerdict {
         List<String> outside = new ArrayList<>();
         for (Change.File f : change.files) if (!f.path().equals(own) && !m.inScope(f.path())) outside.add(f.path());
 
-        // the mandate as the change holds it, and whether that very text was approved
         String blob = read.blob();
         SelfApproval.Record approved = SelfApproval.of(Ctx.root, m.id());
         String approval;
@@ -86,7 +71,6 @@ final class MandateVerdict {
         String scope = !outside.isEmpty() ? "OUTSIDE" : inForce ? "INSIDE" : "AMENDED";
 
         List<Line> lines = new ArrayList<>();
-        // 1. locked tests
         List<String> broken = new ArrayList<>();
         for (Map.Entry<String, String> e : m.locked().entrySet()) {
             String now = blobAt(change.head, e.getKey());
@@ -96,7 +80,6 @@ final class MandateVerdict {
         if (m.locked().isEmpty()) lines.add(new Line(State.SATISFIED, "the mandate locks no tests", true, List.of()));
         else lines.add(new Line(broken.isEmpty() ? State.SATISFIED : State.VIOLATED, "locked tests are the files the mandate names (" + m.locked().size() + ")", true, broken));
 
-        // 2. build files and runner configuration
         List<String> build = change.files.stream().map(Change.File::path).filter(p -> BUILD.matcher(p).matches()).toList();
         lines.add(new Line(build.isEmpty() ? State.SATISFIED : State.VIOLATED, "build files and test configuration are unchanged", true, build));
 
@@ -113,7 +96,6 @@ final class MandateVerdict {
         }
 
         try (Sides sides = new Sides(change, runners)) {
-            // which runner runs which file, on the side after the change
             Set<String> wanted = new LinkedHashSet<>();
             for (Mandate.Scenario s : m.scenarios()) wanted.add(s.path());
             for (Mandate.Truth t : m.mustStayTrue()) wanted.add(t.test());
@@ -125,7 +107,6 @@ final class MandateVerdict {
             Map<String, FileRun> after = new LinkedHashMap<>();
             for (Map.Entry<Runner, List<String>> e : owned.entrySet()) after.putAll(e.getKey().run(sides.head().dir, e.getValue(), timeout));
 
-            // 3. scenarios
             List<String> bad = new ArrayList<>(), unknown = new ArrayList<>();
             int passed = 0;
             for (Mandate.Scenario s : m.scenarios()) {
@@ -140,7 +121,6 @@ final class MandateVerdict {
             lines.add(new Line(!bad.isEmpty() ? State.VIOLATED : !unknown.isEmpty() ? State.UNKNOWN : State.SATISFIED,
                     "scenarios found, ran and passed: " + passed + " of " + m.scenarios().size(), false, detail));
 
-            // 4. what must stay true: before and after
             if (!m.mustStayTrue().isEmpty()) {
                 Map<String, FileRun> before = new LinkedHashMap<>();
                 for (Map.Entry<Runner, List<String>> e : owned.entrySet()) {
@@ -163,28 +143,24 @@ final class MandateVerdict {
                         "what must stay true passes before and after: " + held + " of " + m.mustStayTrue().size(), false, detail));
             }
 
-            // 5. the witness
             Witness.Result w = Witness.run(change, runners, runs, timeout, sides);
             long sensitive = w.count(Kind.SENSITIVE), both = w.count(Kind.PASSES_ON_BOTH), failing = w.count(Kind.FAILS_AFTER);
             long notRun = w.count(Kind.NOT_RUN_NOW), takenAway = w.count(Kind.OLD_FAILS_AFTER);
             long preApproved = w.verdicts().stream().filter(v -> v.kind() == Kind.SENSITIVE && m.locked().containsKey(v.file())).count();
             detail = new ArrayList<>();
             for (Witness.Verdict v : w.verdicts()) {
-                // a verdict about a file (no name) says in its detail which tests it means
                 boolean whole = v.name().isEmpty();
                 if (v.kind() == Kind.PASSES_ON_BOTH) detail.add(v.file() + (whole ? ": " + v.detail() : "  " + v.name() + ": passes before and after, so it does not test the change"));
                 else if (v.kind() == Kind.FAILS_AFTER || v.kind() == Kind.OLD_FAILS_AFTER) detail.add(v.file() + (whole ? "" : "  " + v.name()) + ": " + v.detail());
                 else if (v.kind() == Kind.NOT_RUN_NOW) detail.add(v.file() + ": " + v.detail());
-                else if (v.kind() == Kind.MOVED) detail.add(v.file() + ": " + v.detail()); // said, counted nowhere: its new tests and tests that do not run now are lines of their own
+                else if (v.kind() == Kind.MOVED) detail.add(v.file() + ": " + v.detail());
             }
             for (Witness.Verdict v : w.verdicts()) {
                 if (v.kind() == Kind.SENSITIVE) detail.add(v.file() + "  " + v.name() + ": fails before, passes after (" + (m.locked().containsKey(v.file()) ? "a test approved with the mandate" : "a test written with the change") + ")");
             }
-            // one sensitive test does not speak for the tests that could not be judged
             long undecided = w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE) + w.count(Kind.SKIPPED);
             if (undecided > 0) detail.add(undecided + " of the change's tests could not be judged, gave different results or were skipped");
             for (String f : w.unsupported()) detail.add(f + ": no runner for it in this version");
-            // what violates the line, each with its count of tests ("at least" where a file's counts prove only a least number)
             List<String> wrong = new ArrayList<>();
             count(wrong, w, Kind.FAILS_AFTER, " fails after it", " fail after it");
             count(wrong, w, Kind.PASSES_ON_BOTH, " new test passes on both sides", " new tests pass on both sides");
@@ -200,13 +176,11 @@ final class MandateVerdict {
         return new Result(scope, outside, approval, lines, unresolved);
     }
 
-    /** "at least 2 ran before it and do not run now": a kind's count of tests, when there are any. */
     private static void count(List<String> parts, Witness.Result w, Kind kind, String one, String many) {
         long n = w.count(kind);
         if (n > 0) parts.add((w.atLeast(kind) ? "at least " : "") + n + (n == 1 ? one : many));
     }
 
-    /** The blob id of a path in a tree, or null when the tree does not hold it. */
     private static String blobAt(String tree, String path) {
         Proc p = Proc.run(Ctx.root, "git", "rev-parse", "-q", "--verify", tree + ":" + path);
         return p.ok() && !p.out().isBlank() ? p.out().strip() : null;
@@ -216,28 +190,20 @@ final class MandateVerdict {
         return instant.length() >= 10 ? instant.substring(0, 10) : instant;
     }
 
-    /** One test (name "" = the whole file) in one run: satisfied when found and passed, violated when it fails, else unknown. */
     private static State outcome(FileRun run, String path, String name) {
         if (run == null) return State.UNKNOWN;
-        if (run.problem() != null) return run.broken() ? State.VIOLATED : State.UNKNOWN; // broken code is a failure; a missing tool or a timeout is not
+        if (run.problem() != null) return run.broken() ? State.VIOLATED : State.UNKNOWN;
         List<JUnitXml.Case> cases = cases(run, path, name);
         if (cases.isEmpty()) return State.UNKNOWN;
         if (cases.stream().anyMatch(c -> c.status() == Status.FAILED || c.status() == Status.ERRORED)) return State.VIOLATED;
-        if (run.retriesUnknown() != null) return State.UNKNOWN; // the run does not say which passes were at the first try
-        return cases.stream().allMatch(c -> c.status() == Status.PASSED && !c.retried()) ? State.SATISFIED : State.UNKNOWN; // a pass only when run again is not one result
+        if (run.retriesUnknown() != null) return State.UNKNOWN;
+        return cases.stream().allMatch(c -> c.status() == Status.PASSED && !c.retried()) ? State.SATISFIED : State.UNKNOWN;
     }
 
-    /**
-     * The cases a scenario means. A name is first taken as the report gives it; only when no case
-     * has exactly that name is the plain form tried ("adds" for "suite > adds", "refunds" for
-     * "refunds(int)[1]"). A plain name that fits tests of more than one class or suite names none
-     * of them: it is not known which was meant.
-     */
     private static List<JUnitXml.Case> cases(FileRun run, String path, String name) {
         if (name.isEmpty()) return run.cases();
         List<JUnitXml.Case> exact = run.cases().stream().filter(c -> c.name().equals(name)).toList();
-        // Java reports one method once per invocation ("refunds(int)[1]", "[2]"): those are one test, when they are of one
-        // class. Elsewhere every reported case is a test of its own, so a name must fit exactly one.
+        // Java reports one method once per invocation ("refunds(int)[1]", "[2]"); elsewhere every reported case is a test of its own.
         boolean java = path.endsWith(".java");
         if (!exact.isEmpty()) return exact.size() == 1 || java && exact.stream().map(JUnitXml.Case::suite).distinct().count() == 1 ? exact : List.of();
         List<JUnitXml.Case> plain = run.cases().stream().filter(c -> TestNames.plain(path, c.name()).equals(name)).toList();
@@ -291,7 +257,6 @@ final class MandateVerdict {
         if (m.apis() != null) out.println("  - whether the change keeps to scope.apis: this version does not check it");
     }
 
-    /** File names, test names and identities come from the change and from git: nothing a terminal would act on is printed. */
     private static String safe(String text) {
         return sdlc.mandate.MandateCard.safe(text);
     }

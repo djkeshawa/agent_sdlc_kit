@@ -7,14 +7,6 @@ import sdlc.core.Ctx;
 import sdlc.core.Markers;
 import sdlc.core.UsageException;
 
-/**
- * Human approval of a Confluence document version. The approver posts, as a new Jira comment on
- * the document's issue:
- *     SDLC-APPROVED <KEY> <test-design|lld> <pageId>v<version> <hash12>
- * It counts only while the page is still at that version with that content, the comment was
- * not edited, it is not a tool comment, the author may approve (gates.approvers) and is not the
- * person who saved that version of the page (four eyes; gates.allowSelfApproval switches it off).
- */
 public final class Approvals {
     public static final String BOT_MARK = "[sdlc-bot]";
 
@@ -57,12 +49,11 @@ public final class Approvals {
         return checkDoc(doc, type);
     }
 
-    /** The approval of a given page (also another team's LLD): the same rules, on the page's own issue. */
     public Result checkDoc(Docs.Doc doc, String type) {
         List<String> reasons = new ArrayList<>();
         Wiki.Page page = w.wiki.page(doc.id());
         String expected = line(doc.key(), type, page);
-        List<String> approvers = doc.ours() ? Ctx.cfg.list("gates.approvers." + type) : List.of(); // another team's page: its own team's approvers, unknown here
+        List<String> approvers = doc.ours() ? Ctx.cfg.list("gates.approvers." + type) : List.of();
         List<String> bots = Ctx.cfg.list("gates.botAccounts");
         boolean selfApproval = Ctx.cfg.bool("gates.allowSelfApproval", false);
         for (IssueTracker.Comment c : w.issues.comments(doc.key())) {
@@ -84,17 +75,14 @@ public final class Approvals {
         return new Result(false, "", doc, reasons, expected);
     }
 
-    /** Four eyes: the approver is the account that saved the page version. Unknown authors (older servers, mocks) never match. */
     public static boolean sameAccount(String approver, String pageAuthor) {
         return approver != null && pageAuthor != null && !approver.isBlank() && approver.equalsIgnoreCase(pageAuthor.strip());
     }
 
-    /** A comment line without the code formatting Jira's editor adds around a pasted line. */
     public static String plain(String line) {
         return line.replaceAll("\\{(noformat|code)(:[^}]*)?\\}|`", "").strip();
     }
 
-    /** Short line for pulled sources: approved / not approved. */
     String statusLine(String key, String type) {
         try {
             Result r = check(key, type);
@@ -104,7 +92,6 @@ public final class Approvals {
         }
     }
 
-    /** Enforces gates.<type>: required -> must be approved; optional -> warn; off -> skip. */
     boolean gate(String key, String type) {
         String mode = Ctx.cfg.str("gates." + type, "required");
         if (mode.equals("off")) return true;

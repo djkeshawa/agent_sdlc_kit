@@ -12,7 +12,6 @@ import sdlc.core.Work;
 import sdlc.util.Json;
 import sdlc.util.Proc;
 
-/** Keeps Jira statuses in step with the work: started -> In Progress, PR open -> In Review, merged -> Done. */
 public final class Sync {
     private final IssueTracker issues;
     private final Console console;
@@ -22,7 +21,6 @@ public final class Sync {
         this.issues = issues;
     }
 
-    /** The pull request of the current branch from gh, or null. */
     static Map<String, Object> pr() {
         Proc p = Proc.run(Ctx.root, "gh", "pr", "view", "--json", "number,url,state,headRefOid,title,isDraft");
         if (!p.ok() || p.out().isBlank()) return null;
@@ -65,11 +63,10 @@ public final class Sync {
         }
         Work.save(story, state);
         Store.log("sync", Store.map("story", story, "moved", moved));
-        if (!quiet) console.out(moved.isEmpty() ? "Jira is up to date for " + story + "." : "Jira: " + String.join(", ", moved)); // quiet = called from a hook, whose stdout must be JSON only
+        if (!quiet) console.out(moved.isEmpty() ? "Jira is up to date for " + story + "." : "Jira: " + String.join(", ", moved));
         return 0;
     }
 
-    /** Called by the PostToolUse hook after `gh pr create`. */
     public void prOpened() {
         String story = Work.currentStory();
         if (!story.isEmpty()) run(story, true);

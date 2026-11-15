@@ -7,7 +7,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 
 import org.w3c.dom.Document;
 
-/** XML read as hostile input: no DTD, no external entity, no XInclude. A document with a DOCTYPE is refused. */
+// Reports are written by the code under test: no DTD, no external entity, no XInclude; a DOCTYPE is refused.
 final class SafeXml {
     private SafeXml() {}
 

@@ -16,7 +16,6 @@ import sdlc.workflow.Checks;
 import sdlc.workflow.Gates;
 import sdlc.workflow.Verify;
 
-/** git hooks for everyone (humans and agents): pre-commit, commit-msg, pre-push. */
 public final class GitHooks {
     private GitHooks() {}
 
@@ -61,18 +60,11 @@ public final class GitHooks {
         return report("pre-commit", errors, warnings);
     }
 
-    /**
-     * Staged paths with this git diff filter (ACMR, D). --no-renames: `git mv` of a locked test is its
-     * deletion plus an addition, so the hook sees the locked path go.
-     */
+    // --no-renames: git mv of a locked test is its deletion plus an addition.
     public static List<String> staged(String filter) {
         return Git.lines(Proc.run(Ctx.root, "git", "diff", "--cached", "--name-only", "--no-renames", "--diff-filter=" + filter).out());
     }
 
-    /**
-     * Locked acceptance tests this commit would change or delete, and lock files that cannot be read.
-     * The staged content is what is checked (git show :path), not the working tree: that is what gets committed.
-     */
     public static List<String> stagedLockProblems(List<String> staged, List<String> deleted) {
         List<String> out = new ArrayList<>(sdlc.core.Locks.damaged(Ctx.root));
         for (sdlc.core.Locks.Entry e : sdlc.core.Locks.locked(Ctx.root).values()) {

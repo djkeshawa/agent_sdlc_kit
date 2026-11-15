@@ -13,15 +13,9 @@ import sdlc.guard.GitCli;
 import sdlc.guard.Guard;
 import sdlc.util.Json;
 
-/**
- * Workflow gates enforced by the hooks: the inner loop (implement -> verify -> review, min..max
- * rounds), the QA loop and the CI loop. They decide when a pull request may be opened, when a
- * branch may be pushed again, and when to stop and hand back to the human.
- */
 public final class Gates {
     private Gates() {}
 
-    /** These gates as the guard rules see them. */
     static final Gate FOR_GUARD = new Gate() {
         @Override
         public Decision push() {
@@ -44,12 +38,10 @@ public final class Gates {
         }
     };
 
-    /** The guard for one tool call in this repository, with the agent's shell in the given folder (null = the repository root). */
     public static Guard guard(java.nio.file.Path shellFolder) {
         return new Guard(Ctx.root, Ctx.cfg, shellFolder, new GitCli(Ctx.root), Work::currentTask, FOR_GUARD);
     }
 
-    /** gh pr create */
     static Decision prCreate() {
         String story = Work.currentStory();
         if (story.isEmpty()) return Decision.deny("no story in progress. Pull requests are opened by /feature after the task loops: java .agent/Sdlc.java status");
@@ -111,7 +103,6 @@ public final class Gates {
         return !Work.strings(state.get("qaScenarios")).isEmpty();
     }
 
-    /** git push of a feature branch */
     static Decision push() {
         String story = Work.currentStory();
         if (story.isEmpty()) return Decision.allow();
@@ -130,7 +121,6 @@ public final class Gates {
         return Decision.allow();
     }
 
-    /** Starting another implementer or ci-fixer run. */
     static Decision moreFixRounds() {
         String story = Work.currentStory();
         if (story.isEmpty()) return Decision.allow();
@@ -148,10 +138,9 @@ public final class Gates {
     }
 
     static Decision reviewRecordAllowed() {
-        return Decision.allow(); // the record command enforces its own limits and preconditions
+        return Decision.allow();
     }
 
-    /** Human-readable gate status for `sdlc status`. */
     public static List<String> summary(String story) {
         List<String> out = new ArrayList<>();
         Map<String, Object> state = Work.state(story);

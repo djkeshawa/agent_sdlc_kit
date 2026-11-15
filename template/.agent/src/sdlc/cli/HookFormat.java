@@ -4,12 +4,7 @@ import java.util.Map;
 
 import sdlc.core.Store;
 
-/**
- * How a host wants the answers of a hook shaped. The hook logic builds the answer; the format
- * turns it into the JSON that host reads.
- */
 public enum HookFormat {
-    /** VS Code and the Copilot CLI: tolerant, so both the flat and the nested shape are sent. */
     COPILOT {
         @Override
         public Map<String, Object> permission(String word, String reason) {
@@ -27,7 +22,6 @@ public enum HookFormat {
         }
     },
 
-    /** Claude Code and Codex: the Claude Code hook schema, which reads only hookSpecificOutput. */
     STRICT {
         @Override
         public Map<String, Object> permission(String word, String reason) {
@@ -45,17 +39,13 @@ public enum HookFormat {
         }
     };
 
-    /** The format for `hook ... --for <tool>`: claude and codex are strict, everything else is Copilot. */
     public static HookFormat of(String tool) {
         return "claude".equals(tool) || "codex".equals(tool) ? STRICT : COPILOT;
     }
 
-    /** PreToolUse: "deny" or "ask" with the reason. */
     public abstract Map<String, Object> permission(String word, String reason);
 
-    /** Extra context for the agent after an event (SessionStart, PostToolUse). */
     public abstract Map<String, Object> context(String event, String text);
 
-    /** Stop: send the agent back to work. */
     public abstract Map<String, Object> block(String reason);
 }

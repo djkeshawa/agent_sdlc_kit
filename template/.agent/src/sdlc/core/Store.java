@@ -15,7 +15,6 @@ import java.util.Map;
 
 import sdlc.util.Json;
 
-/** JSON state files and append-only JSONL logs under .sdlc/. */
 public final class Store {
     private Store() {}
 
@@ -27,7 +26,6 @@ public final class Store {
         }
     }
 
-    /** Writes through a temp file so a crash never leaves half a file. */
     public static void write(Path f, Object value) {
         try {
             Files.createDirectories(f.getParent());
@@ -48,9 +46,8 @@ public final class Store {
         }
     }
 
-    /** Appends one event to .sdlc/logs/<stream>.jsonl. Logging never fails the caller. */
     public static void log(String stream, Map<String, Object> fields) {
-        if (Ctx.root == null || !Files.exists(Ctx.root.resolve(".git"))) return; // not a repository (e.g. the kit's template folder): keep no state
+        if (Ctx.root == null || !Files.exists(Ctx.root.resolve(".git"))) return;
         try {
             Map<String, Object> e = new LinkedHashMap<>();
             e.put("ts", Instant.now().toString());
@@ -59,7 +56,6 @@ public final class Store {
             Files.createDirectories(f.getParent());
             Files.writeString(f, Json.write(e) + "\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException | RuntimeException ignored) {
-            // logging is best effort
         }
     }
 
@@ -73,11 +69,9 @@ public final class Store {
                 try {
                     out.add(Json.obj(Json.parse(line)));
                 } catch (RuntimeException ignored) {
-                    // skip a damaged line
                 }
             }
         } catch (IOException ignored) {
-            // unreadable log counts as empty
         }
         return out;
     }

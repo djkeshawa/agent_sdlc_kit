@@ -10,11 +10,6 @@ import sdlc.check.Witness.Kind;
 import sdlc.check.Witness.Verdict;
 import sdlc.core.UsageException;
 
-/**
- * sdlc check: what can be said about the change in front of you, with nothing to configure.
- * It runs the change's own tests before and after the change, reads the diff for damage to the
- * things that check it, and says what it did not check. It writes nothing to the working tree.
- */
 public final class Check {
     private Check() {}
 
@@ -22,7 +17,6 @@ public final class Check {
         int runs = number(opt, "runs", 3);
         int timeout = number(opt, "timeout", 900);
         if (sdlc.core.Trusted.inCi()) {
-            // in a pull request build the scan's rules are the base branch's, or the built-in ones: never the checkout's own
             sdlc.core.Config trusted = sdlc.core.Git.refExists(sdlc.core.Trusted.baseRef()) ? sdlc.core.Trusted.config(sdlc.core.Trusted.baseRef()) : null;
             sdlc.core.Ctx.cfg = trusted != null ? trusted : sdlc.core.Config.parse("stack: java-maven\n");
         }
@@ -91,11 +85,6 @@ public final class Check {
         return failed ? 1 : 0;
     }
 
-    /**
-     * For the self test: makes the four checkouts of a change and closes them. Returns their
-     * folders, which must all be gone now, or an empty list when one of them was not there while
-     * open.
-     */
     public static List<java.nio.file.Path> checkoutsAfterClose(Change change) {
         List<java.nio.file.Path> made = new ArrayList<>();
         Runner runner = new SelfTestRunner();
@@ -108,29 +97,14 @@ public final class Check {
         return made;
     }
 
-    /**
-     * For the self test: the rules of the witness that say nothing until this is called again with
-     * no names (see Witness.muted), so that what answers in their place can be seen.
-     */
     public static void mute(java.util.Set<String> rules) {
         Witness.muted = java.util.Set.copyOf(rules);
     }
 
-    /**
-     * For the self test: the stand-in runner reports the cases of each file in another order from
-     * run to run (see SelfTestRunner.order; 0 for the order of the file), as a build that runs
-     * tests concurrently does, so that what is said can be seen not to depend on it.
-     */
     public static void order(int how) {
         SelfTestRunner.order = how;
     }
 
-    /**
-     * For the self test: runs the witness of a change once with the stand-in runner, and says
-     * whether it made the fourth checkout ("made" or "not made") and whether the checkout after
-     * the change then still holds exactly the files of the change's tree ("head intact" or "head
-     * changed"; what the stand-in runner builds, .built/, is not part of the tree).
-     */
     public static String fourthCheckout(Change change) throws java.io.IOException {
         List<Runner> runners = List.of(new SelfTestRunner());
         try (Sides sides = new Sides(change, runners); Scratch fresh = Scratch.of(change.head, "compare")) {
@@ -140,12 +114,6 @@ public final class Check {
         }
     }
 
-    /**
-     * For the self test: runs the witness of a change once with two stand-in runners, the first of
-     * which owns the test files under a folder (apart) and the second all others, and says of each
-     * runner's fourth checkout which files differ from the change's tree: "runner: a, b" for each
-     * runner that made one, joined by "; ".
-     */
     public static String fourthCheckoutsApart(Change change, String apart) throws java.io.IOException {
         List<Runner> runners = List.of(new SelfTestRunner(apart), new SelfTestRunner());
         try (Sides sides = new Sides(change, runners); Scratch fresh = Scratch.of(change.head, "compare")) {
@@ -164,7 +132,6 @@ public final class Check {
         }
     }
 
-    /** Every file under a folder, outside .built/, by its path, with its bytes as text. */
     private static Map<String, String> files(java.nio.file.Path dir) throws java.io.IOException {
         Map<String, String> out = new java.util.TreeMap<>();
         try (java.util.stream.Stream<java.nio.file.Path> s = java.nio.file.Files.walk(dir)) {
@@ -180,12 +147,6 @@ public final class Check {
         return opt.containsKey("selftest-runner") ? List.of(new SelfTestRunner()) : Runners.all();
     }
 
-    /**
-     * --since 30d: the same check, replayed over each commit of the recent history, one line or two
-     * per commit and a summary: per commit the counts, the lines of the verdicts about a file that
-     * fail a change (and of a moved test file, which is counted nowhere), and the text check's
-     * problems and notes. A report on the past: it never fails.
-     */
     private static int since(Map<String, String> opt, int runs, int timeout) {
         String window = window(opt.get("since"));
         int max = number(opt, "max", 20);
@@ -196,7 +157,7 @@ public final class Check {
         out.println("sdlc check --since " + opt.get("since") + ": " + commits.size() + " commit" + (commits.size() == 1 ? "" : "s") + " on this branch since " + window
                 + (commits.size() > max ? ", the newest " + max + " checked (--max N for more)" : ""));
         long sensitive = 0, both = 0, unknown = 0, failing = 0, untested = 0, problems = 0, notRun = 0, takenAway = 0;
-        java.util.Set<Kind> least = java.util.EnumSet.noneOf(Kind.class); // kinds whose total is a least number
+        java.util.Set<Kind> least = java.util.EnumSet.noneOf(Kind.class);
         int checked = 0;
         for (String line : commits) {
             if (checked++ >= max) break;
@@ -236,7 +197,6 @@ public final class Check {
                 notRun += w.count(Kind.NOT_RUN_NOW);
                 takenAway += w.count(Kind.OLD_FAILS_AFTER);
             }
-            // the notes too, as the check of a change prints them: a note says what the text check could not settle (a moved file's imports), and is not counted
             for (Finding x : findings) {
                 boolean problem = x.level() == Finding.Level.PROBLEM;
                 out.println("    " + (problem ? "PROBLEM  " : "note     ") + x.kind() + ": " + x.path() + (x.detail().isBlank() ? "" : "  " + x.detail().strip()));
@@ -261,33 +221,21 @@ public final class Check {
         return 0;
     }
 
-    /**
-     * --stop-hook: for an agent's Stop hook (Claude Code: exit code 2 keeps the agent working, and
-     * what is on stderr is the reason it is given). It blocks on what the agent can fix and is
-     * certain: a changed test that fails, a new test that passes with or without the change, tests
-     * that ran before the change and do not run after it (deleted, switched off or hidden), an
-     * old test that fails on the change as it was and was taken out of the way, a problem of the
-     * integrity scan. Never on "could
-     * not be judged", nor on a note. Says nothing when all is well.
-     *
-     * The host says on stdin whether the agent is already continuing because of a stop hook
-     * (stop_hook_active). Then the result is printed and the agent is let go: a second block on
-     * the same condition would only loop.
-     */
+    // Claude Code Stop hook: exit 2 keeps the agent working, with stderr as the reason. With stop_hook_active set the agent is
+    // let go: a second block would only loop.
     private static int stopHook(Map<String, String> opt, int runs, int timeout) {
         boolean again = stdin().replaceAll("\\s+", "").contains("\"stop_hook_active\":true");
         Change change;
         try {
             change = Change.of(opt.get("base"));
         } catch (UsageException e) {
-            return 0; // not a git repository, or no base: nothing to say, and a hook must not trap the agent
+            return 0;
         }
         if (change.isEmpty()) return 0;
         Witness.Result w = Witness.run(change, runners(opt), runs, timeout);
         List<String> reasons = new ArrayList<>();
         for (Verdict v : w.verdicts()) {
             String test = v.file() + (v.name().isEmpty() ? "" : " \u00bb " + v.name());
-            // a verdict about a file says in its detail which tests it means
             String file = v.file() + " (" + v.detail() + ")";
             boolean whole = v.name().isEmpty();
             if (v.kind() == Kind.FAILS_AFTER) reasons.add("fails: " + test + (v.detail().isBlank() ? "" : " (" + v.detail() + ")"));
@@ -306,14 +254,12 @@ public final class Check {
         return again ? 0 : 2;
     }
 
-    /** What the host wrote on standard input, or "" when nothing arrives within two seconds (run by hand). */
     private static String stdin() {
         String[] text = {""};
         Thread reader = new Thread(() -> {
             try {
                 text[0] = new String(System.in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
             } catch (java.io.IOException e) {
-                // no input
             }
         });
         reader.setDaemon(true);
@@ -326,7 +272,6 @@ public final class Check {
         return text[0];
     }
 
-    /** The line of a commit whose tests were all there before it and kept their result. */
     private static String onlyOld(Witness.Result w) {
         boolean passing = w.count(Kind.EXISTING_PASSES_ON_BOTH) > 0, skipped = w.count(Kind.EXISTING_SKIPPED) > 0;
         if (passing && skipped) return "only tests that were already there, passing on both sides or skipped as before";
@@ -338,13 +283,11 @@ public final class Check {
         if (n > 0) parts.add(n + " " + what);
     }
 
-    /** A kind's count, with "at least" when it is a least number. */
     private static void part(List<String> parts, Witness.Result w, Kind kind, String what) {
         long n = w.count(kind);
         if (n > 0) parts.add((w.atLeast(kind) ? "at least " : "") + n + " " + what);
     }
 
-    /** "30d" -> "30 days ago"; anything else goes to git as it is ("2026-11-01", "2 weeks ago"). */
     private static String window(String since) {
         if (since == null || since.isBlank() || since.equals("true") || since.startsWith("-")) throw new UsageException("--since takes a time span or a date: 30d, 2w, 12h, 2026-11-01");
         java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+)([hdwm])").matcher(since.strip());
@@ -358,11 +301,6 @@ public final class Check {
         return m.group(1) + " " + unit + " ago";
     }
 
-    /**
-     * Prints one kind of verdict as a count and its tests; true when there was at least one. The
-     * count is of tests; where a verdict about a file proves only a least number, it says "at
-     * least", and the file's own line, which always has its detail, says which tests it means.
-     */
     private static boolean section(PrintStream out, Witness.Result w, Kind kind, java.util.function.LongFunction<String> title, boolean withDetail) {
         List<Verdict> all = w.verdicts().stream().filter(v -> v.kind() == kind).toList();
         if (all.isEmpty()) return false;

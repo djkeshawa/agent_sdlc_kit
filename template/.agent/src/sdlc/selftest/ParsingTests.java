@@ -10,7 +10,6 @@ import sdlc.util.Glob;
 import sdlc.util.Json;
 import sdlc.util.Yaml;
 
-/** Self test: the parsers and the settings: YAML, JSON, globs, config presets. */
 final class ParsingTests {
     private ParsingTests() {}
 

@@ -5,7 +5,6 @@ import java.nio.file.Path;
 import sdlc.core.Git;
 import sdlc.util.Proc;
 
-/** The repository as the git command line reports it. */
 public final class GitCli implements Repo {
     private final Path root;
 

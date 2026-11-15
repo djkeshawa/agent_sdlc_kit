@@ -32,7 +32,6 @@ import sdlc.workflow.Docs;
 import sdlc.workflow.Gates;
 import sdlc.workflow.Trace;
 
-/** Self test: the guard rules in a Java repository: files, shell, git, gh, MCP tools, gates. */
 final class JavaGuardTests {
     private JavaGuardTests() {}
 
@@ -166,7 +165,6 @@ final class JavaGuardTests {
         expect("clean -x", shell("git clean -fdx"), Decision.Kind.DENY);
         expect("encoded ps", shell("powershell -EncodedCommand ZQBjAGgAbwA="), Decision.Kind.DENY);
 
-        // round-3 audit: shell escapes, command substitution, flags through the environment or a wrapper shell, git/gh spellings, scripts
         expect("posix escape to local.env", shell("cat .agent/local.e\\nv"), Decision.Kind.DENY);
         expect("windows path keeps backslashes", shell("type src\\main\\java\\demo\\A.java"), Decision.Kind.ALLOW);
         expect("decoded path asks", shell("cat $(echo LmFnZW50L2xvY2FsLmVudg== | base64 -d)"), Decision.Kind.ASK);
@@ -198,22 +196,18 @@ final class JavaGuardTests {
         expect("git config filter", shell("git config filter.x.clean ./x.sh"), Decision.Kind.DENY);
         expect("git -c pager cat ok", shell("git -c core.pager=cat log -1"), Decision.Kind.ALLOW);
         expect("git config read program key ok", shell("git config --get core.pager"), Decision.Kind.ALLOW);
-        // what follows "--" is the key and its value, never an option: this sets core.hooksPath to the text "--get"
         expect("git config value that looks like a read option", shell("git config -- core.hooksPath --get"), Decision.Kind.DENY);
         expect("git config value that looks like a list option", shell("git config -- core.hooksPath -l"), Decision.Kind.DENY);
         expect("git config program key after --", shell("git config -- core.pager ./x.sh"), Decision.Kind.DENY);
         expect("git config read after -- ok", shell("git config --get -- core.hooksPath"), Decision.Kind.ALLOW);
         expect("git config read of one key ok", shell("git config core.hooksPath"), Decision.Kind.ALLOW);
-        // a settings file of the command's choosing may be a file the guard protects
         expect("git config into a chosen file", shell("git config --file .agent/new-protected probe.value yes"), Decision.Kind.DENY);
         expect("git config into a chosen file, short", shell("git config -f .git/sdlc/mandate-approvals.json probe.value yes"), Decision.Kind.DENY);
         expect("git config into a chosen file, shortened option", shell("git config --fil x.cfg probe.value yes"), Decision.Kind.DENY);
         expect("git config read of a chosen file ok", shell("git config --file x.cfg --get probe.value"), Decision.Kind.ALLOW);
-        // an action taken back by its negation leaves git's default, which sets: only known options, written in full, each action once
         expect("git config read taken back", shell("git config --get --no-get core.hooksPath /dev/null"), Decision.Kind.DENY);
         expect("git config list taken back, into a file", shell("git config --list --no-list --file .agent/proof.cfg proof.value changed"), Decision.Kind.DENY);
         expect("git config unset taken back", shell("git config --unset --no-unset core.fsmonitor /tmp/program"), Decision.Kind.DENY);
-        // the operand of an option is not the subcommand
         expect("git config file named get", shell("git config --file get --file .git/config core.hooksPath /tmp/replacement"), Decision.Kind.DENY);
         expect("git config file named list", shell("git config --file list --file .agent/proof.cfg proof.value changed"), Decision.Kind.DENY);
         expect("git config default named get", shell("git config --default get core.hooksPath /tmp/replacement"), Decision.Kind.DENY);
@@ -226,7 +220,6 @@ final class JavaGuardTests {
         expect("git config plain set ok", shell("git config --local core.autocrlf false"), Decision.Kind.ALLOW);
         expect("git config unset of a plain key ok", shell("git config --unset branch.x.merge"), Decision.Kind.ALLOW);
         expect("git config unset of a protected key", shell("git config --unset core.hooksPath"), Decision.Kind.DENY);
-        // git stops reading options at the first key: what follows it is the value or a pattern, whatever it looks like
         expect("git config value -l after the key", shell("git config core.hooksPath -l"), Decision.Kind.DENY);
         expect("git config --list after key and value", shell("git config core.hooksPath /tmp/new-hooks -l"), Decision.Kind.DENY);
         expect("git config into a file, -l after the value", shell("git config --file .agent/proof.cfg proof.value changed -l"), Decision.Kind.DENY);
@@ -237,17 +230,14 @@ final class JavaGuardTests {
         expect("git config program key, value --unset-all", shell("git config -- core.fsmonitor /tmp/program --unset-all"), Decision.Kind.DENY);
         expect("git config program key, --get after the value", shell("git config core.pager ./x.sh --get"), Decision.Kind.DENY);
         expect("git config set subcommand, -l after the value", shell("git config set core.hooksPath /tmp/x -l"), Decision.Kind.DENY);
-        // reads with no action: one key, in any scope or file
         expect("git config read of a global key ok", shell("git config --global user.name"), Decision.Kind.ALLOW);
         expect("git config read of a key in a file ok", shell("git config --file .git/config core.autocrlf"), Decision.Kind.ALLOW);
         expect("git config global write", shell("git config --global user.name somebody"), Decision.Kind.DENY);
         expect("git config subcommand get --all ok", shell("git config get --all remote.origin.url"), Decision.Kind.ALLOW);
         expect("git config list of a file without includes ok", shell("git config --file .git/config --no-includes --list"), Decision.Kind.ALLOW);
         expect("git config read with a value pattern ok", shell("git config --get core.pager -l"), Decision.Kind.ALLOW);
-        // git read from another repository's folders
         expect("GIT_COMMON_DIR", shell("GIT_COMMON_DIR=/tmp/other.git git config proof.value changed"), Decision.Kind.DENY);
         expect("GIT_INDEX_FILE", shell("GIT_INDEX_FILE=/tmp/other.index git status"), Decision.Kind.DENY);
-        // the files of the index written under a folder of the command's choosing: the approval record in the git folder
         expect("git checkout-index with a prefix", shell("git checkout-index -f --prefix=.git/sdlc/ -- mandate-approvals.json"), Decision.Kind.DENY);
         expect("git checkout-index with a shortened prefix", shell("git checkout-index --pre=out/ -a"), Decision.Kind.DENY);
         expect("git checkout-index to temporary files", shell("git checkout-index --temp -- a.txt"), Decision.Kind.DENY);
@@ -272,7 +262,6 @@ final class JavaGuardTests {
         expect("unzip list ok", shell("unzip -l a.zip"), Decision.Kind.ALLOW);
         expect("unzip into repo asks", shell("unzip a.zip"), Decision.Kind.ASK);
 
-        // round-4 audit: relative paths are read from the folder the shell is in (cd, the hook's cwd, a tool call's workdir)
         expect("cd into a guardrail folder", shell("cd .agent && ls"), Decision.Kind.DENY);
         expect("cd into .github", shell("cd .github && ls"), Decision.Kind.DENY);
         expect("cd into the drafts ok", shell("cd .sdlc/PROJ-1/drafts && ls"), Decision.Kind.ALLOW);
@@ -292,7 +281,6 @@ final class JavaGuardTests {
         expect("hook cwd in a subfolder: relative code write", shellIn(tmp.resolve("src"), "echo x > main/java/demo/A.java"), Decision.Kind.DENY);
         expect("hook cwd in a subfolder: reading code ok", shellIn(tmp.resolve("src/main/java"), "cat demo/A.java"), Decision.Kind.ALLOW);
 
-        // the shell outside the repository: relative paths are read from out there, the rules stay this repository's
         Path above = tmp.getParent();
         String repo = tmp.getFileName().toString();
         check("a folder outside the repository is kept", above.equals(Guard.folder(tmp, tmp, above.toString())));
@@ -301,13 +289,11 @@ final class JavaGuardTests {
         expect("from above the repository: code by relative path", shellIn(above, "echo x > " + repo + "/src/main/java/demo/A.java"), Decision.Kind.DENY);
         expect("from above the repository: plain command ok", shellIn(above, "ls"), Decision.Kind.ALLOW);
 
-        // an input built to crash or stall the guard is refused, not waved through
         expect("commands nested too deep", shell("echo " + "$(echo ".repeat(13) + "x" + ")".repeat(13)), Decision.Kind.DENY);
         expect("commands nested a little are judged as before", shell("echo $(echo $(date))"), Decision.Kind.ASK);
         check("json nested too deep is refused", throwsIllegal(() -> Json.parse("[".repeat(5000) + "]".repeat(5000))));
         check("json nested a little ok", Json.parse("[[[{\"a\":[1]}]]]") != null);
 
-        // credentials through the tools that hold them
         expect("gh token by status", shell("gh auth status --show-token"), Decision.Kind.DENY);
         expect("gh token by status short", shell("gh auth status -t"), Decision.Kind.DENY);
         expect("gh auth status ok", shell("gh auth status"), Decision.Kind.ALLOW);
@@ -321,7 +307,6 @@ final class JavaGuardTests {
         expect("ps with environment", shell("ps eww"), Decision.Kind.DENY);
         expect("ps plain ok", shell("ps -ef"), Decision.Kind.ALLOW);
 
-        // variables and options that put other code into the tools
         expect("java agent by variable", shell("JAVA_TOOL_OPTIONS=-javaagent:/tmp/x.jar java .agent/Sdlc.java status"), Decision.Kind.DENY);
         expect("trust store by variable", shell("export _JAVA_OPTIONS=-Djavax.net.ssl.trustStore=/tmp/t"), Decision.Kind.DENY);
         expect("java memory by variable ok", shell("MAVEN_OPTS=-Xmx2g ./mvnw -B verify"), Decision.Kind.ALLOW);
@@ -337,7 +322,6 @@ final class JavaGuardTests {
         expect("PATH question does not hide a refusal", shell("PATH=/tmp/bin:$PATH cat .agent/local.env"), Decision.Kind.DENY);
         expect("proxy by variable asks", shell("HTTPS_PROXY=http://127.0.0.1:8888 java .agent/Sdlc.java status"), Decision.Kind.ASK);
 
-        // git: other addresses, other trees, commands git would run
         expect("push to an address", shell("git push https://example.com/x.git HEAD"), Decision.Kind.DENY);
         expect("push to an ssh address", shell("git push git@example.com:x/y.git feature/PROJ-1-demo"), Decision.Kind.DENY);
         expect("push with --repo", shell("git push --repo=https://example.com/x.git"), Decision.Kind.DENY);
@@ -355,7 +339,6 @@ final class JavaGuardTests {
         expect("lfs install asks", shell("git lfs install"), Decision.Kind.ASK);
         expect("git daemon", shell("git daemon --export-all"), Decision.Kind.DENY);
 
-        // a token never travels without encryption, and never follows a redirect elsewhere
         check("token over plain http is refused", refuses(() -> Http.text("GET", "http://jira.example.com/rest/api/2/myself", "Bearer t", null, "application/json"), "without encryption"));
 
         expect("edit guardrail", tool("create_file", "{\"filePath\":\"" + json(tmp) + "/.github/hooks/guardrails.json\"}"), Decision.Kind.DENY);
@@ -405,7 +388,7 @@ final class JavaGuardTests {
         expect("patch to guardrail file", shell("patch -p1 < guard.patch"), Decision.Kind.DENY);
         expect("git apply --check ok", shell("git apply --check bad.patch"), Decision.Kind.ALLOW);
         expect("git apply unreadable asks", shell("git apply missing.patch"), Decision.Kind.ASK);
-        try { // a link in a folder agents may write to must not lead to code, guardrail files or secrets
+        try {
             Files.createSymbolicLink(drafts.resolve("link.java"), tmp.resolve("src/main/java/com/acme/billing/B.java"));
             Files.createSymbolicLink(drafts.resolve("guard.yml"), tmp.resolve(".agent/sdlc.yml"));
             Files.createSymbolicLink(drafts.resolve("notes.txt"), tmp.resolve(".agent/local.env"));
@@ -441,7 +424,6 @@ final class JavaGuardTests {
         expect("mcp executeRead ok", tool("atlassian/executeRead", "{}"), Decision.Kind.ALLOW);
         expect("mcp unknown verb asks", tool("sonarqube/quality_gate_status", "{}"), Decision.Kind.ASK);
 
-        // round-2 audit: git abbreviations and aliases, gh api spellings, story keys, shell expansions
         Proc.run(tmp, "git", "config", "alias.pf", "push --force");
         Proc.run(tmp, "git", "config", "alias.st", "status");
         Proc.run(tmp, "git", "config", "alias.sx", "!sh -c 'git push --force'");
@@ -521,7 +503,6 @@ final class JavaGuardTests {
         }
     }
 
-    /** True when the call is refused with a message that holds the words. */
     private static boolean refuses(Runnable call, String words) {
         try {
             call.run();

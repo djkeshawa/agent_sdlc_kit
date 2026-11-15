@@ -13,15 +13,6 @@ import java.util.regex.Pattern;
 import sdlc.core.Markers;
 import sdlc.util.ShellWords;
 
-/**
- * Rules for commands an agent runs in the terminal.
- *
- * A command line is split into simple commands (ShellWords). Each command goes down the list
- * {@link #rules}: the first rule that answers decides, and a command no rule cares about is
- * allowed. The rules live in small classes by subject (EnvRules, CdRules, ReadRules, RunRules,
- * WriteRules, BuildRules, GitRules, GhRules); to add one, write a method that takes a
- * ShellCommand and returns a Decision or null, and put it in the list at the right place.
- */
 public final class ShellRules {
     static final Set<String> COPIERS = Set.of("cp", "copy", "copy-item", "cpi", "xcopy", "robocopy");
     static final Pattern BUILD_OUTPUT = Pattern.compile("^(.*/)?(target|build|out|dist|coverage|node_modules|\\.next)(/.*)?$");
@@ -46,11 +37,8 @@ public final class ShellRules {
     private final BuildRules build;
     private final RunRules run;
     private final WriteRules write;
-    /** The rules every command is put to, in this order. The first answer wins. */
     private final List<ShellRule> rules;
-    /** How deep check() is nested (bash -c "...", $(...)); the folders of a line are forgotten when the outermost one returns. */
     private int depth;
-    /** Commands nested deeper than this are refused: real work never is, and the checks would take too long. */
     private static final int MAX_NESTING = 12;
 
     ShellRules(Guard g) {
@@ -81,8 +69,6 @@ public final class ShellRules {
                 this::installers,
                 this::infrastructure);
     }
-
-    // ---------------- a command line ----------------
 
     public Decision check(String line) {
         depth++;
@@ -136,15 +122,14 @@ public final class ShellRules {
                 cd.follow(words, lineStart);
             }
         } finally {
-            g.folders.returnTo(lineStart); // the folders stay possible places: a subshell or function may have left the shell in any of them
+            g.folders.returnTo(lineStart);
         }
         return result;
     }
 
-    /** One simple command: leading NAME=value words and wrappers come off, then the rules are asked in order. */
     Decision command(List<String> raw) {
         List<String> words = new ArrayList<>(raw);
-        Decision question = Decision.allow(); // what a leading NAME=value asks the human; the command itself is still checked
+        Decision question = Decision.allow();
         while (!words.isEmpty()) {
             String w = words.get(0);
             if (w.matches("(?s)^[A-Za-z_][A-Za-z0-9_]*=.*")) {
@@ -168,9 +153,6 @@ public final class ShellRules {
         return question;
     }
 
-    // ---------------- the rules that need no class of their own ----------------
-
-    /** A word that is an approval line, names a credential file, or points into the compiled copy of this tool. */
     private Decision secretsAndToolCopy(ShellCommand c) {
         for (String w : c.words()) {
             if (w.toUpperCase(Locale.ROOT).contains(Markers.APPROVAL_WORD)) return Decision.deny("approvals are posted by a human in Jira, never by an agent.");
@@ -181,30 +163,21 @@ public final class ShellRules {
         return null;
     }
 
-    /** java .agent/Sdlc.java ..., .agent/bin/sdlc ... and the packaged `sdlc ...`: some of its commands only a human or the IDE runs. */
     private Decision ownTool(ShellCommand c) {
         List<String> words = c.words();
         for (int i = 0; i < words.size(); i++) {
             String w = words.get(i).replace('\\', '/');
-            // Three cases. The kit's own launcher under .agent/, and the packaged tool as the plain command `sdlc`, are the tool:
-            // their sensitive commands are refused and the rest is allowed. Anything else that carries the tool's name (a script
-            // called sdlc somewhere, `env sdlc ...`) is not vouched for: its sensitive commands are refused all the same, and the
-            // ordinary rules judge the rest.
-            // (and only where it is run: as the command itself, or as what java or a shell is given to run. In `cp x .agent/bin/sdlc`
-            // it is a file being written, which the write rules must judge.)
             boolean run = i == 0 || isRunBy(words, i);
             boolean kit = run && (w.endsWith(".agent/Sdlc.java") || w.endsWith(".agent/bin/sdlc") || w.endsWith(".agent/bin/sdlc.cmd") || w.equals("sdlc.Main"));
             boolean plain = w.equals("sdlc") && i == 0;
             boolean named = run && (w.equals("sdlc") || w.endsWith("/sdlc") || w.endsWith("sdlc.cmd") || w.endsWith("Sdlc.java")) || w.equals("sdlc");
             if (!(kit || plain || named)) continue;
             boolean vouched = kit || plain;
-            // the word sdlc as an argument (a folder, a search term) is not the tool. Judged on the words as written:
-            // the list this loop walks has lost its leading wrappers, but not the value of a wrapper's option (env -u PATH sdlc)
             int written = c.raw().size() - (words.size() - i);
             if (!vouched && !w.contains("/") && i > 0 && !wrappersOnly(c.raw().subList(0, Math.max(0, written)))) continue;
             String sub = i + 1 < words.size() ? words.get(i + 1) : "";
             String sub2 = i + 2 < words.size() ? words.get(i + 2) : "";
-            if (kit && i > 1 && words.subList(1, i).stream().anyMatch(o -> o.startsWith("-"))) { // the launcher may be the first word
+            if (kit && i > 1 && words.subList(1, i).stream().anyMatch(o -> o.startsWith("-"))) {
                 return Decision.deny("Java options (`" + brief(String.join(" ", words.subList(1, i))) + "`) change how the guard's tool runs. Run it plainly: java .agent/Sdlc.java <command>");
             }
             if (sub.equals("hook") || sub.equals("git-hook")) return Decision.deny("hooks are run by the IDE and git, not by hand.");
@@ -220,12 +193,6 @@ public final class ShellRules {
 
     private static final Set<String> INTERPRETERS = Set.of("java", "sh", "bash", "dash", "zsh", "ksh", "cmd");
 
-    /**
-     * True when the word at i is the program the interpreter in front runs: its first operand.
-     * In `sh payload.sh .agent/bin/sdlc` the program is payload.sh, and the launcher is only
-     * something handed to it. For java, options before the launcher also count as running it:
-     * `java -cp /tmp sdlc.Main` is the tool started with another class path, which is refused.
-     */
     private static boolean isRunBy(List<String> words, int i) {
         String interpreter = baseName(words.get(0));
         if (!INTERPRETERS.contains(interpreter)) return false;
@@ -236,14 +203,13 @@ public final class ShellRules {
     }
     private static final Set<String> BEFORE_A_COMMAND = Set.of("env", "command", "exec", "nohup", "time", "nice", "sudo", "doas", "stdbuf", "timeout", "builtin", "xargs");
 
-    /** True when every word is a command wrapper (env, exec, ...), one of its options or values, or a NAME=value: what follows is still the command. */
     private static boolean wrappersOnly(List<String> before) {
         for (int k = 0; k < before.size(); k++) {
             String w = before.get(k).replace('\\', '/');
             String name = w.substring(w.lastIndexOf('/') + 1);
             if (BEFORE_A_COMMAND.contains(name) || w.startsWith("-") || w.contains("=")) continue;
-            if (k > 0 && before.get(k - 1).startsWith("-")) continue; // the value of an option: env -u PATH, timeout -s KILL
-            if (name.matches("\\d+[smhd]?")) continue; // timeout 30, nice 10
+            if (k > 0 && before.get(k - 1).startsWith("-")) continue;
+            if (name.matches("\\d+[smhd]?")) continue;
             return false;
         }
         return true;
@@ -253,7 +219,6 @@ public final class ShellRules {
         return SYSTEM.contains(c.name()) ? Decision.deny("`" + c.name() + "` changes the machine, not the project.") : null;
     }
 
-    /** git, and the commands that write files named only inside a patch or an archive (git apply is both). */
     private Decision gitAndPatches(ShellCommand c) {
         Decision unseen = write.patchOrArchive(c);
         return c.name().equals("git") ? g.git.check(c.args()).strictest(unseen) : unseen;
@@ -263,7 +228,6 @@ public final class ShellRules {
         return c.name().equals("gh") ? g.gh.check(c.args()) : null;
     }
 
-    /** The stack's build tools, and package runners (npx is both). */
     private Decision buildAndPackages(ShellCommand c) {
         Decision runner = run.packageRunner(c);
         return build.isTool(c.cmd()) ? build.check(c.args()).strictest(runner) : runner;
@@ -282,9 +246,6 @@ public final class ShellRules {
         return INFRASTRUCTURE.contains(c.name()) ? Decision.ask("`" + c.name() + "` can change shared infrastructure.") : null;
     }
 
-    // ---------------- variables and command substitution ----------------
-
-    /** NAME=value set anywhere in the line (also after export / declare / local / readonly), in order. */
     private static Map<String, String> assignments(List<List<String>> commands) {
         Map<String, String> vars = new HashMap<>();
         for (List<String> words : commands) {
@@ -302,7 +263,6 @@ public final class ShellRules {
         return vars;
     }
 
-    /** Replaces $NAME and ${NAME} with values set in the line, or a few harmless environment values. */
     private static String substitute(String word, Map<String, String> vars) {
         if (word.indexOf('$') < 0) return word;
         Matcher m = VAR_REF.matcher(word);
@@ -316,7 +276,6 @@ public final class ShellRules {
         return sb.toString();
     }
 
-    /** A path built from a variable the guard cannot resolve might name a secret: a human decides. */
     private static Decision unresolved(List<String> words) {
         for (String w : words) {
             if (ASSIGNMENT.matcher(w).matches()) continue;
@@ -327,11 +286,6 @@ public final class ShellRules {
         return Decision.allow();
     }
 
-    /**
-     * A $(...) whose output cannot be a path the agent chose: a quoted here-document (a commit
-     * message), arithmetic, or commands that print facts (date, pwd, git rev-parse, tracked file
-     * names). Anything that prints file contents or decoded text (cat, echo | base64 -d) is not.
-     */
     static boolean predictable(String sub) {
         String t = sub.strip();
         if (t.isEmpty() || t.startsWith("(")) return true;
@@ -347,8 +301,6 @@ public final class ShellRules {
         return true;
     }
 
-    // ---------------- text helpers shared by the rule classes ----------------
-
     static String brief(String text) {
         String t = text.strip().replaceAll("\\s+", " ");
         return t.length() > 60 ? t.substring(0, 57) + "..." : t;
@@ -358,7 +310,6 @@ public final class ShellRules {
         return word.startsWith("~") ? System.getProperty("user.home") + word.substring(1) : word;
     }
 
-    /** A command's name without its folder and .exe / .bat / .ps1 / .cmd: /usr/bin/Git.exe is git. */
     static String baseName(String cmd) {
         String n = cmd.replace('\\', '/');
         n = n.substring(n.lastIndexOf('/') + 1).toLowerCase(Locale.ROOT);

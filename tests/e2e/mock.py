@@ -23,18 +23,18 @@ S = {
         "PAY-100": {"summary": "Refunds for paid orders", "type": "Story", "status": "To Do", "parent": "PAY-10",
                     "description": "As a customer I can get a refund within 30 days of payment."},
     },
-    "comments": {},  # key -> list
+    "comments": {},
     "links": [],
     "next_issue": 101,
     "spaces": {"PROD": "1001", "ARCH": "1002", "QE": "1003", "PAYDEV": "1004", "ORDERSDEV": "1005"},
-    "pages": {},  # id -> {title, spaceKey, version, storage}
+    "pages": {},
     "next_page": 5000,
     "attachments": [],
-    "ci_round": 0,  # which CI round the PR checks report
+    "ci_round": 0,
     "prs": {},
-    "commits": [],  # {repo, sha, message} for gh api search/commits
-    "files": {},  # "owner/repo:path" -> text for gh api repos/<repo>/contents/<path>
-    "auth_seen": [],  # (path, auth header) seen by Jenkins/Sonar endpoints
+    "commits": [],
+    "files": {},
+    "auth_seen": [],
     "requests": [],
 }
 next_comment = [9000]
@@ -130,7 +130,6 @@ class H(BaseHTTPRequestHandler):
 
     def route(self, m, path, q, raw):
         data = json.loads(raw) if raw and raw[:1] in (b"{", b"[") else {}
-        # ---------------- admin + fake gh ----------------
         if path == "/__admin/state":
             return self.send({k: v for k, v in S.items() if k != "requests"} | {"requests": S["requests"][-400:]})
         if path == "/__admin/comment":
@@ -145,7 +144,7 @@ class H(BaseHTTPRequestHandler):
             return self.send({"version": p["version"]})
         if path == "/__admin/ci":
             S["ci_round"] = data.get("round", S["ci_round"])
-            S["ci_auto"] = data.get("auto", False)  # auto: each new pushed head is the next CI round
+            S["ci_auto"] = data.get("auto", False)
             S["ci_heads"] = []
             return self.send({})
         if path == "/__gh/pr":
@@ -179,7 +178,6 @@ class H(BaseHTTPRequestHandler):
                     S["ci_heads"].append(head)
                 S["ci_round"] = S["ci_heads"].index(head) + 1
             return self.send(checks(S["ci_round"]) if S["ci_round"] else [])
-        # ---------------- Jira ----------------
         if path == "/rest/api/2/myself":
             acc, name = self.user()
             return self.send({"accountId": acc, "displayName": name})
@@ -217,7 +215,6 @@ class H(BaseHTTPRequestHandler):
             mp_ = re.match(r"^parent\s*=\s*(\S+)$", (data.get("jql") or "").strip())
             keys = [k for k, v in S["issues"].items() if v.get("parent") == mp_.group(1)] if mp_ else list(S["issues"])
             return self.send({"issues": [issue_json(k) for k in keys]})
-        # ---------------- Confluence ----------------
         if path == "/wiki/rest/api/search":
             mt2 = re.search(r'title ~ "\\"([^\\"]+)\\""', q["cql"])
             if not mt2:
@@ -253,7 +250,6 @@ class H(BaseHTTPRequestHandler):
             name = re.search(rb'filename="([^"]+)"', raw).group(1).decode()
             S["attachments"].append({"page": ma.group(1), "file": name, "bytes": len(raw)})
             return self.send({"results": [{"id": "att1", "title": name}]})
-        # ---------------- Jenkins ----------------
         if path == "/api/json":
             return self.send({"mode": "NORMAL"})
         if path == "/api/authentication/validate":
@@ -272,7 +268,6 @@ class H(BaseHTTPRequestHandler):
             if mj.group(2) == "consoleText":
                 return self.send(None, text="[Pipeline] { (Build and test)\nFinished: SUCCESS\n")
             return self.send(None, 404, text="")
-        # ---------------- SonarQube ----------------
         if path.startswith("/api/"):
             S["auth_seen"].append(["sonar", path, self.headers.get("Authorization", "")[:12]])
             red = S["ci_round"] == 1

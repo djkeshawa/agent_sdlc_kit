@@ -14,12 +14,6 @@ import sdlc.core.UsageException;
 import sdlc.core.Work;
 import sdlc.util.Json;
 
-/**
- * sdlc stories create <EPIC>: one Jira story per component of the approved solution design,
- * each carrying its slice and the slice's hash. Run again after a new solution version: stories
- * whose slice changed get a comment that their LLD must be updated and approved again; the others
- * are left alone.
- */
 public final class Stories {
     private static final Pattern PREFIX = Pattern.compile("^\\[([a-z0-9][a-z0-9._-]*)\\]");
 
@@ -96,7 +90,6 @@ public final class Stories {
                 + "Contracts: add or remove only what the slice provides; anything else is a solution change request.";
     }
 
-    /** Component -> story key, from the epic's local state (after stories create). */
     static Map<String, String> storyKeys(String epic) {
         Map<String, String> out = new LinkedHashMap<>();
         for (Map.Entry<String, Object> e : Json.obj(Work.state(epic).get("stories")).entrySet()) out.put(e.getKey(), Work.str(Json.obj(e.getValue()).get("key")));

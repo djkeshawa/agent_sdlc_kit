@@ -21,19 +21,6 @@ import sdlc.util.Markdown;
 import sdlc.util.ShellWords;
 import sdlc.util.Yaml;
 
-/**
- * Turns the approved LLD's work breakdown into Jira sub-tasks, and starts / finishes a task.
- * The LLD carries the breakdown as a YAML code block that starts with "# sdlc-tasks":
- *
- *   # sdlc-tasks
- *   tasks:
- *     - id: T1
- *       title: Add the refund endpoint
- *       scope: [src/main/java/com/acme/refund/**, src/test/java/com/acme/refund/**]
- *       scenarios: [TS-01, TS-02]
- *       acceptance:
- *         - Given a paid order, when POST /refunds, then 201 and the refund is stored
- */
 public final class Tasks {
     private static final Pattern FENCED = Pattern.compile("(?s)```ya?ml\\s*\\n(#\\s*sdlc-tasks.*?)```");
     private static final Pattern TS_LEVEL = Pattern.compile("(?im)^#{2,4}\\s*(TS-[0-9]+)\\b.*?$((?:(?!^#{2,4}\\s*TS-).)*)", Pattern.DOTALL);
@@ -44,14 +31,12 @@ public final class Tasks {
         this.w = w;
     }
 
-    /** Parses the tasks block from Markdown (draft) text. */
     public static List<Map<String, Object>> parse(String markdown) {
         Matcher m = FENCED.matcher(markdown);
         if (!m.find()) throw new UsageException("the LLD has no work breakdown: a ```yaml code block starting with '# sdlc-tasks' (see .agent/templates/lld.md)");
         return fromYaml(m.group(1));
     }
 
-    /** Parses the tasks block from a Confluence page (storage format). */
     public static List<Map<String, Object>> parseStorage(String storage) {
         return fromYaml(blockText(storage));
     }
@@ -61,7 +46,6 @@ public final class Tasks {
         throw new UsageException("the approved LLD page has no '# sdlc-tasks' code block");
     }
 
-    /** The whole # sdlc-tasks block of a page: tasks, and lane / solutionSlice when present. */
     static Map<String, Object> blockStorage(String storage) {
         Object root = Yaml.parse(blockText(storage));
         return root instanceof Map<?, ?> ? Json.obj(root) : new LinkedHashMap<>();
@@ -92,12 +76,6 @@ public final class Tasks {
         return out;
     }
 
-    /**
-     * A scope that would let the task edit most of the code base: a pattern outside the repository, or
-     * one with fewer than guard.minScopeDepth fixed folders before its first wildcard ("src/**",
-     * a pattern that starts with a wildcard, "{src,lib}/**"; for Java also "src/main/java/**").
-     * A path without wildcards is one file.
-     */
     public static boolean tooBroad(String scope) {
         int min = Ctx.cfg.num("guard.minScopeDepth", 2);
         for (String s : ShellWords.braces(scope)) {
@@ -118,7 +96,6 @@ public final class Tasks {
         return Ctx.cfg.stack().startsWith("node") ? "src/refund/**" : "src/main/java/com/acme/refund/**";
     }
 
-    /** sdlc tasks create <STORY>: needs the approved LLD; idempotent. */
     public int create(String story) {
         if (!w.approvals.gate(story, "lld")) return 1;
         Docs.Doc lld = w.docs.own(story, "lld");
@@ -189,7 +166,6 @@ public final class Tasks {
         return sb.toString();
     }
 
-    /** TS ids of the test design whose level is integration or e2e (they need the QA loop). */
     private List<String> qaScenarios(String story) {
         List<String> out = new ArrayList<>();
         try {
@@ -204,7 +180,6 @@ public final class Tasks {
         return out;
     }
 
-    /** sdlc task start <TASK>: checks the LLD approval is still valid, sets the scope, moves Jira. */
     public int start(String taskKey) {
         String story = storyOf(taskKey);
         if (story == null) throw new UsageException(taskKey + " is not a task of any story here. Run: java .agent/Sdlc.java tasks create <STORY>");
@@ -271,7 +246,6 @@ public final class Tasks {
                 if (java.nio.file.Files.exists(d.resolve("state.json")) && Work.tasks(Work.state(d.getFileName().toString())).containsKey(taskKey)) return d.getFileName().toString();
             }
         } catch (java.io.IOException | RuntimeException ignored) {
-            // no local state yet
         }
         return null;
     }

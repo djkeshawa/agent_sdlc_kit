@@ -1,7 +1,3 @@
-# selftest: the kit's built-in guardrail tests on every platform a team may use. The template is
-#   copied into a scratch git repository first, the way a team installs it.
-# flow: one story from ticket to merge against mock Jira, Confluence, Jenkins and SonarQube
-#   (tests/e2e). It drives the kit through sh, so it runs on Linux and macOS only.
 name: selftest
 
 on:

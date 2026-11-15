@@ -4,22 +4,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * The card: the readable view of a mandate, as plain text for a terminal. It is rendered every
- * time and never stored, so there is no second text that looks approved.
- */
 public final class MandateCard {
     private MandateCard() {}
 
-    /** Lines are wrapped to this width; a single long path may run past it. */
     static final int WIDTH = 80;
 
-    /**
-     * Text as it may be printed: every control character (but not the line breaks the tool itself
-     * writes), every invisible one and every one that turns the direction of text becomes "?".
-     * A mandate's own text is checked when it is parsed; file names, names from git and the
-     * approver's identity pass through here too.
-     */
     public static String safe(String text) {
         StringBuilder out = new StringBuilder(text.length());
         text.codePoints().forEach(c -> {
@@ -77,7 +66,6 @@ public final class MandateCard {
         wrap(sb, text, indent, indent);
     }
 
-    /** Word-wraps text to WIDTH: the first line after first, the others after rest. */
     private static void wrap(StringBuilder sb, String text, String first, String rest) {
         List<String> lines = new ArrayList<>();
         StringBuilder line = new StringBuilder(first);

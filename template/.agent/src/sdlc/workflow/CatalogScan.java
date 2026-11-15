@@ -22,18 +22,9 @@ import sdlc.util.Glob;
 import sdlc.util.Json;
 import sdlc.util.Yaml;
 
-/**
- * Static scan of this repository for the dependencies its code really has: the HTTP calls it
- * makes (Feign clients, WebClient / RestClient / RestTemplate, axios and fetch), the topics and
- * queues it consumes and produces (Kafka, JMS, Rabbit, kafkajs), and the services its
- * configuration points at. Regular expressions, not a compiler: it finds the usual spellings and
- * says where it found each one, so a human can check. Placeholders like ${clients.orders.topic}
- * are resolved from application*.yml / *.properties.
- */
 public final class CatalogScan {
     private CatalogScan() {}
 
-    /** kind: provides | calls | consumes | produces | config. target: "GET /orders/{}", "topic order-events", "host orders-service". */
     public record Edge(String component, String kind, String target, String file, int line) {}
 
     private static final Set<String> SKIP = Set.of(".git", "node_modules", "target", "build", "dist", ".sdlc", ".agent", ".gradle", ".idea", "coverage", ".next", "out");
@@ -59,7 +50,6 @@ public final class CatalogScan {
     private static final Pattern JS_FETCH = Pattern.compile("\\bfetch\\s*\\(\\s*['\"`]([^'\"`]+)['\"`]\\s*(,\\s*\\{[^}]*method\\s*:\\s*['\"`](\\w+)['\"`])?");
     private static final Pattern URL_VALUE = Pattern.compile("https?://([A-Za-z0-9._-]+)");
 
-    /** sdlc catalog scan [--write]: prints the edges, warns about undeclared ones, saves them for the graph. */
     public static int run(boolean write) throws IOException {
         Catalog c = Catalog.load();
         String self = Catalog.selfName();
@@ -78,7 +68,6 @@ public final class CatalogScan {
         return 0;
     }
 
-    /** Uses of other components that catalog-info.yaml does not declare (consumesApis or dependsOn). */
     public static List<String> undeclared(Catalog c, List<Edge> edges) {
         List<String> out = new ArrayList<>();
         Catalog.Component self = c.self();
@@ -95,7 +84,6 @@ public final class CatalogScan {
         return out;
     }
 
-    /** The component that provides a target, or null. */
     public static String provider(Catalog c, String target) {
         if (target.startsWith("host ")) {
             String host = target.substring(5).toLowerCase(Locale.ROOT);
@@ -122,7 +110,6 @@ public final class CatalogScan {
         return null;
     }
 
-    /** Every saved scan: this repository's and the synced ones. */
     static List<Edge> allEdges() {
         List<Edge> out = new ArrayList<>();
         Path dir = Catalog.dir().resolve("edges");
@@ -137,12 +124,9 @@ public final class CatalogScan {
                 }
             }
         } catch (IOException | RuntimeException e) {
-            // a damaged scan file counts as no scan
         }
         return out;
     }
-
-    // ---------------- the scan ----------------
 
     public static List<Edge> scan(Path root, String self, Catalog c) throws IOException {
         List<Edge> out = new ArrayList<>();
@@ -190,7 +174,7 @@ public final class CatalogScan {
                 String path = p.find() ? p.group(1) : "";
                 out.add(new Edge(self, "calls", verb + " " + join(base, resolve(path, props)), rel, line(text, m.start())));
             }
-            return; // a Feign interface has no other calls
+            return;
         }
         Matcher u = URI_CALL.matcher(text);
         while (u.find()) {
@@ -252,7 +236,6 @@ public final class CatalogScan {
         while (m.find()) out.add(new Edge(self, kind, prefix + resolve(m.group(group), props), rel, line(text, m.start())));
     }
 
-    /** The strings of a topics = ... attribute: up to the next attribute (name =) outside quotes. */
     static List<String> topics(String args) {
         List<String> out = new ArrayList<>();
         Matcher start = TOPICS_START.matcher(args);
@@ -289,7 +272,6 @@ public final class CatalogScan {
         return m.find() ? m.group(1) : "*";
     }
 
-    /** The HTTP verb of a WebClient / RestClient chain: the last .get() / .post() ... before the .uri(...). */
     private static String verbBefore(String text, int at) {
         String before = text.substring(Math.max(0, at - 200), at);
         Matcher m = HTTP_VERB.matcher(before);
@@ -312,7 +294,6 @@ public final class CatalogScan {
 
     private static final Pattern PLACEHOLDER = Pattern.compile("\\$\\{([^}:]+)(:([^}]*))?\\}");
 
-    /** ${key} and ${key:default} from the application configuration; unknown ones stay as written. */
     static String resolve(String value, Map<String, String> props) {
         Matcher m = PLACEHOLDER.matcher(value);
         StringBuilder sb = new StringBuilder();
@@ -325,7 +306,6 @@ public final class CatalogScan {
         return sb.toString();
     }
 
-    /** Flattened keys of src/main/resources/application*.yml and *.properties (first value wins). */
     static Map<String, String> properties(Path root) {
         Map<String, String> out = new LinkedHashMap<>();
         try (Stream<Path> s = Files.walk(root)) {
@@ -341,13 +321,11 @@ public final class CatalogScan {
                         try {
                             flatten("", Yaml.parse(doc), out);
                         } catch (RuntimeException e) {
-                            // a file the small YAML reader cannot read: its placeholders stay unresolved
                         }
                     }
                 }
             }
         } catch (IOException e) {
-            // no configuration: nothing to resolve
         }
         return out;
     }

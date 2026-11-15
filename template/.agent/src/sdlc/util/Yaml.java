@@ -5,13 +5,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * A small YAML reader for configuration files. Supported: block mappings and sequences,
- * sequences of mappings, plain / 'single' / "double" quoted scalars, comments, flow
- * collections on one line ([a, b], {k: v}), and | or > block scalars. Not supported:
- * anchors, aliases, tags, multi-document files, flow collections over several lines.
- * Scalars stay strings (except null and ~); Config converts types when read.
- */
 public final class Yaml {
     private record Line(int indent, String text, String raw, int number) {}
 
@@ -25,7 +18,7 @@ public final class Yaml {
             if (r.trim().equals("---") || r.trim().equals("...")) continue;
             String noComment = stripComment(r);
             if (noComment.isBlank()) {
-                lines.add(new Line(-1, "", r, n + 1)); // kept for block scalars
+                lines.add(new Line(-1, "", r, n + 1));
                 continue;
             }
             int indent = 0;
@@ -77,7 +70,6 @@ public final class Yaml {
                 skipBlank();
                 out.add(pos < lines.size() && lines.get(pos).indent > indent ? node(lines.get(pos).indent) : null);
             } else if (keyEnd(rest) > 0 && !rest.startsWith("[") && !rest.startsWith("{") && !rest.startsWith("\"") && !rest.startsWith("'")) {
-                // "- key: value" starts a mapping whose keys line up after the dash
                 int childIndent = indent + (l.text.length() - rest.length());
                 lines.set(pos, new Line(childIndent, rest, l.raw, l.number));
                 out.add(mapping(childIndent));
@@ -136,7 +128,6 @@ public final class Yaml {
         return folded ? String.join(" ", body).replaceAll(" {2,}", " ").trim() : String.join("\n", body) + "\n";
     }
 
-    /** Index of the ':' that ends a key (followed by space or end of line), outside quotes. */
     static int keyEnd(String t) {
         char q = 0;
         for (int i = 0; i < t.length(); i++) {
@@ -208,7 +199,6 @@ public final class Yaml {
         return new IllegalArgumentException("YAML line " + l.number + ": " + msg + ": " + l.raw.trim());
     }
 
-    /** One-line flow collections: [a, "b c", {k: v}] */
     private final class Flow {
         final String s;
         final Line line;

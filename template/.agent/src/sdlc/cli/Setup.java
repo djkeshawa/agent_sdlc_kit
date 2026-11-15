@@ -18,7 +18,6 @@ import sdlc.util.Proc;
 import sdlc.workflow.IssueTracker;
 import sdlc.workflow.Wiki;
 
-/** setup (once per clone), config check / apply, doctor. */
 public final class Setup {
     private Setup() {}
 
@@ -86,7 +85,6 @@ public final class Setup {
         return problems.isEmpty() ? 0 : 1;
     }
 
-    /** Writes agent models into .github/agents/*.agent.md and generates .vscode/mcp.json. */
     public static int configApply() throws IOException {
         Path agents = Ctx.root.resolve(".github/agents");
         if (Files.isDirectory(agents)) {
@@ -172,12 +170,10 @@ public final class Setup {
         return out;
     }
 
-    /** The tokens file is for its owner only (where the file system knows owners: not on Windows). */
     private static void ownerOnly(Path file) {
         try {
             Files.setPosixFilePermissions(file, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
         } catch (UnsupportedOperationException | IOException e) {
-            // Windows, or a file system without permissions
         }
     }
 
@@ -190,7 +186,6 @@ public final class Setup {
         }
     }
 
-    /** True when the generated hook settings of a tool run the command this version of the kit writes. */
     private static boolean hooksCurrent(Path settings, String tool) {
         try {
             String text = Files.readString(settings);

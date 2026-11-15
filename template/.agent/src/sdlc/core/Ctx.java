@@ -10,7 +10,6 @@ import java.util.Map;
 import sdlc.util.Http;
 import sdlc.util.Proc;
 
-/** Where things are: repository root, configuration, local secrets, the .sdlc work folder. */
 public final class Ctx {
     public static final boolean WINDOWS = Proc.WINDOWS;
     public static Path root;
@@ -23,7 +22,7 @@ public final class Ctx {
         root = gitRoot(start);
         cfg = Config.load(root.resolve(".agent/sdlc.yml"));
         secrets = null;
-        Http.proxy = () -> secret("HTTPS_PROXY", secret("https_proxy", "")); // local.env may name the company proxy
+        Http.proxy = () -> secret("HTTPS_PROXY", secret("https_proxy", ""));
         Http.allowPlainHttp = cfg.bool("guard.allowPlainHttp", false);
     }
 
@@ -32,14 +31,12 @@ public final class Ctx {
         return p.ok() ? Path.of(p.out().trim()) : start.toAbsolutePath();
     }
 
-    /** .sdlc/ - local, git-ignored working folder. */
     public static Path work(String... parts) {
         Path p = root.resolve(".sdlc");
         for (String part : parts) p = p.resolve(part);
         return p;
     }
 
-    /** Environment variables win over .agent/local.env. */
     public static String secret(String key, String fallback) {
         if (secrets == null) secrets = loadSecrets();
         String v = secrets.get(key);
@@ -66,7 +63,6 @@ public final class Ctx {
                     out.put(k, v);
                 }
             } catch (IOException ignored) {
-                // unreadable file counts as empty
             }
         }
         System.getenv().forEach((k, v) -> {

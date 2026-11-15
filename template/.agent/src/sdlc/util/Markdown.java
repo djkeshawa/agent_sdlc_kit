@@ -8,11 +8,6 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * Markdown <-> Confluence storage format. Covers what specs need: headings, paragraphs, nested
- * lists, task boxes, tables, code blocks (Mermaid too), block quotes, links, images (as
- * attachments), bold, italics and inline code.
- */
 public final class Markdown {
     private static final Pattern HEADING = Pattern.compile("^(#{1,6})\\s+(.*)$");
     private static final Pattern ITEM = Pattern.compile("^(\\s*)([-*+]|\\d+[.)])\\s+(.*)$");
@@ -21,14 +16,12 @@ public final class Markdown {
 
     private Markdown() {}
 
-    /** Storage XHTML plus the local image files it references (to upload as attachments). */
     public record Converted(String storage, List<String> images) {}
 
     public static Converted toStorage(String md) {
         return toStorage(md, "");
     }
 
-    /** mermaidMacro: the name of the wiki's Mermaid macro, or blank to keep diagrams as code blocks. */
     public static Converted toStorage(String md, String mermaidMacro) {
         StringBuilder out = new StringBuilder();
         List<String> images = new ArrayList<>();
@@ -101,7 +94,7 @@ public final class Markdown {
                 continue;
             }
             if (lists.open() && line.startsWith("  ")) {
-                lists.continueItem(t); // a wrapped list item line
+                lists.continueItem(t);
                 continue;
             }
             lists.closeAll();
@@ -112,7 +105,6 @@ public final class Markdown {
         return new Converted(out.toString(), images);
     }
 
-    /** Nested lists by indentation. */
     private static final class Lists {
         private record Level(int indent, String kind) {}
 
@@ -208,13 +200,10 @@ public final class Markdown {
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
     }
 
-    // ---------------- storage -> Markdown (for agents to read pulled pages) ----------------
-
     private static final Pattern CODE_BLOCK = Pattern.compile("<ac:structured-macro[^>]*ac:name=\"(code|noformat|[a-z-]*mermaid[a-z-]*)\"[^>]*>(.*?)</ac:structured-macro>", Pattern.DOTALL);
     private static final Pattern CDATA = Pattern.compile("<!\\[CDATA\\[(.*?)]]>", Pattern.DOTALL);
     private static final Pattern LANG = Pattern.compile("<ac:parameter ac:name=\"language\">([^<]*)</ac:parameter>");
 
-    /** Code blocks of a page: [language, content]. */
     public static List<String[]> codeBlocks(String storage) {
         List<String[]> out = new ArrayList<>();
         Matcher m = CODE_BLOCK.matcher(storage);
@@ -273,11 +262,6 @@ public final class Markdown {
     private static final Pattern ROW = Pattern.compile("(?s)<tr[^>]*>(.*?)</tr>");
     private static final Pattern CELL = Pattern.compile("(?s)<t([hd])[^>]*>(.*?)</t[hd]>");
 
-    /**
-     * Confluence-specific blocks, so agents read the content and none of the editor's bookkeeping:
-     * status lozenges, panels, expands, ADF panels and decisions (without their duplicate fallback
-     * copy), task lists, numbered lists and tables whose cells hold paragraphs.
-     */
     static String confluenceBlocks(String s) {
         s = s.replaceAll("(?s)<ac:adf-fallback>.*?</ac:adf-fallback>", "");
         s = each(s, STATUS, mt -> {
@@ -305,7 +289,7 @@ public final class Markdown {
         s = s.replaceAll("<ac:adf-attribute[^>]*>[^<]*</ac:adf-attribute>", "").replaceAll("</?ac:adf-(extension|content)>", "");
         s = each(s, TASK, mt -> "<li>" + (mt.group(1).equals("complete") ? "[x] " : "[ ] ") + mt.group(2) + "</li>");
         s = s.replaceAll("<ac:task-list[^>]*>", "<ul>").replaceAll("</ac:task-list>", "</ul>");
-        s = s.replaceAll("(?s)<ac:parameter[^>]*>.*?</ac:parameter>", ""); // leftover macro settings (colours, layout ids)
+        s = s.replaceAll("(?s)<ac:parameter[^>]*>.*?</ac:parameter>", "");
         s = s.replaceAll("<li([^>]*)>\\s*<p[^>]*>", "<li$1>").replaceAll("</p>\\s*</li>", "</li>");
         s = each(s, ORDERED, mt -> {
             int[] n = {0};
@@ -338,7 +322,6 @@ public final class Markdown {
         };
     }
 
-    /** A table cell on one line: inline formatting kept, paragraphs joined, pipes escaped. */
     private static String cellText(String html) {
         String c = html.replaceAll("<(strong|b)>", "**").replaceAll("</(strong|b)>", "**").replaceAll("<code>", "`").replaceAll("</code>", "`");
         c = c.replaceAll("<a [^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>", "[$2]($1)").replaceAll("<(br|/p|/li)[^>]*>", " ").replaceAll("<[^>]+>", "");

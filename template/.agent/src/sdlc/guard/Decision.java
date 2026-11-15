@@ -1,6 +1,5 @@
 package sdlc.guard;
 
-/** The answer of a guardrail rule to one tool call. */
 public record Decision(Kind kind, String reason) {
     public enum Kind { ALLOW, ASK, DENY }
 

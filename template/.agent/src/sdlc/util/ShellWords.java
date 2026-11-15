@@ -5,12 +5,9 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** A POSIX-ish shell tokenizer, good enough for refusal checks (not for running commands). */
 public final class ShellWords {
     private ShellWords() {}
 
-    /** Splits a command line into simple commands (on ; && || | & ( ) and newlines). Redirections stay as words ">", ">>". */
-    /** argv -> one shell line, single-quoting words that need it (for tools that pass commands as arrays). */
     public static String join(List<String> argv) {
         StringBuilder sb = new StringBuilder();
         for (String a : argv) {
@@ -24,11 +21,6 @@ public final class ShellWords {
         return commands(line, false);
     }
 
-    /**
-     * posix = true reads the line as sh/bash/zsh do: a backslash before ANY character quotes it
-     * (local.e\nv is local.env). posix = false keeps such backslashes, as cmd and PowerShell do
-     * (C:\Users\me). The guard cannot know the shell, so callers check both readings.
-     */
     public static List<List<String>> commands(String line, boolean posix) {
         List<List<String>> out = new ArrayList<>();
         List<String> words = new ArrayList<>();
@@ -37,10 +29,10 @@ public final class ShellWords {
         for (int i = 0; i < line.length(); i++) {
             char c = line.charAt(i);
             if (c == '$' && i + 1 < line.length() && line.charAt(i + 1) == '\'') {
-                i = ansiC(line, i + 2, w); // $'...': the shell decodes \x2e, \056, . ... before running the command
+                i = ansiC(line, i + 2, w); // $'...': the shell decodes \x2e, \056, ... before running the command
                 inWord = true;
             } else if (c == '$' && i + 1 < line.length() && line.charAt(i + 1) == '"') {
-                inWord = true; // $"...": a translatable string, read like "..."
+                inWord = true;
             } else if (c == '\'') {
                 int end = line.indexOf('\'', i + 1);
                 if (end < 0) end = line.length();
@@ -57,7 +49,7 @@ public final class ShellWords {
                 i = j;
                 inWord = true;
             } else if (c == '\\' && i + 1 < line.length() && (posix || " \t\"'\\$`;&|()<>\n".indexOf(line.charAt(i + 1)) >= 0)) {
-                w.append(line.charAt(++i)); // a shell escape; other backslashes belong to Windows paths
+                w.append(line.charAt(++i));
                 inWord = true;
             } else if (c == ';' || c == '|' || c == '&' || c == '\n' || c == '(' || c == ')') {
                 if (c == '&' && i + 1 < line.length() && line.charAt(i + 1) == '>') {
@@ -85,7 +77,7 @@ public final class ShellWords {
                     i++;
                 }
                 if (i + 1 < line.length() && line.charAt(i + 1) == '&') {
-                    i++; // 2>&1: the target is a descriptor, not a file
+                    i++;
                     while (i + 1 < line.length() && Character.isDigit(line.charAt(i + 1))) i++;
                     continue;
                 }
@@ -103,7 +95,6 @@ public final class ShellWords {
         return out;
     }
 
-    /** Decodes the body of $'...' starting at index j into w; returns the index of the closing quote. */
     private static int ansiC(String line, int j, StringBuilder w) {
         while (j < line.length() && line.charAt(j) != '\'') {
             char d = line.charAt(j);
@@ -146,7 +137,6 @@ public final class ShellWords {
         return j;
     }
 
-    /** Brace expansion as bash does it before running a command: a.{x,y} -> a.x a.y, {a..c} -> a b c. */
     public static List<String> braces(String word) {
         List<String> out = new ArrayList<>();
         expandBraces(word, out);
@@ -161,7 +151,7 @@ public final class ShellWords {
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);
             if (c == '{' && i > 0 && s.charAt(i - 1) == '$') {
-                dollar++; // ${VAR} is a variable, not an expansion
+                dollar++;
             } else if (c == '{') {
                 if (depth++ == 0) open = i;
             } else if (c == '}' && dollar > 0 && depth == 0) {
@@ -213,7 +203,6 @@ public final class ShellWords {
 
     private static final Pattern LITERAL_HEREDOC = Pattern.compile("<<-?[ \\t]*(?:'([^'\\n]+)'|\"([^\"\\n]+)\"|\\\\(\\w+))");
 
-    /** The line without the bodies of quoted here-documents (<<'EOF' ... EOF), which the shell does not expand. */
     public static String stripLiteralHeredocs(String line) {
         StringBuilder sb = new StringBuilder();
         Matcher m = LITERAL_HEREDOC.matcher(line);
@@ -233,17 +222,13 @@ public final class ShellWords {
                 if (e < 0) break;
                 k = e + 1;
             }
-            if (after < 0) break; // no terminator: leave the rest as it is
+            if (after < 0) break;
             sb.append(line, pos, bodyStart);
             pos = after;
         }
         return sb.append(line.substring(Math.min(pos, line.length()))).toString();
     }
 
-    /**
-     * The $(...) and `...` the shell really runs: not those inside single quotes, behind a
-     * backslash, or in a quoted here-document. Only the outermost ones are returned.
-     */
     public static List<String> liveSubstitutions(String line) {
         List<String> out = new ArrayList<>();
         String s = stripLiteralHeredocs(line);
@@ -277,7 +262,6 @@ public final class ShellWords {
         return out;
     }
 
-    /** Contents of $(...) and `...`, so they are checked too. */
     public static List<String> substitutions(String line) {
         List<String> out = new ArrayList<>();
         Matcher back = Pattern.compile("`([^`]*)`").matcher(line);

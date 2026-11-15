@@ -1,7 +1,3 @@
-# Multi-component checks, run by flow.py in its namespace (PROJ, sdlc, hook, bash, admin, state, check, write ...).
-# The repository is payments-service on feature/PAY-100-refunds after the single-repo flow.
-
-# ---------- Phase 0: scoping eval ----------
 admin("/__gh/commits", {"commits": [
     {"repo": "acme/payments-service", "sha": "a1", "message": "feat(PAY-100): refund endpoint"},
     {"repo": "acme/orders-service", "sha": "b1", "message": "feat(PAY-101): show refund status (carries a sub-task's key)"},
@@ -27,7 +23,6 @@ check("eval score: pass@k, pass^k, recall per case", code == 0 and "| pass@k (so
       and "| pass^k (every run exactly right) | 0.00 |" in out and "| Recall (mean) | 0.75 |" in out
       and (PROJ / ".sdlc/hidden/eval/report.md").exists(), out)
 
-# ---------- Phase 1: catalog, solution design, stories, lanes ----------
 OPENAPI = """openapi: 3.0.3
 paths:
   /orders/{orderId}/refunds:
@@ -167,7 +162,6 @@ check("classify: a story under a solution is cross-component", code == 0 and "Lo
 code, out = sdlc("feature", "status", "PAY-10")
 check("feature status: approved solution, stories without LLDs", code == 1 and "APPROVED by Architect" in out and "no LLD yet" in out and "0 of 2" in out, out)
 
-# ---------- Phase 2: locked acceptance tests, contract policy, hold-out results ----------
 ACC = "src/test/java/com/acme/payments/refund/RefundAcceptanceTest.java"
 agent_write(".sdlc/PAY-100/drafts/acceptance/" + ACC, "package com.acme.payments.refund;\n\npublic class RefundAcceptanceTest {\n"
             "    public static void main(String[] a) { System.out.println(\"TS-01 acceptance ok\"); }\n}\n")
@@ -212,7 +206,6 @@ digest = sorted((PROJ / ".sdlc/PAY-100/rounds").glob("holdout-*.md"))
 check("holdout digest never shows the hidden test's inputs", "SECRET-INPUT-42" not in out and digest and "SECRET-INPUT-42" not in digest[-1].read_text(), out)
 check("holdout: Jenkins token sent to the configured job", any(a[0] == "holdout" and a[2].startswith("Basic") for a in state()["auth_seen"]))
 
-# ---------- Phase 3: co-change, runtime traces, pinned kit version ----------
 admin("/__gh/commits", {"commits": [
     {"repo": "acme/payments-service", "sha": "a1", "message": "feat(PAY-100): refund endpoint"},
     {"repo": "acme/orders-service", "sha": "b9", "message": "feat(PAY-10): on a feature branch, not in the search index", "searchable": False},

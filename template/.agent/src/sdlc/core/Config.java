@@ -12,7 +12,6 @@ import sdlc.util.Glob;
 import sdlc.util.Json;
 import sdlc.util.Yaml;
 
-/** The merged configuration: built-in defaults, the stack preset, then .agent/sdlc.yml. */
 public final class Config {
     final Map<String, Object> root;
 
@@ -20,10 +19,6 @@ public final class Config {
         this.root = root;
     }
 
-    /**
-     * .agent/sdlc.yml over .agent/org.yml (the organisation's rules, shipped with the kit by
-     * `sdlc upgrade`) over the stack preset over the built-in defaults.
-     */
     static Config load(Path file) throws IOException {
         Map<String, Object> user = Files.exists(file) ? asMap(Yaml.parse(Files.readString(file)), "sdlc.yml") : new LinkedHashMap<>();
         Path orgFile = file.resolveSibling("org.yml");
@@ -45,12 +40,10 @@ public final class Config {
         return new Config(merged);
     }
 
-    /** Test hook: the merge of an organisation layer and a repository layer. */
     public static Config parseLayers(String orgYaml, String repoYaml) {
         return fromLayers(asMap(Yaml.parse(orgYaml), "org.yml"), asMap(Yaml.parse(repoYaml), "sdlc.yml"));
     }
 
-    /** The configuration from the text of its two files; the organisation layer may be missing (null). */
     public static Config fromText(String orgYaml, String repoYaml) {
         Map<String, Object> org = orgYaml == null || orgYaml.isBlank() ? new LinkedHashMap<>() : asMap(Yaml.parse(orgYaml), "org.yml");
         return fromLayers(org, asMap(Yaml.parse(repoYaml), "sdlc.yml"));
@@ -67,7 +60,6 @@ public final class Config {
         throw new IllegalArgumentException(what + " must be a mapping (key: value) at the top level");
     }
 
-    /** Deep merge: maps merge, everything else replaces; "key+" appends to a list. */
     @SuppressWarnings("unchecked")
     static void merge(Map<String, Object> base, Map<String, Object> over) {
         for (Map.Entry<String, Object> e : over.entrySet()) {
@@ -143,8 +135,6 @@ public final class Config {
         return get(path) instanceof Map<?, ?> m ? (Map<String, Object>) m : new LinkedHashMap<>();
     }
 
-    // ---- frequently used values ----
-
     public String stack() { return str("stack", "java-maven"); }
     public boolean cloud() { return !str("jira.deployment", "cloud").toLowerCase().matches("datacenter|data-center|server|dc"); }
     public String baseBranch() { return str("delivery.baseBranch", "develop"); }
@@ -155,11 +145,6 @@ public final class Config {
         return cmd.equals(Defaults.NODE_VERIFY) && Ctx.root != null ? nodeVerify(Ctx.root, cmd) : cmd;
     }
 
-    /**
-     * The Node default uses npm. When build.verify was left alone and the repository has a pnpm or
-     * yarn lock file, the same steps run with that package manager (yarn has no --if-present, so
-     * lint and build run only when package.json has such a script).
-     */
     static String nodeVerify(Path root, String npmDefault) {
         if (Files.exists(root.resolve("pnpm-lock.yaml"))) return "pnpm run --if-present lint && pnpm test && pnpm run --if-present build";
         if (!Files.exists(root.resolve("yarn.lock"))) return npmDefault;
@@ -167,7 +152,6 @@ public final class Config {
         try {
             if (Json.at(Json.parse(Files.readString(root.resolve("package.json"))), "scripts") instanceof Map<?, ?> m) scripts = Json.obj(m);
         } catch (IOException | RuntimeException e) {
-            // no readable package.json: run the tests only
         }
         return (scripts.containsKey("lint") ? "yarn run lint && " : "") + "yarn test" + (scripts.containsKey("build") ? " && yarn run build" : "");
     }
@@ -182,7 +166,6 @@ public final class Config {
         return !branch.isEmpty() && Glob.any(list("git.protectedBranches"), branch);
     }
 
-    /** Problems a person should fix in sdlc.yml; empty when fine. */
     public List<String> problems() {
         List<String> p = new ArrayList<>();
         if (projectKeys().isEmpty()) p.add("jira.projectKeys is empty (e.g. [PAY])");

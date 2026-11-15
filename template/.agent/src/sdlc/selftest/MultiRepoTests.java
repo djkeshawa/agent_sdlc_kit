@@ -34,7 +34,6 @@ import sdlc.workflow.TestLocks;
 import sdlc.workflow.Verify;
 import sdlc.workflow.Workflow;
 
-/** Self test: the multi-component additions (scoping eval, catalog, solution design, contracts, locks). */
 final class MultiRepoTests {
     private MultiRepoTests() {}
 
@@ -403,7 +402,6 @@ final class MultiRepoTests {
         Files.delete(tmp.resolve(".sdlc/PROJ-70/drafts/acceptance/src/main/java/Sneaky.java"));
         check("locks: QE locks the drafted acceptance test", TestLocks.lock("PROJ-70", "") == 0 && Files.exists(tmp.resolve(test))
                 && Locks.isLocked(tmp, test) && Locks.broken(tmp).isEmpty());
-        // CI reads the base branch's locks: a pull request cannot loosen a lock by changing its own copy
         String[] git = {"git", "-c", "user.name=t", "-c", "user.email=t@x", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"};
         String back = Proc.run(tmp, "git", "rev-parse", "--abbrev-ref", "HEAD").out().strip();
         Path lockFile = tmp.resolve("docs/test-locks/PROJ-70.json");
@@ -453,7 +451,6 @@ final class MultiRepoTests {
         } finally {
             Ctx.cfg = before;
         }
-        // pre-commit checks what is staged, not the working tree
         Store.writeText(tmp.resolve(test), "class RefundAcceptanceTest { /* weakened */ }\n");
         Proc.run(tmp, "git", "add", "-f", test);
         Store.writeText(tmp.resolve(test), "class RefundAcceptanceTest { /* TS-01 */ }\n");
@@ -465,7 +462,6 @@ final class MultiRepoTests {
         check("locks: a staged deletion of a locked test is caught", sdlc.cli.GitHooks.stagedLockProblems(List.of(), List.of(test)).stream().anyMatch(b -> b.endsWith(": deleted")));
         Proc.run(tmp, "git", "rm", "-q", "-f", "--cached", test);
         Store.writeText(tmp.resolve(test), "class RefundAcceptanceTest { /* weakened */ }\n");
-        // a lock file that cannot be read must not switch the protection off
         Store.writeText(tmp.resolve("docs/test-locks/PROJ-70.json"), "{ \"story\": \"PROJ-70\", \"files\": {");
         check("locks: a damaged lock file is reported as broken", Locks.locked(tmp).isEmpty() && Locks.broken(tmp).stream().anyMatch(b -> b.startsWith("docs/test-locks/PROJ-70.json (lock file)")));
         check("locks: a damaged lock file does not count as the story's lock", !Locks.hasStory(tmp, "PROJ-70"));
@@ -482,7 +478,7 @@ final class MultiRepoTests {
     }
 
     private static void contractPolicy(Path tmp) throws IOException {
-        sdlc.core.Trusted.env = name -> null; // the self test may itself run in a pull request build
+        sdlc.core.Trusted.env = name -> null;
         try {
             contractPolicyOnADevelopersMachine(tmp);
         } finally {
@@ -521,7 +517,6 @@ final class MultiRepoTests {
         check("contracts: an allowance for a path with a slash at its end does not cover the path without it",
                 Contracts.prPolicy("PROJ-80", base, changed).fails().stream().anyMatch(f -> f.contains("GET /refunds added, but the solution slice does not list it")));
         Store.write(allow, Store.map("operations", "exact", "story", "PROJ-80", "lane", "cross-component", "apis", Map.of("payments-api", Store.map("add", List.of("GET /refunds"), "remove", List.of(), "breaking", false))));
-        // a contract that cannot be read is a failure, never an empty contract that "did not change"
         int limit = Proc.maxOutput;
         Proc.maxOutput = 200;
         try {
@@ -529,7 +524,6 @@ final class MultiRepoTests {
         } finally {
             Proc.maxOutput = limit;
         }
-        // in a pull request build the allowance is the base branch's: the pull request's own copy grants nothing
         sdlc.core.Trusted.env = name -> name.equals("GITHUB_BASE_REF") ? "main" : null;
         try {
             Contracts.Policy own = Contracts.prPolicy("PROJ-80", base, changed);
@@ -561,7 +555,6 @@ final class MultiRepoTests {
         } finally {
             Ctx.cfg = before;
         }
-        // the base branch moves on after the feature branched off: its new operation is not "removed" by the feature
         Proc.run(tmp, "git", "switch", "-q", "-c", "base-moved", base);
         Store.writeText(tmp.resolve("api/openapi.yaml"), OPENAPI.replace("\ncomponents:", "\n  /base-only:\n    get:\n      responses:\n        \"200\": {description: ok}\ncomponents:"));
         Proc.run(tmp, "git", "add", "api/openapi.yaml");
@@ -571,7 +564,6 @@ final class MultiRepoTests {
         Contracts.Policy moved = Contracts.prPolicy("PROJ-80", "base-moved", changed);
         check("contracts: an operation added on the base branch later is not seen as removed", moved.fails().isEmpty() && Contracts.mergeBase("base-moved").equals(base));
         check("contracts: without a common ancestor the base itself is compared", Contracts.mergeBase("no-such-ref").equals("no-such-ref"));
-        // a rename is the contract's removal: git mv cannot hide it from the check
         Proc.run(tmp, "git", "switch", "-q", "-c", "feature/PROJ-82-move", base);
         Proc.run(tmp, "git", "mv", "api/openapi.yaml", "api/moved.yaml");
         Proc.run(tmp, concat(git, "commit", "-q", "-m", "chore(PROJ-82): move the contract"));
@@ -579,7 +571,6 @@ final class MultiRepoTests {
         Store.write(allow82, Store.map("operations", "exact", "story", "PROJ-82", "lane", "component", "apis", Map.of("payments-api", Store.map("add", List.of("*"), "remove", List.of(), "breaking", false))));
         check("contracts: a contract moved away with git mv is checked as removed", !Contracts.prPolicy("PROJ-82", base, List.of("api/moved.yaml")).fails().isEmpty());
         Files.deleteIfExists(allow82);
-        // the base branch's catalog names the contract files: dropping the API from catalog-info.yaml does not skip the check
         Proc.run(tmp, "git", "switch", "-q", "-c", "catalog-base", base);
         Proc.run(tmp, "git", "add", "-f", "catalog-info.yaml");
         Proc.run(tmp, concat(git, "commit", "-q", "-m", "chore(PROJ-83): catalog"));

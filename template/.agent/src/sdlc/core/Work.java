@@ -8,15 +8,6 @@ import java.util.Map;
 
 import sdlc.util.Json;
 
-/**
- * Local workflow state, in .sdlc/ (git-ignored, protected from agent edits):
- *   current.json            the story and task being worked on
- *   <STORY>/state.json      tasks, review/QA/CI rounds, the pull request
- *   <STORY>/sources/        pulled one pager, HLD, test design, LLDs (read by agents)
- *   <STORY>/drafts/         agent drafts of the test design and LLD (agent-writable)
- *   <STORY>/inbox/          reports agents hand in (agent-writable)
- *   <STORY>/rounds/         reports filed by the tool (read-only for agents)
- */
 public final class Work {
     public record Task(String key, String story, String id, String title, List<String> scope, List<String> scenarios, List<String> acceptance) {}
 
@@ -24,7 +15,7 @@ public final class Work {
 
     private static final java.util.regex.Pattern KEY = java.util.regex.Pattern.compile("^[A-Z][A-Z0-9_]*-[0-9]+$");
 
-    /** .sdlc/<KEY>: only a real Jira key, so a key from the command line can never point outside .sdlc. */
+    // Only a real Jira key, so a key from the command line can never point outside .sdlc.
     public static Path storyDir(String story) {
         if (story == null || !KEY.matcher(story).matches()) throw new UsageException("'" + story + "' is not a Jira issue key (like PAY-123)");
         return Ctx.work(story);
@@ -82,7 +73,6 @@ public final class Work {
         return l;
     }
 
-    /** The task the agent may edit code for, or null. */
     public static Task currentTask() {
         Map<String, Object> c = current();
         String story = String.valueOf(c.getOrDefault("story", ""));
@@ -103,11 +93,6 @@ public final class Work {
         return out;
     }
 
-    /**
-     * The texts of a list exactly as they are written, white space at their ends included. For
-     * values that are compared byte for byte, such as the operations of a contract: a trimmed
-     * "orders " would allow a change to "orders", which is another channel.
-     */
     public static List<String> exact(Object o) {
         List<String> out = new ArrayList<>();
         if (o instanceof List<?> l) for (Object x : l) if (x != null && !x.toString().isEmpty()) out.add(x.toString());

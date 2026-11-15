@@ -20,11 +20,8 @@ import sdlc.util.Glob;
 import sdlc.util.Json;
 import sdlc.util.Proc;
 
-/** Content checks shared by the git hooks, the PR gate and `sdlc check-pr`. */
 public final class Checks {
     private Checks() {}
-
-    // ---------------- secrets ----------------
 
     private static final Pattern CONFIG_ASSIGNMENT = Pattern.compile("(?i)([\\w.-]*(?:password|passwd|pwd|secret|api[_-]?key|token|credentials?)[\\w.-]*)\\s*[:=]\\s*[\"']?([^\\s\"'#,)]{8,})");
     private static final Pattern CODE_LITERAL = Pattern.compile("(?i)((?:password|passwd|secret|api_?key|token)\\w*)\\s*[:=]\\s*[\"'`]([^\"'`\\s]{8,})[\"'`]");
@@ -76,15 +73,11 @@ public final class Checks {
         return dot <= 0 ? "" : name.substring(dot + 1).toLowerCase(Locale.ROOT);
     }
 
-    // ---------------- tests ----------------
-
     public static boolean containsDisabled(String text) {
         for (String re : Ctx.cfg.list("tests.disabledPatterns")) {
             try {
                 if (Pattern.compile(re).matcher(text).find()) return true;
             } catch (StackOverflowError e) {
-                // a repository's own pattern that recurses once per repetition, on text made to drive it deep: the
-                // pattern could not be applied, and text written to break the check is not let through as clean
                 return true;
             }
         }
@@ -95,8 +88,6 @@ public final class Checks {
         List<String> hits = new ArrayList<>();
         for (Map.Entry<String, List<String>> e : added.entrySet()) {
             if (!Glob.any(Ctx.cfg.list("paths.test"), e.getKey())) continue;
-            // a line longer than the switch lint reads is not read here either (check-pr and check say how many were not read):
-            // the configured patterns are a repository's own, and their cost on a very long line is not known
             for (String line : e.getValue()) if (line.length() <= sdlc.check.Integrity.LONGEST && containsDisabled(line)) hits.add(e.getKey() + ": " + line.trim());
         }
         return hits;
@@ -106,15 +97,12 @@ public final class Checks {
         return Ctx.cfg.list("tests.codeExtensions").contains(ext(f)) && Glob.any(Ctx.cfg.list("paths.main"), f) && !Glob.any(Ctx.cfg.list("paths.test"), f);
     }
 
-    /** Main code changed but no test code changed. */
     public static boolean testsMissing(List<String> files) {
         if (!Ctx.cfg.bool("tests.requireTestsForMainChanges", true)) return false;
         boolean main = files.stream().anyMatch(Checks::isMainCode);
         boolean tests = files.stream().anyMatch(f -> Glob.any(Ctx.cfg.list("paths.test"), f));
         return main && !tests;
     }
-
-    // ---------------- PR policy (no CI change needed) ----------------
 
     public record Result(List<String> passes, List<String> fails, List<String> warns) {
         boolean ok() { return fails.isEmpty(); }
@@ -124,11 +112,7 @@ public final class Checks {
         return prPolicy(title, withTrace, "");
     }
 
-    /**
-     * The pull request policy. In a pull request build (the CI event names the base branch) the
-     * rules are those of the base branch's tip, not of the checkout: a pull request cannot loosen
-     * the rules it is judged by. declaredStory is the story the pull request says it belongs to.
-     */
+    // In a pull request build the rules are the base branch tip's: a pull request cannot loosen the rules it is judged by.
     public static Result prPolicy(String title, boolean withTrace, String declaredStory) {
         sdlc.core.Config own = Ctx.cfg;
         try {
@@ -162,8 +146,6 @@ public final class Checks {
                 return new Result(passes, fails, warns);
             }
             if (trusted == null) {
-                // No rules on the base branch: the only rules at hand are the pull request's own, which prove nothing.
-                // Only the pipeline can say that this is the pull request that installs the kit.
                 if (!Trusted.flag(Trusted.FIRST_INSTALLATION)) {
                     fails.add(shown + " has no .agent/sdlc.yml, so there are no rules to judge this pull request by. For the pull request that installs the kit, "
                             + "the pipeline sets " + Trusted.FIRST_INSTALLATION + "=true (the pipeline, not the pull request)");
@@ -186,18 +168,12 @@ public final class Checks {
         List<String> subjects = Git.lines(log.out());
         List<String> bad = subjects.stream().filter(s -> !s.matches(Ctx.cfg.str("git.commitPattern", ".*")) && !s.startsWith("fixup! ") && !s.startsWith("Revert \"")).toList();
         check(bad.isEmpty(), "All " + subjects.size() + " commit subjects follow the format" + (bad.isEmpty() ? "" : ": bad -> " + bad), passes, fails);
-        // --no-renames: a rename is a deletion plus an addition, so a moved file cannot hide where it came from
         List<String> files = Git.changed("--diff-filter=ACMR", base + "...HEAD");
         List<String> everyChange = Git.changed(base + "...HEAD");
         check(!testsMissing(files), "Main code changes come with test changes", passes, fails);
         Map<String, List<String>> added = Git.addedLines(Git.patch(base + "...HEAD"));
-        // configured patterns that are also built-in switches are judged below by the line lint, where a comment or a string is
-        // known as one; the others (a repository's own marks, comment directives) are judged by the added line
         Set<String> disabled = new LinkedHashSet<>();
         for (String hit : disabledTests(added)) if (containsDisabled(sdlc.check.Integrity.withoutBuiltInSwitches(hit.substring(hit.indexOf(": ") + 2)))) disabled.add(hit);
-        // every test file, of every language, is linted by the lines the change adds, alone and two or three together
-        // (it, a line break, .skip; @, a line break, Disabled); which tests are skipped is for a run to say, and check-pr runs none.
-        // What the lint is sure of fails; what it cannot know to be a switch, or to be unconditional, is a warning
         for (String f : files) {
             if (!sdlc.check.Integrity.testFile(f, Ctx.cfg.list("paths.test"))) continue;
             sdlc.check.Integrity.Lint lint = sdlc.check.Integrity.lint(added.getOrDefault(f, List.of()));
@@ -215,7 +191,6 @@ public final class Checks {
                 + (disabled.isEmpty() ? "" : ": " + disabled), passes, fails);
         List<String> secrets = secrets(added);
         check(secrets.isEmpty(), "No secrets added" + (secrets.isEmpty() ? "" : ": " + secrets), passes, fails);
-        // .sdlc/ is one machine's working state. In a pull request build it is the pull request's to write, so it is not read.
         List<String> state = everyChange.stream().filter(f -> f.startsWith(".sdlc/")).toList();
         check(state.isEmpty(), "No local state (.sdlc/) is committed" + (state.isEmpty() ? "" : ": " + state), passes, fails);
         String story = ci ? "" : Work.currentStory();
@@ -227,8 +202,7 @@ public final class Checks {
         List<String> broken = sdlc.core.Locks.broken(Ctx.root);
         if (!sdlc.core.Locks.locked(Ctx.root).isEmpty() || !broken.isEmpty()) check(broken.isEmpty(), "Locked acceptance tests unchanged" + (broken.isEmpty() ? "" : ": " + broken), passes, fails);
         List<String> loosened = sdlc.core.Locks.loosened(Ctx.root, Contracts.mergeBase(base));
-        // Taking a lock away is never the reviewed exception: with the lock gone the test may be deleted or emptied in the
-        // same pull request. Only the pipeline can name stories whose locks may go (a retired feature).
+        // Taking a lock away is never the reviewed exception: the test could then be deleted in the same pull request.
         Set<String> removable = Trusted.list(Trusted.LOCKS_REMOVABLE);
         List<String> removed = loosened.stream().filter(l -> l.endsWith(": lock removed") && !removable.contains(storyOf(l))).toList();
         List<String> released = loosened.stream().filter(l -> l.endsWith(": lock removed") && removable.contains(storyOf(l))).toList();
@@ -243,7 +217,6 @@ public final class Checks {
             else fails.add("Locked acceptance tests keep the lock they have on " + shown + ": " + rehashed
                     + " (QE changes a lock in its own pull request that holds only the lock files and their tests)");
         }
-        // a lock the base branch gained or changed after this branch left it: the branch's own lock files do not know it
         String mergeBase = Contracts.mergeBase(base);
         Map<String, sdlc.core.Locks.Entry> atBranchPoint = sdlc.core.Locks.lockedAt(Ctx.root, mergeBase, new ArrayList<>());
         List<String> lockedOnBase = new ArrayList<>(), relocked = new ArrayList<>();
@@ -252,7 +225,7 @@ public final class Checks {
         if (!damagedOnBase.isEmpty()) fails.add("Lock files on " + shown + " cannot be read, so its locked tests cannot be checked: " + damagedOnBase);
         for (sdlc.core.Locks.Entry e : onBase.values()) {
             sdlc.core.Locks.Entry before = atBranchPoint.get(e.path());
-            if (before != null && before.hash().equals(e.hash())) continue; // the checks above cover it
+            if (before != null && before.hash().equals(e.hash())) continue;
             if (!everyChange.contains(e.path())) continue;
             java.nio.file.Path f = Ctx.root.resolve(e.path());
             String content;
@@ -262,7 +235,6 @@ public final class Checks {
                 content = "";
             }
             if (content.equals(e.hash())) continue;
-            // QE's own pull request locks the test again: its lock file names the content it now has
             sdlc.core.Locks.Entry own = sdlc.core.Locks.locked(Ctx.root).get(e.path());
             (own != null && own.hash().equals(content) ? relocked : lockedOnBase).add(e.path() + " (" + e.story() + ")");
         }
@@ -291,17 +263,11 @@ public final class Checks {
         return new Result(passes, fails, warns);
     }
 
-    /** The story of a line of Locks.loosened: "path (STORY): lock removed" -> STORY. */
     private static String storyOf(String loosened) {
         int close = loosened.lastIndexOf("): "), open = loosened.lastIndexOf(" (", close);
         return open < 0 || close < 0 ? "" : loosened.substring(open + 2, close);
     }
 
-    /**
-     * Every changed file is a lock file, or test code (paths.test) locked at {@code ref} or now: QE's own pull request.
-     * The test-path check matters because the branch's lock files are the pull request's to edit: listing
-     * production code in a lock must not turn a code change into a "lock-only" one.
-     */
     public static boolean lockOnly(List<String> changed, String ref) {
         Set<String> locked = new LinkedHashSet<>(sdlc.core.Locks.locked(Ctx.root).keySet());
         locked.addAll(sdlc.core.Locks.lockedAt(Ctx.root, ref, new ArrayList<>()).keySet());
@@ -309,11 +275,6 @@ public final class Checks {
         return changed.stream().allMatch(f -> f.startsWith(sdlc.core.Locks.DIR + "/") || locked.contains(f) && Glob.any(tests, f));
     }
 
-    /**
-     * The story a pull request is checked against where no local state exists: the one it declares
-     * (check-pr --story), else the key in its branch name. The author picks the branch name, so in
-     * a pull request build that fallback is a warning.
-     */
     public static String declaredStory(String declared, String branch, List<String> fails, List<String> warns) {
         String fromBranch = storyFromBranch(branch);
         String d = declared == null ? "" : declared.trim();
@@ -331,19 +292,15 @@ public final class Checks {
         return d;
     }
 
-    /** The Jira key in a branch name (feature/PAY-101-refunds -> PAY-101): the story in CI, where no local state exists. */
     static String storyFromBranch(String branch) {
         Matcher m = Ctx.cfg.keyPattern().matcher(branch);
         return m.find() ? m.group() : "";
     }
 
-    /** Changed code files outside every task's scope, or null when the story has no tasks (nothing to compare with). */
     public static List<String> outsideScope(String story, List<String> changed) {
         List<String> scopes = new ArrayList<>();
         for (Object t : Work.tasks(Work.state(story)).values()) scopes.addAll(Work.strings(Json.obj(t).get("scope")));
         if (scopes.isEmpty()) return null;
-        // guardrail files (the kit's own .agent/src among them) have their own rule: CODEOWNERS review.
-        // Acceptance tests locked by QE belong to no task: they come with the lock, and the lock check guards them.
         Map<String, sdlc.core.Locks.Entry> locked = sdlc.core.Locks.locked(Ctx.root);
         return changed.stream().filter(f -> Glob.any(Ctx.cfg.list("paths.code"), f) && !Glob.any(scopes, f) && !locked.containsKey(f) && !Glob.any(Ctx.cfg.list("paths.ask"), f)
                 && !Glob.any(Ctx.cfg.list("paths.protected"), f) && !Glob.any(Ctx.cfg.list("paths.doc"), f)).toList();

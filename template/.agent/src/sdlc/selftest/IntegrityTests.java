@@ -24,7 +24,6 @@ import sdlc.core.Ctx;
 import sdlc.core.Trusted;
 import sdlc.util.Proc;
 
-/** Self test: the integrity scan of sdlc check, one detector at a time, in a repository of its own. */
 final class IntegrityTests {
     private IntegrityTests() {}
 
@@ -198,7 +197,6 @@ final class IntegrityTests {
         check("integrity: a deleted fixture beside the tests is only a note", only(deleted, Level.NOTE, "test support file deleted", "src/test/resources/data.json", "no test cases"));
         reset(repo);
 
-        // a script file under a test folder, named like no test: whether it held tests is linted from its lines
         write(repo, "web/__tests__/cases.ts", "describe('sum', () => {\n  it('adds', () => { expect(1 + 1).toBe(2) })\n})\n");
         write(repo, "web/__tests__/helpers.ts", "export const two = () => 2; // not it('x')\n");
         write(repo, "web/__tests__/util.ts", "export const three = () => 3;\n");
@@ -226,7 +224,6 @@ final class IntegrityTests {
         Files.delete(repo.resolve("tests/helpers.py"));
         Files.delete(repo.resolve("tests/checks.py"));
         List<Finding> goneScripts = scan(repo);
-        // audit round 4, finding 5: a Java text block or a Python string in three quotes is text over its lines; a test after one is code
         check("integrity: a deleted helper whose example stands in a Java text block or a Python string in three quotes is a note",
                 only(goneScripts, Level.NOTE, "test support file deleted", "src/test/java/demo/Samples.java", "only a comment or a string in it mentions a test")
                 && only(goneScripts, Level.NOTE, "test support file deleted", "tests/helpers.py", "only a comment or a string in it mentions a test"));
@@ -254,7 +251,6 @@ final class IntegrityTests {
         }
         git(repo, "reset", "-q", "--hard", "HEAD~1");
 
-        // a move is a deletion plus an addition: a note when the file, or every test case it had, is found again
         Files.move(repo.resolve("web/sum.test.ts"), repo.resolve("web/math.test.ts"));
         List<Finding> moved = scan(repo);
         check("integrity: a test file moved as it is is a note, not a problem", problems(moved) == 0 && only(moved, Level.NOTE, "test file moved", "web/sum.test.ts", "web/math.test.ts"));
@@ -272,7 +268,6 @@ final class IntegrityTests {
         check("integrity: a Java test file moved and edited in its body on the way is a test file deleted",
                 only(scan(repo), Level.PROBLEM, "test file deleted", "src/test/java/demo/CalcTest.java", "the file is gone"));
         reset(repo);
-        // one rule with the run (Integrity.moves): an added file is the move of one deleted file at most, and the other way round
         write(repo, "web/copy.test.ts", SUM_TEST);
         git(repo, "add", "-A");
         git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a copy");
@@ -292,7 +287,6 @@ final class IntegrityTests {
         check("integrity: one deleted test file and two added copies of it: one move, said once, and nothing deleted",
                 only(twoAdded, Level.NOTE, "test file moved", "web/sum.test.ts", "the same file is now at web/a/sum.test.ts") && problems(twoAdded) == 0);
         reset(repo);
-        // the exact lines first: a JVM class deleted in two packages, one added copy as the first was and one in a third package
         Files.delete(repo.resolve("src/test/java/demo/CalcTest.java"));
         write(repo, "src/test/java/demo/b/CalcTest.java", CALC_TEST.replace("package demo;", "package demo.calc;"));
         write(repo, "src/test/java/demo/a/CalcTest.java", CALC_TEST);
@@ -301,8 +295,6 @@ final class IntegrityTests {
                 only(tiers, Level.NOTE, "test file moved", "src/test/java/demo/CalcTest.java", "the same file is now at src/test/java/demo/a/CalcTest.java") && problems(tiers) == 0
                 && !tiers.toString().contains("in another package"));
         reset(repo);
-        // an added file taken in one pass is not the twin of another deleted file in a later one: one added class, two deleted classes, the
-        // first the same but for its package line, the second the same but for its package and import lines
         String otherImport = CALC_TEST.replace("package demo;", "package demo.other;").replace("import org.junit.jupiter.api.Test;", "import org.junit.jupiter.api.Test;\nimport demo.Old;");
         write(repo, "src/test/java/demo/other/CalcTest.java", otherImport);
         git(repo, "add", "-A");
@@ -329,7 +321,6 @@ final class IntegrityTests {
         check("integrity: @Disabled after a comment on the same line is still found", count(scan(repo), "test switched off") == 1);
         reset(repo);
         write(repo, "src/app.test.ts", "it('a', () => { expect(1).toBe(1) })\nconst s = `${it.skip('b', () => {})}`\n");
-        // it is a value inside a literal the line opens, no statement of its own (see the gate): found, as a note
         check("integrity: it.skip( inside the ${...} of a template string is read: a note, not hidden", count(scan(repo), "may switch a test off") == 1
                 && count(scan(repo), "test switched off") == 0);
         Files.delete(repo.resolve("src/app.test.ts"));
@@ -337,7 +328,6 @@ final class IntegrityTests {
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("    private int helper", "    // a note about @Disabled and it.skip( in a comment\n    private int helper"));
         check("integrity: @Disabled on a line that is wholly a comment switches nothing off", problems(scan(repo)) == 0);
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("    private int helper", "    String s = \"@Disabled\"; // it.skip(\n    private int helper"));
-        // audit round 5: an annotation right after a quote is not the whole annotation (it stands in a string): a note, never sure
         check("integrity: inside a string or a trailing comment on a line of code it is reported as a note: the lint errs on the safe side without blocking",
                 only(scan(repo), Level.NOTE, "may switch a test off", "src/test/java/demo/CalcTest.java", "String s = \"@Disabled\"; // it.skip(")
                 && problems(scan(repo)) == 0);
@@ -370,7 +360,6 @@ final class IntegrityTests {
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("    private int helper", "    /* flaky,\n     * for now */ @Disabled @Test void off() {}\n    private int helper"));
         check("integrity: @Disabled after the end of a block comment is still found", count(scan(repo), "test switched off") == 1);
         reset(repo);
-        // audit round 6: a declaration passed to a call is not a statement of its own, so these are notes; they are still found
         write(repo, "src/app.test.ts", "it('a', () => { expect(1).toBe(1) })\nconst s = `${fn({a: 1}, it.skip('b', () => {}))}`\n");
         check("integrity: it.skip( after a nested brace inside ${...} is still found, a note (an argument of fn)",
                 count(scan(repo), "test switched off") == 0 && only(scan(repo), Level.NOTE, "may switch a test off", "src/app.test.ts", "it.skip('b'"));
@@ -388,7 +377,6 @@ final class IntegrityTests {
         write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\n");
         git(repo, "add", "-A");
         git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a name with a separator");
-        // a switch that no single line shows
         write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\nit\n  .skip('later', () => {\n  expect(1).toBe(1)\n})\n");
         check("integrity: a script switch written over two added lines is found by the line lint", count(scan(repo), "test switched off") == 1);
         write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\nit.concurrent.skip('later', () => {\n  expect(1).toBe(1)\n})\n");
@@ -397,7 +385,6 @@ final class IntegrityTests {
         check("integrity: the same words on lines that are wholly comments switch nothing off", problems(scan(repo)) == 0);
         write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\nconst example = `\nit\n  .skip('documentation example')\n`;\n");
         check("integrity: the line lint does not know a template string that runs over lines: a switch over two of its lines is reported (it errs on the safe side)", count(scan(repo), "test switched off") == 1);
-        // the line lint of scripts: a skip on a line the change adds is reported as that line, whatever the change did with the test
         write(repo, "src/app.test.ts", "it('outer > old name', () => {\n  expect(1 + 1).toBe(2)\n})\nit('later', () => {})\n");
         git(repo, "add", "-A");
         git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a later test");
@@ -419,18 +406,15 @@ final class IntegrityTests {
         check("integrity: a skip on a line the change did not write is not reported again", count(scan(repo), "test switched off") == 0
                 && scan(repo).stream().noneMatch(f -> f.kind().equals("could not be read with confidence") || f.kind().equals("switch in a comment or a string")));
         git(repo, "reset", "-q", "--hard", "HEAD~2");
-        // a test taken out of a script file: the reading does not say it; the run of the file does
         write(repo, "src/app.test.ts", "describe('A', () => {\n  it('works', () => { check(1) })\n})\ndescribe('B', () => {\n  it('works', () => { check(2) })\n})\n");
         git(repo, "add", "-A");
         git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "two groups");
         write(repo, "src/app.test.ts", "describe('A', () => {\n  it('works', () => { check(1) })\n})\n");
         check("integrity: a script test removed is not read from the source: nothing is said (its run judges it)", scan(repo).isEmpty());
         git(repo, "reset", "-q", "--hard", "HEAD~1");
-        // other test files are linted by the lines the change adds, as scripts are
         write(repo, "tests/test_calc.py", "import pytest\n\n@pytest.mark.skip(reason=\"later\")\ndef test_adds():\n    assert 1 + 1 == 2\n");
         check("integrity: a skip in a Python test file is found by the line lint", only(scan(repo), Level.PROBLEM, "test switched off", "tests/test_calc.py", "@pytest.mark.skip(reason="));
         Files.delete(repo.resolve("tests/test_calc.py"));
-        // a folder the repository itself names as tests (paths.test), where the built-in idea of a test file does not reach
         write(repo, "specs/foo.ts", "it('a', () => { expect(1).toBe(1) })\n");
         git(repo, "add", "-A");
         git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a test in a folder of the repository's own");
@@ -443,7 +427,6 @@ final class IntegrityTests {
             Ctx.cfg = before;
         }
         git(repo, "reset", "-q", "--hard", "HEAD~1");
-        // Java test files are linted by the lines the change adds, as every other test file is
         Integrity.Lint jvm = Integrity.lint(List.of("  @Disabled(\"flaky\")", "  @org.junit.Ignore", "    assumeTrue(false, \"later\");", "    Assume.assumeTrue(\"later\", false);",
                 "  @ org.junit.jupiter.api . Disabled", "    assumeFalse(true);", "    Assumptions.abort(\"later\");"));
         check("integrity: the lint is sure of @Disabled and @Ignore on added Java lines; an assumption that never holds and Assumptions.abort are notes",
@@ -455,16 +438,13 @@ final class IntegrityTests {
                 "import static org.junit.jupiter.api.Assumptions.abort;", "    abort(\"later\");", "    Assumptions.abort<Unit>(\"later\")", "    controller.abort();", "    new AbortController().abort();"));
         check("integrity: an abort with type arguments, imported, or called alone is a note (a condition may hold it); another object's abort is nothing",
                 aborts.sure().isEmpty() && aborts.notes().size() == 5 && !Integrity.lintedNote("    controller.abort();") && Integrity.lintedNote("    Assumptions.<Void>abort(\"later\");"));
-        // L1-2: a line cannot tell its quotes for certain; what it shows as written is never hidden by the masking
         check("integrity: a quote inside a regular expression does not hide a switch on the same line",
                 Integrity.lintedSwitch("const r = /'/; it.skip('a', () => { expect(false).toBe(true); }); const x = 'ok';")
                 && Integrity.lintedSwitch("const r = /x\\//; it.skip('b', () => {})")
                 && Integrity.lintedSwitch("* 2; it.skip('c', () => {})")
                 && Integrity.lintedSwitch("#f = 1; it.skip('e', () => {})"));
-        // a line that begins inside a literal an earlier line opened does not show it: what it opens, as read alone, is a literal to it (see the gate)
         check("integrity: a switch after a quote that opens a literal on the line, as read alone, is found as a note",
                 Integrity.lintedNote("`; it.skip('d', () => {}); const y = `") && Integrity.lintedNote("    String t = \"\"\"; @Disabled class X {} //\""));
-        // audit round 6: the written reading decides what is sure; a comment between a switch's words is seen by the code only: a note
         check("integrity: a comment between @ and the name, and a declaration assigned to a name, are found as notes",
                 Integrity.lintedNote("@/* a */Disabled") && Integrity.lintedNote("#f = it.skip('e', () => {})"));
         check("integrity: lines wholly comments are not read as written; others are",
@@ -473,16 +453,11 @@ final class IntegrityTests {
                 && !Integrity.lintedSwitch("assertTrue(ok); // it.skip later"));
         check("integrity: a switch over two lines, with a quote in a regular expression on one and a comment between its words on the other, is found, a note",
                 Integrity.lint(List.of("const r = /'/; it", "/**/.skip('a', () => {})")).equals(noted("const r = /'/; it /**/.skip('a', () => {})")));
-        // the lint reads a line two ways only (audit round 3, the step back): a block comment between a switch's words on a line
-        // whose quotes cannot be told is not seen (the guide lists it); the run of the file is the guard
         check("integrity: a block comment between a switch's words, after a quote in a regular expression, is not seen; a URL is no switch",
                 !Integrity.lintedSwitch("const r = /'/; it /* ' */ .skip('a', () => {})")
                 && !Integrity.lintedSwitch("const url = 'http://example.com/it'; expect(skip).toBe(1)"));
-        // the lint is a helper, not a guard: a quote in a regular expression before a trailing comment between a switch's words, over two
-        // lines, is not seen (the guide lists it); the run of the file is the guard
         check("integrity: what the lint does not see is not seen: a regular expression's quote before a comment between a switch's words",
                 Integrity.lintedSwitches(List.of("const r = /'\\//; it //'", ".skip('a', () => {})")).isEmpty());
-        // the honest user's forms (audit, findings 8 and 2)
         check("integrity: a declared abort, and another object's abort however spaced, is nothing; abort called alone is a note, never sure",
                 Integrity.lint(List.of("function abort() { return 1; }", "    @Override public void abort() {}", "    controller . abort();", "    signal?.abort();",
                         "  abort() { this.done = true; }", "    def abort(self):", "    this.#abort();")).equals(new Integrity.Lint(List.of(), List.of()))
@@ -493,7 +468,6 @@ final class IntegrityTests {
         check("integrity: an assumption with a plain false and a computed message is a note, never sure; one whose condition is computed is nothing",
                 plainFalse.stream().allMatch(l -> Integrity.lintedNote(l) && !Integrity.lintedSwitch(l))
                 && Integrity.lint(List.of("    assumeTrue(x == false);", "    assumeTrue(ready(false), \"x\");", "    assumeTrue(isOn(), () -> \"false\");")).equals(NOTHING));
-        // the direct spellings an honest author writes (audit, findings 5, 4 and 1)
         check("integrity: it?.skip, a parenthesised decorator and white space of other kinds are the same switches",
                 Integrity.lintedSwitch("it?.skip('x', () => {});") && Integrity.lintedSwitch("@(pytest.mark.skip(reason='later'))")
                 && Integrity.lintedSwitch("it\u00A0.\u00A0skip('x', () => {});") && Integrity.lintedSwitch("it\uFEFF.skip('x', () => {});")
@@ -516,7 +490,6 @@ final class IntegrityTests {
         gate();
         round6();
         bounded();
-        // L1-1: an unconditional assumption put beside a conditional one is a line the change adds
         write(repo, "src/test/java/demo/CalcTest.java", CALC_TEST.replace("        assertEquals(0, 1 - 1);", "        if (Boolean.getBoolean(\"skip.integration\")) assumeTrue(false);\n        assertEquals(0, 1 - 1);"));
         git(repo, "add", "-A");
         git(repo, "-c", "user.name=selftest", "-c", "user.email=selftest@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a conditional assumption");
@@ -525,8 +498,6 @@ final class IntegrityTests {
                 only(scan(repo), Level.NOTE, "may switch a test off", "src/test/java/demo/CalcTest.java", "the run of the file judges it: assumeTrue(false);")
                 && count(scan(repo), "test switched off") == 0);
         git(repo, "reset", "-q", "--hard", "HEAD~1");
-        // L1-4: overloads that change places. The diff shows one of them moved: its lines are added lines. When that is the one
-        // switched off, its @Disabled line is reported (the lint reads lines, not tests); when it is the other one, nothing is.
         String shortOff = "class OrderTest {\n    @Disabled\n    @Test\n    void a() {}\n\n    @ParameterizedTest\n    @ValueSource(strings = {\"x\", \"y\"})\n    void a(String s) {\n        assertNotNull(s);\n        assertFalse(s.isEmpty());\n    }\n}\n";
         String shortOffSwapped = "class OrderTest {\n    @ParameterizedTest\n    @ValueSource(strings = {\"x\", \"y\"})\n    void a(String s) {\n        assertNotNull(s);\n        assertFalse(s.isEmpty());\n    }\n\n    @Disabled\n    @Test\n    void a() {}\n}\n";
         String longOff = shortOff.replace("    @Disabled\n    @Test\n    void a() {}\n", "").replace("    @ParameterizedTest\n", "    @Disabled\n    @ParameterizedTest\n")
@@ -555,7 +526,6 @@ final class IntegrityTests {
         }
         git(repo, "reset", "-q", "--hard", "HEAD~2");
         reset(repo);
-        // an added line longer than the lint reads is not read, and the report says so: a note, its run judges the file
         write(repo, "src/test/java/demo/LongTest.java", "@" + " ".repeat(10_000) + "Disabled class LongTest {}\n");
         List<Finding> longLine = scan(repo);
         check("integrity: a switch on an added line longer than the lint reads is not read; a note says the line was not read",
@@ -572,7 +542,6 @@ final class IntegrityTests {
         check("integrity: a very long added line of a test file does not keep the lint busy", (System.nanoTime() - linted) / 1_000_000 < 5000 && count(chain, "test switched off") == 0
                 && only(chain, Level.NOTE, "lines too long for the switch lint", "web/long.test.ts", "2 added lines are longer"));
         reset(repo);
-        // a test file is never read whole by the scan, whatever it does: each whole read is seen
         java.util.Set<String> wholly = new java.util.TreeSet<>();
         Change.wholeRead = wholly::add;
         try {
@@ -598,7 +567,6 @@ final class IntegrityTests {
                 only(scan(repo), Level.NOTE, "fewer assertions", "src/test/java/demo/CalcTest.java", "the lines the change removes hold 1 assertion, the lines it adds 0"));
         reset(repo);
 
-        // L1-11: a test file is never read whole, so its size does not matter: only the lines the change adds and removes are read
         String fixture = "const rows = [\n" + ("  { a: 1, b: 2, c: 'some fixture text to make the file large' },\n").repeat(40_000) + "];\nit('reads', () => { expect(rows.length).toBe(40000) });\n";
         write(repo, "web/big.test.ts", fixture);
         git(repo, "add", "-A");
@@ -612,9 +580,7 @@ final class IntegrityTests {
         git(repo, "reset", "-q", "--hard", "HEAD~1");
     }
 
-    /** Audit round 3, findings 1 and 2: what honest work writes is not a switch. */
     private static void honestUsers() {
-        // a conditional skip is not a switch: platform, browser and environment conditions are ordinary
         List<String> conditional = List.of("@pytest.mark.skipif(False, reason=\"supported\")", "@pytest.mark.skipif(sys.platform == \"win32\", reason=\"posix only\")",
                 "@unittest.skipUnless(True, \"supported\")", "@unittest.skipIf(sys.platform == 'win32', 'posix only')",
                 "test.skip(false, \"unsupported browser\");", "test.fixme(false, \"unsupported browser\");",
@@ -634,19 +600,16 @@ final class IntegrityTests {
                 Integrity.lintedSwitch("test.skip(`x ${n}`, async () => {})") && Integrity.lintedSwitch("it.skip('adds ' + n, () => {})")
                 && Integrity.lintedNote("it.skip(name, () => {})") && Integrity.lintedNote("describe.skip(suite.title, function () {")
                 && !Integrity.lintedSwitch("it.skip(name, () => {})"));
-        // a method named abort is declared, not called
         check("integrity: a method declared with the name abort, with a return type, modifiers or generics, is not a switch",
                 !Integrity.lintedSwitch("  abort(): void {}") && !Integrity.lintedSwitch("  abort(reason?: string): Promise<void> {")
                 && !Integrity.lintedSwitch("  public abort(): void {}") && !Integrity.lintedSwitch("  abort<T>(value: T): T {")
                 && !Integrity.lintedSwitch("  abort(): void;") && !Integrity.lintedSwitch("  async abort() {") && !Integrity.lintedSwitch("  fun abort(): Unit {}"));
         check("integrity: abort called alone is a note, also as a branch of a ternary",
                 Integrity.lintedNote("    abort();") && Integrity.lintedNote("    late ? abort() : run();") && !Integrity.lintedSwitch("    abort();"));
-        // names that hold the words of a switch
         check("integrity: another object's fit, a function declared fit, and words that hold a switch's letters are not switches",
                 Integrity.lintedSwitches(List.of("    model.fit(X_train, y_train)", "    def fit(self, X, y):", "    fitAddon.fit();", "    const skipped = rows.filter(r => r.only);",
                         "    expect(benefit).toBe(1);", "    const opts = { skip: 10, take: 5 };", "    it('paginates', async () => { await repo.find({ skip: true }) })",
                         "    result = fit(data)", "  next() { this.skip(10); }")).isEmpty());
-        // a skip from inside a test, a condition on its line, on the line above it or further: a note, never sure
         check("integrity: a skip from inside a test under a condition is not sure",
                 Integrity.lintedSwitches(List.of("    if not has_gpu: pytest.skip(\"needs a GPU\")", "    if testing.Short() { t.Skip(\"short mode\") }",
                         "    if (!process.env.DB) this.skip();", "    self.skipTest('x') if broken else None")).isEmpty()
@@ -660,7 +623,6 @@ final class IntegrityTests {
                 && Integrity.lintedNote("const later = it.skip;") && !Integrity.lintedSwitch("const later = it.skip;"));
     }
 
-    /** Audit round 3, finding 4: the usual spellings, each beside an honest neighbour. */
     private static void usualSpellings() {
         check("integrity: Vitest's option object that skips, focuses or marks to do is a switch, over lines too",
                 Integrity.lintedSwitch("test('x', { skip: true }, () => {})") && Integrity.lintedSwitch("it('x', { only: true }, () => {})")
@@ -700,12 +662,7 @@ final class IntegrityTests {
 
     private static final Integrity.Lint NOTHING = new Integrity.Lint(List.of(), List.of());
 
-    /**
-     * Audit round 4, the step back: the lint blocks only what it read shows for sure, and says the
-     * rest as a note. Each shape of the audit beside its honest neighbour.
-     */
     private static void sureOrNoted() {
-        // finding 1: a call written over lines is judged where its arguments are, never from its opening line
         check("integrity: a Playwright condition over three lines (test.skip(, false, 'supported')) is nothing: the opening line is not judged alone",
                 Integrity.lint(List.of("test.skip(", "  false,", "  'supported');")).equals(NOTHING)
                 && Integrity.lint(List.of("  test.fixme(", "    false,", "    'supported',", "  );")).equals(NOTHING));
@@ -718,38 +675,31 @@ final class IntegrityTests {
         check("integrity: a call whose arguments end in none of its readings is a note; one that closes as no switch is nothing",
                 Integrity.lint(List.of("test.skip(", "  (", "    browserName", "  ) === 'webkit', 'x')")).equals(new Integrity.Lint(List.of(), List.of("test.skip(")))
                 && Integrity.lint(List.of("    assumeTrue(", "        System.getenv(\"X\") != null,", "        \"needs X\");")).equals(NOTHING));
-        // finding 2: a statement between the condition and the skip, or only the skip's message edited under an unchanged condition
         check("integrity: a skip from inside a test with a statement between it and its condition is a note, not a problem",
                 Integrity.lint(List.of("    if (!ready) {", "      log.info('not ready');", "      this.skip();", "    }")).equals(new Integrity.Lint(List.of(), List.of("this.skip();")))
                 && Integrity.lint(List.of("        pytest.skip(\"needs a GPU, see #12\")")).equals(new Integrity.Lint(List.of(), List.of("pytest.skip(\"needs a GPU, see #12\")"))));
-        // finding 3: a condition and a computed reason
         check("integrity: test.skip(false, reason) is nothing; test.fixme(isMobile, ISSUE_REASON) is a note",
                 Integrity.lint(List.of("test.skip(false, reason);", "test.fixme(false, issueReason());")).equals(NOTHING)
                 && Integrity.lint(List.of("test.fixme(isMobile, ISSUE_REASON);")).equals(new Integrity.Lint(List.of(), List.of("test.fixme(isMobile, ISSUE_REASON);"))));
-        // finding 4: abort declared over lines, or another object's abort over lines
         check("integrity: a method named abort declared over three lines is nothing; another object's abort over two lines is not sure",
                 Integrity.lint(List.of("  abort(", "    reason?: string,", "  ): void {}")).equals(NOTHING)
                 && Integrity.lint(List.of("    controller.", "      abort();")).sure().isEmpty());
-        // finding 6: Python's conditions by keyword
         List<String> keyword = List.of("@pytest.mark.skipif(reason=\"later\", condition=True)", "@unittest.skipIf(condition=True, reason=\"later\")",
                 "@unittest.skipUnless(condition=False, reason=\"later\")", "@pytest.mark.skipif(reason=\"later\")", "@pytest.mark.xfail(reason=\"x\", condition=True, run=False)");
         check("integrity: a plain condition by keyword, in any place, and pytest's skipif with no condition, are sure",
                 Integrity.lint(keyword).sure().size() == keyword.size());
-        // audit round 5: a computed condition is a note (the run of the file says whether it held), never sure
         List<String> computedKeyword = List.of("@pytest.mark.skipif(reason=\"posix\", condition=sys.platform == \"win32\")", "@unittest.skipIf(condition=IS_WINDOWS, reason=\"posix\")",
                 "@unittest.skipUnless(condition=HAS_GPU, reason=\"gpu\")", "@pytest.mark.skipif(True if X else False, reason=\"x\")");
         check("integrity: their honest neighbours, a computed condition by keyword, are notes, never sure",
                 Integrity.lint(computedKeyword).equals(new Integrity.Lint(List.of(), computedKeyword))
                 && Integrity.lint(List.of("@pytest.mark.xfail(run=False,", "    condition=sys.platform == \"win32\")"))
                         .equals(new Integrity.Lint(List.of(), List.of("@pytest.mark.xfail(run=False, condition=sys.platform == \"win32\")"))));
-        // what was sure stays sure: the usual spellings, one per line
         List<String> sure = List.of("@Disabled", "@org.junit.Ignore", "@Test(enabled = false)", "@DisabledIf(\"true\")", "@pytest.mark.skip(reason=\"x\")",
                 "@unittest.skip(\"x\")", "it.skip('x', () => {})", "describe.only('x', () => {})", "xit('x', () => {})", "test.todo('x')", "it.skip.each([[1]])('x', (a) => {})",
                 "test('x', { skip: true }, () => {})", "it.skipIf(true)('x', () => {})", "it('pending');");
         List<String> missed = sure.stream().filter(l -> !Integrity.lintedSwitch(l)).toList();
         if (!missed.isEmpty()) System.out.println("    not sure: " + missed);
         check("integrity: the forms the lint is sure of are problems", missed.isEmpty());
-        // an assumption that never holds was sure here; the lines a change adds do not show whether it runs in the test's own body
         List<String> assumed = List.of("assumeTrue(false);", "assumeFalse(true, \"x\");");
         check("integrity: an assumption that never holds, on a line of its own, is a note, never sure",
                 assumed.stream().allMatch(l -> Integrity.lintedNote(l) && !Integrity.lintedSwitch(l)));
@@ -759,13 +709,7 @@ final class IntegrityTests {
         return new Integrity.Lint(List.of(), List.of(lines));
     }
 
-    /**
-     * Audit round 5: one gate for sure. Each finding's exact shapes beside the honest neighbour and
-     * the plain form, then the property of the gate: no sure form stays sure when its literal is
-     * made part of more, nested, or cut before its argument ends.
-     */
     private static void gate() {
-        // finding 1: a title is judged where its argument ends, and only a string for certain is one
         check("integrity: a string first argument cut by the line end, or compared after a +, is a note, not a title",
                 Integrity.lint(List.of("test.skip('webkit'", "  === browserName, 'webkit only');")).equals(noted("test.skip('webkit' === browserName, 'webkit only');"))
                 && Integrity.lint(List.of("test.skip('platform: ' + platform === target, 'unsupported')")).equals(noted("test.skip('platform: ' + platform === target, 'unsupported')"))
@@ -773,7 +717,6 @@ final class IntegrityTests {
         check("integrity: its neighbours, a title joined with + to names and calls, and a title over two lines, are sure",
                 Integrity.lintedSwitch("it.skip('adds ' + n + ' to ' + fmt(m), () => {})") && Integrity.lintedSwitch("test.skip(`on ${browser}`, async () => {")
                 && Integrity.lint(List.of("test.skip('webkit only'", "  , async ({ page }) => {")).sure().size() == 1 && Integrity.lintedSwitch("test.skip('webkit only', async ({ page }) => {"));
-        // finding 2: an option counts only as a top-level property, with a whole true, that nothing after it can change
         check("integrity: an option with a computed value, a nested one and one a spread may change are not sure",
                 Integrity.lint(List.of("test('x', { skip: true && isWindows }, fn);")).equals(noted("test('x', { skip: true && isWindows }, fn);"))
                 && Integrity.lint(List.of("test('x', { meta: { skip: true } }, fn);")).equals(NOTHING)
@@ -783,7 +726,6 @@ final class IntegrityTests {
         check("integrity: its neighbours, an option after a spread, a later one that sets true, and a quoted name, are sure",
                 Integrity.lintedSwitch("test('x', { ...options, skip: true }, fn);") && Integrity.lintedSwitch("test('x', { skip: false, only: true }, fn);")
                 && Integrity.lintedSwitch("test('x', { 'skip': true }, fn);") && Integrity.lintedSwitch("test('x', { skip: true }, fn);"));
-        // finding 3: an annotation's condition is a whole literal in a complete argument list
         check("integrity: @Test(enabled = false || RUN_TESTS), also cut after false, is a note",
                 Integrity.lint(List.of("@Test(enabled = false || RUN_TESTS)")).equals(noted("@Test(enabled = false || RUN_TESTS)"))
                 && Integrity.lint(List.of("@Test(enabled = false", "    || RUN_TESTS)")).equals(noted("@Test(enabled = false || RUN_TESTS)"))
@@ -791,7 +733,6 @@ final class IntegrityTests {
         check("integrity: its neighbours, @Test(enabled = false) whole, over two lines, and @Test(enabled = true), are sure and nothing",
                 Integrity.lintedSwitch("@Test(enabled = false)") && Integrity.lint(List.of("@Test(enabled = false,", "      description = \"x\")")).sure().size() == 1
                 && Integrity.lint(List.of("@Test(enabled = true)")).equals(NOTHING));
-        // finding 4: a modifier is sure only as the callee of the call that registers a test
         check("integrity: test.skip.each chosen by a condition, or kept, is a note; an alias that is only named is nothing",
                 Integrity.lint(List.of("const testEachIf = isWindows ? test.skip.each : test.each;")).equals(noted("const testEachIf = isWindows ? test.skip.each : test.each;"))
                 && Integrity.lint(List.of("const table = it.skip.each([[1]]);")).equals(noted("const table = it.skip.each([[1]]);"))
@@ -799,7 +740,6 @@ final class IntegrityTests {
         check("integrity: its neighbours, .each with a table and a title, also a tagged table and an alias, are sure",
                 Integrity.lintedSwitch("it.skip.each([[1, 2]])('adds %i', (a, b) => {") && Integrity.lintedSwitch("describe.only.each`a | b`('x $a', () => {")
                 && Integrity.lintedSwitch("xit.each([[1]])('x', (a) => {})") && Integrity.lint(List.of("it.skip.each([", "  [1, 2],", "])('adds %i', (a, b) => {")).sure().size() == 1);
-        // finding 5: a decorator is sure only when it is the whole mark
         check("integrity: a mark inside a larger decorator expression is a note",
                 Integrity.lint(List.of("@(pytest.mark.skip if IS_CI else identity)")).equals(noted("@(pytest.mark.skip if IS_CI else identity)"))
                 && Integrity.lint(List.of("@pytest.mark.skip if IS_CI else identity")).sure().isEmpty()
@@ -810,7 +750,6 @@ final class IntegrityTests {
                 Integrity.lintedSwitch("@pytest.mark.skip") && Integrity.lintedSwitch("@(pytest.mark.skip(reason='later'))") && Integrity.lintedSwitch("@pytest.mark.skip  # flaky")
                 && Integrity.lint(List.of("@pytest.mark.skip(", "    reason='later')", "def test_later():")).sure().size() == 1
                 && Integrity.lintedSwitch("pytestmark = [pytest.mark.slow, pytest.mark.skip(reason='later')]"));
-        // finding 6: pytest's skipif reads every condition, and none is a skip; condition= is the only one when given (pytest 9)
         check("integrity: a bare @pytest.mark.skipif above a function, and a True among its conditions, are sure",
                 Integrity.lint(List.of("@pytest.mark.skipif")).sure().size() == 1 && Integrity.lintedSwitch("@pytest.mark.skipif(False, True, reason='off')")
                 && Integrity.lintedSwitch("@pytest.mark.skipif(False, condition=True, reason='off')") && Integrity.lintedSwitch("@pytest.mark.xfail(False, True, run=False, reason='x')"));
@@ -820,7 +759,6 @@ final class IntegrityTests {
                 && Integrity.lint(List.of("@pytest.mark.skipif(False, IS_WINDOWS, reason='posix')")).equals(noted("@pytest.mark.skipif(False, IS_WINDOWS, reason='posix')"))
                 && Integrity.lint(List.of("@pytest.mark.skipif(*conditions, reason='x')")).sure().isEmpty()
                 && Integrity.lint(List.of("@pytest.mark.xfail(run=RUN_SLOW, reason='x')")).sure().isEmpty());
-        // a declaration, an option or an assumption after a condition on its line may not run: a note
         check("integrity: a sure form after a condition on its line is a note",
                 Integrity.lint(List.of("if (isCI) it.skip('x', () => {})")).equals(noted("if (isCI) it.skip('x', () => {})"))
                 && Integrity.lint(List.of("ci ? test('x', { skip: true }, fn) : test('x', fn)")).sure().isEmpty()
@@ -834,7 +772,6 @@ final class IntegrityTests {
                 && Integrity.lint(List.of("describe('db', () => {", "  it.skip('x', () => {})")).sure().equals(List.of("it.skip('x', () => {})"))
                 && Integrity.lint(List.of("if (x) { run(); }", "it.skip('x', () => {})")).sure().size() == 1
                 && Integrity.lint(List.of("if (isWindows) {", "  @Disabled")).sure().equals(List.of("@Disabled")));
-        // the property of the gate: no sure form stays sure when its literal is made part of more, nested or cut
         String[][] forms = {
             {"it.skip(§, () => {})", "'x'"}, {"describe.only(§, () => {})", "'x'"}, {"test.todo(§)", "'x'"}, {"test.fixme(§, async () => {})", "'x'"},
             {"xit(§, () => {})", "'x'"}, {"fit(§, () => {})", "'x'"}, {"it.skip.each([[1]])(§, (a) => {})", "'x'"}, {"it.skip(§ + n, () => {})", "'x'"},
@@ -846,8 +783,6 @@ final class IntegrityTests {
             {"@pytest.mark.xfail(§, run=False, reason='x')", "True"},
             {"@§", "Disabled(\"x\")"}, {"@§", "org.junit.Ignore"}, {"@§", "pytest.mark.skip(reason='x')"}, {"@§", "pytest.mark.skipif"}, {"@§", "unittest.skip('x')"}, {"pytestmark = §", "pytest.mark.skip"},
             {"    pytest.param(1, marks=§),", "pytest.mark.skip"}, {"pytestmark = [pytest.mark.slow, §]", "pytest.mark.skip"}, {"it(§);", "'x'"}};
-        // an assumption that never holds is a note wherever it stands, never sure: the lines a change adds do not show whether it runs in
-        // the test's own body (an exception assertion that catches the abort, or a lambda kept for later, may open on a line above)
         String[][] noteForms = {{"assumeTrue(§);", "false"}, {"Assume.assumeFalse(\"x\", §);", "true"}};
         List<String> grown = List.of("§ || X", "§ && X", "§ if X else Y", "§ ? a : b", "§ === X", "(§ or X)", "f(§)", "§.with_args(x)");
         List<String> blocks = new java.util.ArrayList<>();
@@ -857,37 +792,32 @@ final class IntegrityTests {
             int cut = form[0].indexOf('§') + form[1].length();
             boolean python = plain.contains("pytest") || plain.contains("unittest"), placed = plain.startsWith("@");
             List<List<String>> variants = new java.util.ArrayList<>();
-            List<List<String>> standing = new java.util.ArrayList<>(); // the variants in which the form stands whole and is read: a note form is a note in each
+            List<List<String>> standing = new java.util.ArrayList<>();
             for (String g : grown) variants.add(List.of(form[0].replace("§", g.replace("§", form[1]))));
-            if (cut < plain.length()) { // a mark that ends its form ends its statement there: nothing is cut
-                variants.add(List.of(plain.substring(0, cut))); // the reading ends before the argument does
-                variants.add(List.of(plain.substring(0, cut), "  || X" + plain.substring(cut))); // and goes on, computed, on the next line
+            if (cut < plain.length()) {
+                variants.add(List.of(plain.substring(0, cut)));
+                variants.add(List.of(plain.substring(0, cut), "  || X" + plain.substring(cut)));
             }
-            if (!placed && !python) standing.add(List.of("if (X) " + plain)); // a condition before it on its line
+            if (!placed && !python) standing.add(List.of("if (X) " + plain));
             if (plain.contains("{ ")) {
                 variants.add(List.of(plain.replaceFirst("\\{ ([^}]*) \\}", "{ meta: { $1 } }")));
                 variants.add(List.of(plain.replaceFirst("\\{ ([^}]*) \\}", "{ $1, ...opts }")));
             }
-            // audit round 6: a form that is a deferred body, an argument or a value is not a statement of its own
             for (String around : List.of("() -> %s", "() => %s", "f(%s)", "x = %s", "return %s")) standing.add(List.of(String.format(around, plain.strip())));
-            // the closing review: nor is one in a literal, or in a block that is an argument or a value, though a brace or a semicolon stands before it there
             String q = !plain.contains("\"") ? "\"" : !plain.contains("'") ? "'" : "`";
             for (String around : List.of(q + "{ §; }" + q, "String fixture = " + q + "{ § }" + q + ";", "const t = `${x} { § }`;", "f(() -> { §; })", "x(function () { § })",
                     "assertThrows(TestAbortedException.class, () -> { §; });", "Runnable r = () -> { §; };", "const later = () => { § };", "return { § };", "// { § }",
                     "/* { § } */", "# { § }")) {
-                // a line that is wholly a comment is not read as written: nothing there
                 (around.startsWith("//") || around.startsWith("#") ? variants : standing).add(List.of(around.replace("§", plain.strip())));
             }
-            // and a block at the reading's own level is one: the form after { is a statement there, as it was
             if (!placed && !plain.startsWith("pytestmark") && !plain.startsWith("it(")) {
                 for (String around : List.of("{ § }", "@Test void t() { § }", "  } { § }")) {
                     blocks.add(around.replace("§", plain.strip()));
                     if (note) standing.add(List.of(around.replace("§", plain.strip())));
                 }
             }
-            // a comment, a quoted operator or a quoted override inside what the proof reads changes what it means as written
             variants.add(List.of(placed && form[0].equals("@§") ? "@/* || X */" + form[1] : form[0].replace("§", form[1] + " /* || X */")));
-            if (!form[1].startsWith("'")) { // a title in quotes with an operator inside is still a title
+            if (!form[1].startsWith("'")) {
                 String quoted = form[1].startsWith("\"") ? form[1].replaceFirst("\"$", " || X\"") : "\"" + form[1].replace('"', '\'') + " || X\"";
                 variants.add(List.of(form[0].replace("§", quoted)));
             }
@@ -896,7 +826,6 @@ final class IntegrityTests {
                 variants.add(List.of(plain.replaceFirst("\\{ ([^}]*) \\}", "{ $1, '" + option.group(1) + "': false }")));
                 variants.add(List.of(plain.replaceFirst("\\{ ([^}]*) \\}", "{ $1, \"" + option.group(1) + "\": X }")));
             }
-            // a line that opens a condition before it, the form on one, two or three lines (an annotation or a decorator takes none)
             List<List<String>> widths = new java.util.ArrayList<>();
             for (int width = 1; width <= (plain.startsWith("it(") ? 1 : 3); width++) widths.add(split(plain, width));
             if (!placed) for (List<String> w : widths) standing.add(Stream.concat(Stream.of(python ? "if X:" : "if (X) {"), w.stream()).toList());
@@ -917,7 +846,6 @@ final class IntegrityTests {
             check("integrity: " + plain + " is sure, on one, two or three lines, and no variant of it that is not whole, or not a statement or a declaration of its own, is",
                     Integrity.lintedSwitch(plain) && stillSure.isEmpty() && notSure.isEmpty());
         }
-        // an assumption is never sure: in a block written on one line it is a note too (the confirmation review)
         List<String> assumed = blocks.stream().filter(b -> b.contains("assume")).toList();
         List<String> blockNotSure = blocks.stream().filter(b -> !b.contains("assume") && !Integrity.lintedSwitch(b)).toList();
         if (!blockNotSure.isEmpty()) System.out.println("    not sure in a block: " + blockNotSure);
@@ -925,7 +853,6 @@ final class IntegrityTests {
                 blocks.size() == 45 && blockNotSure.isEmpty());
         check("integrity: an assumption in a block written on one line is a note, not sure (" + assumed.size() + " lines)",
                 assumed.size() == 6 && assumed.stream().allMatch(b -> Integrity.lint(List.of(b)).sure().isEmpty() && !Integrity.lint(List.of(b)).notes().isEmpty()));
-        // the closing review's two shapes, through the lint and through the check: a fixture's text and an assumption an exception assertion catches
         String fixture = "String fixture = \"{ @Disabled class Example {} }\";", caught = "assertThrows(TestAbortedException.class, () -> { assumeTrue(false); });";
         check("integrity: a switch's words in a string with a brace before them, or in a lambda's block passed to a call, are a note, not sure",
                 Integrity.lint(List.of(fixture)).equals(noted(fixture)) && Integrity.lint(List.of(caught)).equals(noted(caught))
@@ -935,25 +862,17 @@ final class IntegrityTests {
                 Integrity.lintedSwitch("String fixture = \"x\"; @Disabled class Example {}") && Integrity.lintedNote("@Test void t() { assumeTrue(false); }")
                 && !Integrity.lintedSwitch("@Test void t() { assumeTrue(false); }") && Integrity.lintedNote("{ assumeTrue(false); }") && !Integrity.lintedSwitch("{ assumeTrue(false); }")
                 && Integrity.lint(List.of("@Test void t() {", "    assumeTrue(false);")).equals(noted("assumeTrue(false);")));
-        // the review that made every assumption a note: an exception assertion opened on the line above catches the abort, and the
-        // lines alone do not tell it from a test's own body; nor does Kotlin's trailing lambda over lines
         List<String> caughtOver = List.of("assertThrows(TestAbortedException.class, () -> {", "    assumeTrue(false);", "});");
         List<String> kotlinOver = List.of("assertThrows<TestAbortedException> {", "    assumeTrue(false)", "}");
         check("integrity: an assumption in an exception assertion's lambda opened on the line above, in Java and in Kotlin, is a note, never sure",
                 Integrity.lint(caughtOver).equals(noted("assumeTrue(false);")) && Integrity.lint(kotlinOver).equals(noted("assumeTrue(false)")));
-        // the confirmation review: a comment before a lambda's brace, and Kotlin's trailing lambdas of an exception assertion
         List<String> deferred = List.of("Runnable r = () -> /* deferred until invoked */ { assumeTrue(false); };", "assertThrows<TestAbortedException> { assumeTrue(false) }",
                 "assertFailsWith<TestAbortedException> { assumeTrue(false) }", "    val e = assertFailsWith<TestAbortedException>(\"aborts\") { assumeTrue(false) }");
         check("integrity: an assumption after anything else on its line (a commented lambda, a trailing lambda of an exception assertion) is a note, not sure",
                 deferred.stream().allMatch(l -> Integrity.lint(List.of(l)).sure().isEmpty() && !Integrity.lint(List.of(l)).notes().isEmpty()));
     }
 
-    /**
-     * Audit round 6, findings 2 to 5 and 7: each shape of the audit beside the plain form and the
-     * honest neighbour, all through the lint (the gate).
-     */
     private static void round6() {
-        // finding 2: the written reading decides what is sure; a quoted key the code reading emptied may override an option
         check("integrity: an option overridden by a later quoted key, or by a quoted key with a computed value, is a note",
                 Integrity.lint(List.of("test('x', { skip: true, 'skip': false }, fn);")).equals(noted("test('x', { skip: true, 'skip': false }, fn);"))
                 && Integrity.lint(List.of("test('x', { only: true, \"only\": false }, fn);")).equals(noted("test('x', { only: true, \"only\": false }, fn);"))
@@ -965,24 +884,19 @@ final class IntegrityTests {
                 Integrity.lint(List.of("@Test(enabled = false /* || RUN */)")).equals(noted("@Test(enabled = false /* || RUN */)"))
                 && Integrity.lint(List.of("test('x', { skip: true /* , skip: false */ }, fn);")).sure().isEmpty()
                 && Integrity.lint(List.of("@DisabledIf(\"true || isWindows\")")).equals(noted("@DisabledIf(\"true || isWindows\")")));
-        // what the written reading shows inside a string or a trailing comment is read, at the gate's level for it as written
         check("integrity: a switch's words inside a string or a trailing comment are read as written: sure where they stand as a statement, else a note",
                 Integrity.lintedSwitch("String s = \"x\"; @Disabled class X {}") && Integrity.lintedNote("const s = \"it.skip('a', () => {})\";")
                 && Integrity.lintedNote("x(); // it.skip('a', () => {})") && Integrity.lintedNote("String s = \"@Disabled\";"));
-        // finding 7: a literal condition that runs is nothing; the masked reading's emptied string does not make it a note
         check("integrity: @DisabledIf(\"false\") and @EnabledIf(\"true\") are nothing; @DisabledIf(\"true\") is sure, @DisabledIf(\"isWindows\") a note",
                 Integrity.lint(List.of("@DisabledIf(\"false\")", "@EnabledIf(\"true\")", "@EnabledIf(value = \"true\")", "@DisabledIf(expression = \" false \")")).equals(NOTHING)
                 && Integrity.lintedSwitch("@DisabledIf(\"true\")") && Integrity.lintedSwitch("@EnabledIf(\"false\")")
                 && Integrity.lint(List.of("@DisabledIf(\"isWindows\")")).equals(noted("@DisabledIf(\"isWindows\")")));
-        // finding 3: the added line before a form is read by the gate, whatever width of reading proves the form
         List<String> joinedTwo = List.of("if (isCI) {", "  describe.skip(", "    'database', () => {});");
         List<String> joinedThree = List.of("if (isCI) {", "  describe", "    .skip(", "    'database', () => {});");
         check("integrity: a declaration under a condition on the line before is a note, on one line, joined over two and over three, shown with the condition",
                 Integrity.lint(List.of("if (isCI) {", "  describe.skip('database', () => {});")).equals(noted("if (isCI) { describe.skip('database', () => {});"))
                 && Integrity.lint(joinedTwo).equals(noted("if (isCI) { describe.skip( 'database', () => {});"))
                 && Integrity.lint(joinedThree).equals(noted("if (isCI) { describe .skip( 'database', () => {});")));
-        // the auditor's own pass: a line that ends in else or return, a backslash or an operator holds the line after it; one that
-        // ends in an open bracket or a comma holds a statement (it is an argument or an element there), not an element of a list
         List<List<String>> heldBelow = List.of(List.of("if (x) run();", "else", "  it.skip('x', () => {});"), List.of("function f() {", "  return", "  it.skip('x', () => {});"),
                 List.of("wrap(", "  it.skip('x', () => {}));"), List.of("const tests = [", "  it.skip('x', () => {}),"), List.of("x = a and \\\\", "pytestmark = pytest.mark.skip"),
                 List.of("const t = a +", "  it.skip('x', () => {});"), List.of("Runnable r = cond ? null :", "    () -> {}; assumeTrue(false);"));
@@ -1004,7 +918,6 @@ final class IntegrityTests {
                 Integrity.lint(List.of("Runnable later = () ->", "    assumeTrue(false);")).sure().isEmpty()
                 && Integrity.lint(List.of("const later = () =>", "  it.skip('x', () => {});")).sure().isEmpty()
                 && Integrity.lint(List.of("const t = isCI ?", "  it.skip('x', () => {}) : null;")).sure().isEmpty());
-        // finding 4: an assumption in a lambda, an argument or a value is a note (as every assumption that never holds now is)
         check("integrity: an assumption in a lambda, caught by an exception assertion, passed or assigned, is a note",
                 Integrity.lint(List.of("Runnable later = () -> assumeTrue(false);")).equals(noted("Runnable later = () -> assumeTrue(false);"))
                 && Integrity.lint(List.of("assertThrows(TestAbortedException.class, () -> assumeTrue(false));"))
@@ -1016,7 +929,6 @@ final class IntegrityTests {
         check("integrity: its plain forms, qualified or not, on a line of their own, over two lines or in a method written on one line, are notes, never sure",
                 plainAssumed.stream().allMatch(l -> Integrity.lintedNote(l) && !Integrity.lintedSwitch(l))
                 && Integrity.lint(List.of("    assumeTrue(", "        false, \"later\");")).equals(noted("assumeTrue( false, \"later\");")));
-        // finding 5: complete annotations and modifiers before the switch annotation are a declaration's
         check("integrity: @Test @Disabled, public @Disabled and the switch first, in the middle or last of three annotations are sure",
                 Integrity.lintedSwitch("@Test @Disabled void off() {}") && Integrity.lintedSwitch("public @Disabled void off()")
                 && Integrity.lintedSwitch("@Disabled @Tag(\"slow\") @Test void a() {}") && Integrity.lintedSwitch("@Tag(\"slow\") @Disabled(\"later\") @Test void a() {}")
@@ -1028,7 +940,6 @@ final class IntegrityTests {
                 && Integrity.lint(List.of("void @Disabled")).equals(noted("void @Disabled")));
     }
 
-    /** A form written over width lines: cut after its first bracket, before its last one, then at its dots and spaces. */
     private static List<String> split(String plain, int width) {
         String t = plain.strip();
         List<Integer> cuts = new java.util.ArrayList<>();
@@ -1050,12 +961,6 @@ final class IntegrityTests {
         return lines;
     }
 
-    /**
-     * Audit round 3, findings 6, 7 and 8: lines that made the lint slow. Far above the audit's
-     * sizes they are refused by the bound; within it, the same shapes on many lines are read in
-     * work that grows as what is given grows. Work is counted (Integrity.lintWork), so a slow
-     * machine does not fail these.
-     */
     private static void bounded() {
         String comments = "const x = '" + "/* ".repeat(1_000_000) + "';";
         String identifier = "const skip" + "x".repeat(40_000_000) + " = 1;";
@@ -1068,14 +973,12 @@ final class IntegrityTests {
         long spent = Integrity.lintWork() - before, ms = (System.nanoTime() - started) / 1_000_000;
         check("integrity: lines far longer than the audit's slow ones are not read: no work, and each is counted as unread",
                 found.isEmpty() && Integrity.unlinted(huge) == 5 && spent == 0 && ms < 1000);
-        // the same shapes within the bound, and lines of nothing but calls: the work for twice the lines is about twice the work
         StringBuilder near = new StringBuilder("const a = \"");
         for (int i = 0; near.length() < 1980; i++) near.append('w').append(i).append("\\u000a");
         List<String> shapes = List.of("const x = '" + "/* ".repeat(660) + "';", "const skip" + "x".repeat(1980) + " = 1;", near + "\";",
                 "abort(".repeat(330), "assumeTrue(x, ".repeat(140), "it.".repeat(660) + "x;", "@a.".repeat(660), "test.skip(".repeat(190), "marks=[".repeat(280),
                 "it('x', { skip: 1 }, ".repeat(95), "`${`".repeat(490), "'".repeat(1990), "\\u".repeat(990), "it.skip ".repeat(249), "@Test(".repeat(330),
                 "@pytest.mark.skipif(".repeat(99),
-                // audit round 5: the readers of the gate (nested brackets, +-joined strings, option objects, lists of marks, .each)
                 "it.skip('x' + f(" + "([{".repeat(660), "it.skip('a' " + "+ 'b' ".repeat(330), "test('x', " + "{ skip: true, ".repeat(140),
                 "it.skip.each(" + "[(".repeat(990), "pytestmark = [" + "pytest.mark.skip, ".repeat(110), "@(" + "pytest.mark.skipif(True) if (".repeat(66),
                 "@Test(enabled = false, " + "@Disabled(".repeat(195), "test('x', { ...o, ".repeat(110));
@@ -1091,7 +994,6 @@ final class IntegrityTests {
             long half = work(List.of(shape.repeat(n / 2))), full = work(List.of(shape.repeat(n)));
             check("integrity: one line of '" + shape + "' twice as long is about twice the work", full <= 2.4 * half + 2000);
         }
-        // many short lines, as a large honest change has
         List<String> many = new java.util.ArrayList<>();
         for (int i = 0; i < 200_000; i++) many.add(i % 7 == 0 ? "  it('adds " + i + "', () => {" : "    expect(sum(" + i + ", 1)).toBe(" + (i + 1) + ");" + (i % 10 == 0 ? " // skip nothing" : ""));
         long manyStarted = System.nanoTime(), manyWork = work(many);
@@ -1179,10 +1081,8 @@ final class IntegrityTests {
         reset(repo);
     }
 
-    /** What a caller of the scan printed, on standard output and on standard error, and its exit status. */
     private record Said(int code, String out, String err) {}
 
-    /** Runs sdlc check with these options, the host's input on standard input (for the stop hook). */
     private static Said checkWith(Map<String, String> options) {
         PrintStream out = System.out, err = System.err;
         java.io.InputStream in = System.in;
@@ -1200,12 +1100,6 @@ final class IntegrityTests {
         }
     }
 
-    /**
-     * Audit round 5, finding 7: the lint's two levels through the callers of the scan, not the scan
-     * alone: sdlc check, with and without its run, the stop hook and --since. What the lint is sure
-     * of fails (check, the stop hook); a note is said and never fails; --since reports problems
-     * and notes alike, as the check does, and never fails.
-     */
     private static void callers(Path repo) throws IOException {
         String sureLine = "it.skip('later', () => {})", noteLines = "test.skip('webkit'\n  === browserName, 'webkit only');\n";
         String sure = "PROBLEM  test switched off: web/switch.test.ts  " + sureLine;
@@ -1237,8 +1131,6 @@ final class IntegrityTests {
             git(repo, "reset", "-q", "--hard", "HEAD~1");
         }
         Files.deleteIfExists(repo.resolve("web/switch.test.ts"));
-        // audit round 6, findings 2 to 5 and 7, through sdlc check --no-run and the stop hook: what the audit found sure is a note,
-        // what it found a note is a problem, and the literal that runs is nothing
         write(repo, "web/round6.test.ts", "test('x', { skip: true, 'skip': false }, fn);\nif (isCI) {\n  describe.skip(\n    'database', () => {});\n}\n");
         write(repo, "src/test/java/demo/Round6Test.java", "class Round6Test {\n    @Test @Disabled void off() {}\n    @DisabledIf(\"false\") @Test void on() {}\n"
                 + "    @Test void caught() { assertThrows(TestAbortedException.class, () -> assumeTrue(false)); }\n}\n");
@@ -1254,8 +1146,6 @@ final class IntegrityTests {
         Said held = checkWith(Map.of("selftest-runner", "true", "stop-hook", "true"));
         check("integrity, through the stop hook: those notes alone do not block", held.code() == 0 && held.err().isBlank());
         reset(repo);
-        // the closing review: a fixture's text with a brace before a switch's words, and an assumption in a lambda's block an exception assertion
-        // catches, are notes through sdlc check --no-run and the stop hook, and so is a plain one in a method's body
         String fixture = "String fixture = \"{ @Disabled class Example {} }\";", caught = "assertThrows(TestAbortedException.class, () -> { assumeTrue(false); });";
         write(repo, "src/test/java/demo/FixtureTest.java", "class FixtureTest {\n    @Test void reads() {\n        " + fixture + "\n        " + caught + "\n    }\n}\n");
         Said honest = checkWith(Map.of("no-run", "true"));
@@ -1270,7 +1160,6 @@ final class IntegrityTests {
         check("integrity, through sdlc check --no-run and the stop hook: its neighbour, an assumption on a line of its own in a method's body, is a note, exit 0",
                 plain.code() == 0 && plain.out().contains("note     may switch a test off: src/test/java/demo/FixtureTest.java  the run of the file judges it: assumeTrue(false);\n")
                 && !plain.out().contains("PROBLEM") && plainHook.code() == 0 && plainHook.err().isBlank());
-        // the review that made every assumption a note: an exception assertion's lambda opened on the line above catches the abort
         write(repo, "src/test/java/demo/FixtureTest.java", "class FixtureTest {\n    @Test void reads() {\n        assertThrows(TestAbortedException.class, () -> {\n"
                 + "            assumeTrue(false);\n        });\n    }\n}\n");
         Said over = checkWith(Map.of("no-run", "true"));
@@ -1280,11 +1169,6 @@ final class IntegrityTests {
         reset(repo);
     }
 
-    /**
-     * Audit round 4, finding 8: a deleted test file is read by all its lines in one pass. Shapes
-     * that made the reading search the rest of the file again for each line are read in work
-     * linear in the file (counted, see Integrity.lintWork), and soon.
-     */
     private static void deletedCost(Path repo) throws IOException {
         StringBuilder rows = new StringBuilder();
         while (rows.length() < 5_000_000) rows.append("    *rows,\n");
@@ -1309,14 +1193,6 @@ final class IntegrityTests {
         }
     }
 
-    /**
-     * Audit round 6, finding 1: the readers of removed and added lines (a package or import line,
-     * the move matching, the test calls, the assumption counts, a pom's minimums) read lines of at
-     * most Integrity.LONGEST characters, and their patterns walk such a line once. Through sdlc
-     * check --no-run, on a file deleted and on the same file moved to another package: the audit's
-     * shape at 400,000 spaces (one line, longer than the bound), the same for an import line, and
-     * three shapes within the bound, 2 MB each, aimed at the patterns that were rewritten.
-     */
     private static void movedCost(Path repo) throws IOException {
         String rest = "\nimport org.junit.jupiter.api.Test;\n\nclass SpaceTest {\n    @Test\n    void adds() {}\n}\n";
         StringBuilder packages = new StringBuilder(), imports = new StringBuilder(), minimums = new StringBuilder("<project>\n");
@@ -1356,7 +1232,6 @@ final class IntegrityTests {
             reset(repo);
             git(repo, "reset", "-q", "--hard", "HEAD~1");
         }
-        // a deleted file beside the tests whose only long line is not read: a note that says so, never a problem from that line
         write(repo, "tests/helpers.py", "def helper():\n    return 1\nDATA = [" + "1, ".repeat(1000) + "]\n");
         write(repo, "tests/cases.py", "DATA = '" + "x".repeat(3000) + "'\n\ndef test_real():\n    assert True\n");
         git(repo, "add", "-A");
@@ -1374,7 +1249,6 @@ final class IntegrityTests {
         return Integrity.scan(Change.of(null));
     }
 
-    /** Exactly one finding of this kind on this path, at this level, whose detail contains the text. */
     private static boolean only(List<Finding> all, Level level, String kind, String path, String detail) {
         List<Finding> hits = all.stream().filter(f -> f.kind().equals(kind) && f.path().equals(path)).toList();
         boolean ok = hits.size() == 1 && hits.get(0).level() == level && hits.get(0).detail().contains(detail);

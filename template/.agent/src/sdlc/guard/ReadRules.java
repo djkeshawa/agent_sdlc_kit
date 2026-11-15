@@ -7,11 +7,6 @@ import java.util.Set;
 
 import sdlc.util.ShellWords;
 
-/**
- * Shell rule about commands that read every file below a folder (grep -r, tar, zip, cp -r,
- * find -exec ...): refused when the folder holds a credential file, because the secret's own
- * name never appears in the command.
- */
 final class ReadRules {
     private static final Set<String> GREPS = Set.of("grep", "egrep", "fgrep", "zgrep", "rgrep");
     private static final Set<String> ARCHIVERS = Set.of("tar", "zip", "7z", "7za", "jar", "cpio", "rsync");
@@ -57,12 +52,10 @@ final class ReadRules {
                 if (g.files.dirHoldsSecret(p)) return denyTree(name, a);
             }
         }
-        // grep -r PATTERN, rg -uu PATTERN, find -exec ... with no path at all search the current folder
         if (!namedFolder && defaultsToCurrentFolder(name, find, args) && g.folders.bases().stream().anyMatch(g.files::dirHoldsSecret)) return denyTree(name, ".");
         return null;
     }
 
-    /** True when the command names no path, so it reads the current folder. */
     private static boolean defaultsToCurrentFolder(String name, boolean find, List<String> args) {
         if (find) return args.isEmpty() || args.get(0).startsWith("-") || args.get(0).equals("(") || args.get(0).equals("!");
         if (!GREPS.contains(name) && !SEARCHERS.contains(name)) return false;
@@ -72,7 +65,7 @@ final class ReadRules {
             String a = args.get(i);
             if (a.equals("-e") || a.equals("-f") || a.equals("--regexp") || a.equals("--file")) {
                 patternAsOption = true;
-                i++; // the pattern (or pattern file) that follows is not a path
+                i++;
             } else if (a.startsWith("--regexp=") || a.startsWith("--file=")) {
                 patternAsOption = true;
             } else if (!a.startsWith("-")) {

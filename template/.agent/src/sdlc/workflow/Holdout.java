@@ -16,12 +16,6 @@ import sdlc.util.Http;
 import sdlc.util.Json;
 import sdlc.util.Markdown;
 
-/**
- * Hold-out scenarios: black-box tests QE keeps in its own repository and runs in its own Jenkins
- * job (holdout.jenkinsJob) against the PR build. Agents never see their code. This command reads
- * only the test names and their pass/fail status from that job (the error details, which could
- * show the inputs, are never requested) and reports per scenario: id, title, PASS / FAIL.
- */
 public final class Holdout {
     private static final Pattern TS = Pattern.compile("TS-[0-9]+");
     private static final Pattern TS_HEADING = Pattern.compile("(?m)^#{2,4}\\s*(TS-[0-9]+)\\s+(.+?)\\s*$");
@@ -33,7 +27,6 @@ public final class Holdout {
         this.w = w;
     }
 
-    /** One scenario's result: PASS when every test naming it passed. */
     public record Result(String id, String title, String status) {}
 
     public int status(String story, String build) {
@@ -44,7 +37,7 @@ public final class Holdout {
         if (!Ci.trustedJenkins(job)) throw new UsageException("holdout.jenkinsJob must be on ci.jenkins.url, so the Jenkins token goes nowhere else");
         String auth = Http.basic(Ctx.secret("JENKINS_USER", ""), Ctx.secret("JENKINS_TOKEN", ""));
         String b = build.isBlank() ? "lastCompletedBuild" : build.replaceAll("[^0-9]", "");
-        Object report = Http.json("GET", job + "/" + b + "/testReport/api/json?tree=suites[cases[className,name,status]]", auth, null); // never errorDetails
+        Object report = Http.json("GET", job + "/" + b + "/testReport/api/json?tree=suites[cases[className,name,status]]", auth, null);
         Map<String, String> status = new TreeMap<>();
         int unnamed = 0;
         for (Object s : Json.list(Json.at(report, "suites"))) {
@@ -85,7 +78,6 @@ public final class Holdout {
         return pass == results.size() + missing.size() && !results.isEmpty() ? 0 : 1;
     }
 
-    /** Scenario titles of the story's test design (its own or its epic's), and the ids marked "Hold-out: yes". */
     private void scenarios(String story, Map<String, String> titles, List<String> marked) {
         try {
             Docs.Doc td = w.docs.own(story, "testDesign");
