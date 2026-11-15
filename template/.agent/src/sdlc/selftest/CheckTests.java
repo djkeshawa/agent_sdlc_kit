@@ -879,10 +879,17 @@ final class CheckTests {
         Files.delete(repo.resolve("tests/b/move.test.t"));
         write(repo, "tests/b/move.test.txt", MOVE);
         String away = report(Map.of("selftest-runner", "true", "runs", "1"));
-        check("moves: a test file moved to where no runner runs it is no move for the run: the added file is listed as not checked",
-                code == 0 && !away.contains("test file moved (not counted)") && away.contains("the test file tests/b/move.test.txt: no runner for it")
-                && away.contains("note     test file moved: tests/a/move.test.t  the same file is now at tests/b/move.test.txt"));
+        check("moves: a test file renamed to another kind of file has not moved: its deletion is a problem",
+                code == 1 && !away.contains("test file moved") && away.contains("PROBLEM  test file deleted: tests/a/move.test.t"));
         Files.delete(repo.resolve("tests/b/move.test.txt"));
+        // moved, as a file of the same kind, to where no runner runs it: the tests it ran do not run now
+        Files.delete(repo.resolve("tests/jvm/a/CalcTest.java"));
+        write(repo, "attic/CalcTest.java", CALC);
+        String attic = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("moves: a test file moved to where no runner runs it fails: its tests ran before the change and do not run now",
+                code == 1 && attic.contains("moved to attic/CalcTest.java, where no runner of the check runs it") && attic.contains("not run now"));
+        Files.delete(repo.resolve("attic/CalcTest.java"));
+        write(repo, "tests/jvm/a/CalcTest.java", CALC);
         write(repo, "tests/a/move.test.t", MOVE);
 
         // moved, and the code changed so that a test of it that failed before passes now: sensitive

@@ -232,7 +232,8 @@ final class Witness {
             if (owner != null) owned.computeIfAbsent(owner, k -> new ArrayList<>()).add(path);
             else if (Integrity.testNamed(path)) unsupported.add(path);
         }
-        if (owned.isEmpty()) return new Result(verdicts, unsupported, 0);
+        verdicts.addAll(movedAway(change, runners, owned, sides, timeoutSeconds));
+        if (owned.isEmpty()) return new Result(verdicts, unsupported, verdicts.isEmpty() ? 0 : 1);
         Set<String> edited = new LinkedHashSet<>(change.paths("M"));
         Map<String, Integrity.Move> moved = moved(change, owned, sides);
         for (Map.Entry<Runner, List<String>> e : owned.entrySet()) {
@@ -258,6 +259,30 @@ final class Witness {
         for (Integrity.Move m : moves.values()) {
             Runner owner = owned.entrySet().stream().filter(e -> e.getValue().contains(m.to())).map(Map.Entry::getKey).findFirst().orElse(null);
             if (owner != null && owner.runs(sides.old().dir, m.from())) out.put(m.to(), m);
+        }
+        return out;
+    }
+
+    /**
+     * A test file the change moved (by the one rule, Integrity.moves) to a path that no runner of
+     * the check runs, while a runner ran it where it was: its tests ran before the change and do
+     * not run now, whatever the text check calls the move. The file is run once as it was, to
+     * count them: each passed case is one test that ran. Where that run passed none, or gave no
+     * result, it is said and not counted. The verdict is of the file where it was.
+     */
+    private static List<Verdict> movedAway(Change change, List<Runner> runners, Map<Runner, List<String>> owned, Sides sides, int timeout) {
+        List<Verdict> out = new ArrayList<>();
+        for (Integrity.Move m : Integrity.moves(change).values()) {
+            if (owned.values().stream().anyMatch(files -> files.contains(m.to()))) continue;
+            Runner was = runners.stream().filter(r -> r.runs(sides.old().dir, m.from())).findFirst().orElse(null);
+            if (was == null) continue;
+            FileRun old = run(was, sides.old().dir, List.of(m.from()), timeout).get(m.from());
+            long ran = old == null || old.problem() != null ? 0 : old.cases().stream().filter(c -> out(c) == Out.PASSED).count();
+            String to = "moved to " + m.to() + ", where no runner of the check runs it";
+            if (ran > 0) out.add(new Verdict(m.from(), "", Kind.NOT_RUN_NOW, "the file passed " + ran + " of its tests before the change and was " + to + ": at least " + ran
+                    + (ran == 1 ? " test that ran before the change does" : " tests that ran before the change do") + " not run now", was.name(), (int) ran, Cover.FILE));
+            else out.add(new Verdict(m.from(), "", Kind.UNKNOWN, "the file was " + to + ". Run as it was before the change, it "
+                    + (old == null ? "gave no result" : old.problem() != null ? old.problem() : "passed no test") + ", so whether tests that ran before the change do not run now is not known", was.name(), Cover.NONE));
         }
         return out;
     }

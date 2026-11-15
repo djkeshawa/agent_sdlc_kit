@@ -98,9 +98,12 @@ make a move: a spec moved to another folder with its relative import adjusted
 (`'./prod.js'` to `'../prod.js'`) is a deleted file and an added one. Where a JVM file's imports
 changed, its run judges how many of its tests run and whether they pass; an import that makes a
 test test less while it still passes (a stub in place of the class it tested) is not seen by any
-run, and the moved file's line says so. A test file moved to where no runner of the check runs it
-is no move for the run: the added file is listed under Not checked when it is named like a test
-file, and the text check still calls the deletion a move.
+run, and the moved file's line says so. A move is a test file that becomes a
+test file of the same kind: a test file renamed to a path that is no test file, or to another
+extension (`sum.test.ts` to `sum.txt`), has not moved, and its deletion is a problem. A test file
+moved to where no runner of the check runs it, while a runner ran it where it was, fails the check:
+the file is run once as it was, and the tests it passed there ran before the change and do not run
+now.
 
 ### Which tests are new, gone or switched off
 

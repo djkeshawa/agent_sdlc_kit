@@ -2176,19 +2176,31 @@ public final class Integrity {
             // many deleted and many added files cost their lines, not their product
             Map<List<String>, java.util.ArrayDeque<String>> by = new HashMap<>();
             for (String a : change.paths("A")) {
-                if (taken.contains(a) || how != How.SAME && !JVM.matcher(a).matches()) continue;
+                // the other half of a move is a test file too: a test file renamed to a path that is no test file (sum.test.ts to
+                // sum.txt) has not moved, its tests are gone
+                if (taken.contains(a) || !anyTestFile(a) || how != How.SAME && !JVM.matcher(a).matches()) continue;
                 by.computeIfAbsent(compared(added.getOrDefault(a, List.of()), how), k -> new java.util.ArrayDeque<>()).add(a);
             }
             for (String d : gone) {
                 if (out.containsKey(d) || how != How.SAME && !JVM.matcher(d).matches()) continue;
                 java.util.ArrayDeque<String> twins = by.get(compared(removed.getOrDefault(d, List.of()), how));
-                if (twins == null || twins.isEmpty()) continue;
-                String a = twins.poll();
+                if (twins == null) continue;
+                // and a file of the same kind: the same extension (a.test.ts under tests/ to a.test.txt under tests/ is no move)
+                String a = twins.stream().filter(t -> extension(t).equals(extension(d))).findFirst().orElse(null);
+                if (a == null) continue;
+                twins.remove(a);
                 taken.add(a);
                 out.put(d, new Move(d, a, how));
             }
         }
         return out;
+    }
+
+    /** A path's extension, in lower case: what follows the last dot of its file name, or "". */
+    private static String extension(String path) {
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        int dot = name.lastIndexOf('.');
+        return dot < 0 ? "" : name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
     }
 
     /** A file's lines as a way of moves compares them. */
