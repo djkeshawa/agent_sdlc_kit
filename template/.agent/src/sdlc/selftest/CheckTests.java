@@ -171,22 +171,26 @@ final class CheckTests {
         Files.createDirectories(m.resolve("src/test/java/demo"));
         Files.writeString(m.resolve("pom.xml"), "<project/>");
         Files.writeString(m.resolve("src/test/java/demo/ATest.java"), "package demo;\nclass ATest {}\n");
+        // the stand-in uses nothing but the shell itself: the self test also runs where the PATH holds no mkdir, cp or cat
+        Files.createDirectories(m.resolve("target/surefire-reports"));
         Files.writeString(m.resolve("mvnw"), """
                 #!/bin/sh
                 # stands in for Maven: copies the report it is given into place, says what Maven would, exits as told
-                mkdir -p target/surefire-reports
-                if [ -f given-report.xml ]; then cp given-report.xml target/surefire-reports/TEST-given.xml; fi
+                if [ -f given-report.xml ]; then
+                  while IFS= read -r line || [ -n "$line" ]; do printf '%s\\n' "$line"; done < given-report.xml > target/surefire-reports/TEST-given.xml
+                fi
                 echo "[ERROR] Failed to execute goal: something outside the tests went wrong"
-                exit "$(cat given-exit)"
+                read -r code < given-exit
+                exit "$code"
                 """);
-        Files.writeString(m.resolve("given-exit"), "0");
+        Files.writeString(m.resolve("given-exit"), "0\n");
         check("check: a Maven build that passes with no report for the class: it ran and has no tests", sdlc.check.Runners.mavenRun(m, "src/test/java/demo/ATest.java").equals("ran, no tests"));
         Files.writeString(m.resolve("given-report.xml"), "<testsuite name=\"demo.OtherTest\"><testcase name=\"other\" classname=\"demo.OtherTest\"/></testsuite>");
         check("check: a report of another class says nothing of this one", sdlc.check.Runners.mavenRun(m, "src/test/java/demo/ATest.java").equals("ran, no tests"));
         Files.writeString(m.resolve("given-report.xml"), "<testsuite name=\"demo.ATest\"><testcase name=\"works\" classname=\"demo.ATest\"/></testsuite>");
         check("check: and one of the class gives its cases", sdlc.check.Runners.mavenRun(m, "src/test/java/demo/ATest.java").equals("PASSED works"));
         Files.delete(m.resolve("given-report.xml"));
-        Files.writeString(m.resolve("given-exit"), "1");
+        Files.writeString(m.resolve("given-exit"), "1\n");
         String failed = sdlc.check.Runners.mavenRun(m, "src/test/java/demo/ATest.java");
         check("check: a Maven build that fails with no report for the class did not run it, and is not taken for no tests",
                 failed.startsWith("no result: did not run (Maven exit 1: Failed to execute goal: something outside the tests went wrong"));
