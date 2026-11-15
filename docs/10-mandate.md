@@ -83,7 +83,8 @@ or the test configuration changed, those lines are `unknown`, because a changed 
 any test pass.
 
 The last line, the change's own tests, is `violated` when a new test passes before and after the
-change, a changed test fails after it (in any run after it), tests that ran before the change do
+change, a changed test fails after it or its file does not compile or load (in any run after
+it), tests that ran before the change do
 not run now (an edited test file runs fewer tests after the change than passed in it as it was,
 in every run, whatever became of them: deleted, skipped or hidden), or a test that passed before
 the change fails as it was on the change, in every run, and was taken out of the way in every run

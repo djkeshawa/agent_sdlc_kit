@@ -53,7 +53,7 @@ Three parts:
 | --- | --- |
 | Fails before, passes after | The test is sensitive to the change. It is run three times on each side, so a test that fails at random does not count |
 | New test passes before and after | It passes whether or not the change is there, so it does not test the change. In a file the change adds, each such test is named, where it passes on both sides in every run. In an edited file the file is named, "at least N", with the names the file reports for the first time; those names need not be the new tests (see below). Said of an edited file only where the run of the file as it was lists every test (see below), and only where every combination of the runs made counts at least one: N is then the fewest. This fails the check |
-| Fails after the change | The change's own test fails, in any run after the change; the line says in how many where it is not all of them. A test the build ran again that failed every time fails (Surefire's `rerunFailingTestsCount`). This fails the check |
+| Fails after the change | The change's own test fails, in any run after the change; the line says in how many where it is not all of them. A test the build ran again that failed every time fails (Surefire's `rerunFailingTestsCount`). So does a test file whose code does not compile or load after the change, in the first run or any repeat, said of the file with in how many runs; a run that gives no result for a reason outside the code (no build tool, a timeout) is not a failure, and is said as differing from run to run. This fails the check |
 | Tests that ran before the change do not run now | The edited file runs fewer tests after the change than passed in it as it was: at least N tests that ran do not run now, whatever became of them (deleted, skipped, hidden in a skipped class or an empty report, renamed while switched off). Said of the file, "at least N", with what the reports show: the names it no longer reports, the names skipped now, the names it reports for the first time; the names do not say which tests, and the line does not say whether the change of the tests or of the code took them. Must hold in every run. Not said where the file as it was reported a test that failed or threw, nor where the old file runs no more tests on the code after the change than the new one (the change of the code may have taken them), nor where only tests that passed when the build ran them again make the count (see below). This fails the check |
 | Passed before, fails as it was after, taken out | An old test that passed before the change, run as the file was on the code after the change, fails, in every run; in every run of the file after the change that the check made, the first and every repeat, the file does not report its name or skips it, and no test of the file could be it rewritten in any of them (see below). This fails the check |
 | Could not be judged | Before the change the test did not compile, threw something other than a failed assertion, or was not found. Or the file as it was could not be run (it did not compile, timed out, or no build tool), so it cannot be told whether a test is new. Or the reports fit two stories, one of which is fine: a rename and a test deleted and another written; a test switched off and rows that changed places; a new test and an old one under a new name; an old test edited, or taken out and its name given to another. Or a report of the file may not list every test (see below). Or the file as it was could not be run on the code after the change when the fourth run asked for it, or did not report an old test there as passed or failed: the file gets a line of its own saying so, whatever else is said of it. Or the reports of the file as it was and after the change differ in a way no rule judged (see below). Each such line says what the reports show and which stories they cannot tell apart, or why nothing is counted. It never fails the check |
@@ -75,29 +75,37 @@ are true however tests are named. What the counts cannot prove is said as "could
 never passed in silence; so is a run the check asked for that gave no answer.
 
 Every verdict is made after the last run. A test's verdicts, the counts of tests that do not run
-now and of new tests, and the old tests the change broke are made from every report the check
-made, each repeat of each way (`--runs`); what the skips and the names gone say is read from the
-first runs and compared with every repeat of a file that was run again. A test is read in every
-combination of the runs: each run of the file as it was, with
-each run before the change, with each run after it. A test that fails in any run after the change
-fails. Any other verdict of a test is said only where every combination says the same; else it
-is unstable (a test that looked sensitive in the first runs) or left to the rule below. Not every
-way is run again: the run before the change is repeated only for a file with a test that looks
-sensitive, and the run of the file as it was only for a file whose skips or counts say something
-(see the fourth run, below), so "every run" means every run the check made, which the report
-counts.
+now and of new tests, and the old tests the change broke are made from every report the check made,
+each repeat of each way (`--runs`); what the skips and the names gone say is read from the first
+runs and compared with every repeat of a file that was run again. A test is read in every
+combination of the runs: each run of the file as it was, with each run before the change, with each
+run after it. A test that fails in any run after the change fails, and so does a file that does not
+compile or load in any run after the change. Any other verdict of a test is said only where every
+combination says the same; else it is unstable (a test that looked sensitive in the first runs) or
+left to the rule below. Not every way is run again: the run before the change is repeated only for
+a file with a test that looks sensitive, and the run of the file as it was only for a file whose
+skips or counts say something (see the fourth run, below), so "every run" means every run the check
+made, which the report counts.
+
+The order in which a report lists its tests is never read. Surefire writes a report's tests in the
+order they finish, which differs from run to run where tests run concurrently, so every report is
+put in one order as it is read (by class, by name, then by result), runs are compared by counts and
+names, never by the words of a line, and every list of names the check prints is in that order.
 
 Every difference gets an answer. Apart from the rules below, the check lists every way a file's
-reports differ: a test the file as it was reported and the file after the change does not, or
-the other way, a test switched off or on, a test with another result (passed, passed only when
-run again, failed, threw, skipped) before and after the change, and a test one run of a way
-reported otherwise than another run of the same way. Each rule of the check says which of these
-its lines answer for. What no line answers for is printed all the same, one line for the file:
-"could not be judged" for a difference between the file as it was and after the change, with
-the names and what each report said, and "different results from run to run" for one between
-runs. So a case that falls between two rules, or a repeat whose report no rule read, is said, not
-passed. These lines never fail the check. A test that passes in every run, before and after the
-change, is no difference.
+reports differ: a test the file as it was reported and the file after the change does not, or the
+other way, a test switched off or on, a test with another result (passed, passed only when run
+again, failed, threw, skipped) before and after the change, and a test one run of a way reported
+otherwise than another run of the same way. Each rule of the check says which of these its lines
+answer for: a line that fails the check answers for the whole file, as the file must be looked at
+anyway; a line that could not be judged or says the file differs from run to run answers only for
+the tests it names, or for those whose counts make the count it speaks of, so another difference
+beside it is said all the same. What no line answers for is printed all the same, one line for the
+file: "could not be judged" for a difference between the file as it was and after the change, with
+the names and what each report said, and "different results from run to run" for one between runs.
+So a case that falls between two rules, or a repeat whose report no rule read, is said, not passed.
+These lines never fail the check. A test that passes in every run, before and after the change, is
+no difference.
 
 Tests that ran and do not run now. For each edited file, R0 is how many of its tests passed in
 the run of the file as it was, at the first try, and R1 how many run after the change: every test
@@ -118,16 +126,17 @@ it could not be judged, with why. So a flaky test switched off is said, but not 
 Whether the line fails the check. Where the rows of a parameterized test come from the production
 code (an enum, a list in the code), a change of the code can take rows away, and that is ordinary
 work. So the file as it was is also run on the code after the change (the fourth run, below), and
-R4 is how many of its tests run there. On that code, a change of the tests that took nothing out
-runs every test the file as it was runs: R1 is at least R4. So where R4 > R1, the change of the
-tests itself runs fewer tests on the same code, and the line fails the check; where R4 is no more
-than R1, the change of the code may have taken all of them, and the line could not be judged.
-This is counting, not names: a row the code took and one the tests dropped are not told apart,
-and the line does not try. Where the fourth run gives no usable report (the old file does not
-compile or load on the code after the change, or a failure stands in place of its tests), the
+R4 is how many of its tests run there: the cases it reports that are not skipped, less those that
+passed only when the build ran them again, as for R0. On that code, a change of the tests that took
+nothing out runs every test the file as it was runs: R1 is at least R4. So where R4 > R1, the
+change of the tests itself runs fewer tests on the same code, and the line fails the check; where
+R4 is no more than R1, the change of the code may have taken all of them, and the line could not be
+judged. This is counting, not names: a row the code took and one the tests dropped are not told
+apart, and the line does not try. Where the fourth run gives no usable report (the old file does
+not compile or load on the code after the change, or a failure stands in place of its tests), the
 line fails the check all the same and says that the file as it was could not be run on the code
-after the change, so whether the change of the tests or of the code took them is not known. This
-is a choice: that tests that ran do not run now is true either way, and a person must look.
+after the change, so whether the change of the tests or of the code took them is not known. This is
+a choice: that tests that ran do not run now is true either way, and a person must look.
 
 | In the file | Result |
 | --- | --- |
