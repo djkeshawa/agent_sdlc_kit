@@ -374,6 +374,10 @@ layer_real() {
   bad=
   not=
   said=
+  # the test runners start "java" from the PATH: it must be the java this run was told to use
+  case $java in
+    */*) PATH=$(cd "$(dirname "$java")" && pwd):$PATH; export PATH ;;
+  esac
   if path=$(maven_path); then
     PATH=$path python3 "$repo/tests/e2e/maven.py" "$work/build" "$work/maven" >> "$log" 2>&1 || bad="$bad maven"
     said="$said $(grep 'real-Maven checks passed' "$log" | tail -1);"

@@ -225,7 +225,7 @@ final class MandateFlowTests {
         check("mandate: --no-run reads git only and marks the rest not run", noRun.contains("not run   scenarios found, ran and passed") && noRun.contains("satisfied locked tests"));
 
         Deque<String> none = new ArrayDeque<>(List.of("it breaks search", "0", "fix"));
-        check("mandate: approving with no covering test is allowed", MandateCli.approve(repo, "fix", q -> none.poll(), new PrintStream(new ByteArrayOutputStream())) == 0);
+        check("mandate: approving with no covering test is allowed", MandateCli.approve(repo, "fix", q -> none.poll(), new PrintStream(new ByteArrayOutputStream(), false, StandardCharsets.UTF_8)) == 0);
         check("mandate: and every verdict then says the sentence is unresolved", verdict().contains("unresolved \"this fails if it breaks search\": the approver named no test that covers it"));
         String asApproved = Files.readString(repo.resolve("docs/mandates/fix.json"));
         Files.writeString(repo.resolve("docs/mandates/fix.json"), asApproved + "\n");
@@ -234,11 +234,11 @@ final class MandateFlowTests {
         Files.writeString(repo.resolve("docs/mandates/fix.json"), asApproved);
         check("mandate: and with the approved text back the sentence is unresolved again", verdict().contains("unresolved \"this fails if it breaks search\""));
         Deque<String> blank = new ArrayDeque<>(List.of(""));
-        check("mandate: an empty sentence approves nothing", MandateCli.approve(repo, "fix", q -> blank.poll(), new PrintStream(new ByteArrayOutputStream())) == 1);
+        check("mandate: an empty sentence approves nothing", MandateCli.approve(repo, "fix", q -> blank.poll(), new PrintStream(new ByteArrayOutputStream(), false, StandardCharsets.UTF_8)) == 1);
         Deque<String> wrongId = new ArrayDeque<>(List.of("it breaks", "1", "yes"));
         String before = Files.readString(repo.resolve("docs/mandates/fix.json"));
         check("mandate: anything but the id cancels, and the file is left as it was",
-                MandateCli.approve(repo, "fix", q -> wrongId.poll(), new PrintStream(new ByteArrayOutputStream())) == 1 && Files.readString(repo.resolve("docs/mandates/fix.json")).equals(before));
+                MandateCli.approve(repo, "fix", q -> wrongId.poll(), new PrintStream(new ByteArrayOutputStream(), false, StandardCharsets.UTF_8)) == 1 && Files.readString(repo.resolve("docs/mandates/fix.json")).equals(before));
         check("mandate: an id that is not a mandate is refused", Asserts.throwsUsage(() -> Check.run(Map.of("mandate", "../x"))));
 
         write(repo, "tests/reg.t", "holds: needs more\n");

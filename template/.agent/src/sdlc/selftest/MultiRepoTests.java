@@ -376,7 +376,7 @@ final class MultiRepoTests {
 
     private static void locks(Path tmp) throws IOException {
         java.io.PrintStream out = System.out, err = System.err;
-        java.io.PrintStream sink = new java.io.PrintStream(java.io.OutputStream.nullOutputStream());
+        java.io.PrintStream sink = new java.io.PrintStream(java.io.OutputStream.nullOutputStream(), false, java.nio.charset.StandardCharsets.UTF_8);
         System.setOut(sink);
         System.setErr(sink);
         try {
@@ -430,7 +430,7 @@ final class MultiRepoTests {
         Proc.run(tmp, "git", "switch", "-q", back);
         Store.writeText(tmp.resolve(test), "class RefundAcceptanceTest { /* TS-01 */ }\n");
         Store.writeText(lockFile, lockText);
-        check("locks: a CRLF checkout hashes the same", Locks.hash("a\r\nb\n".getBytes()).equals(Locks.hash("a\nb\n".getBytes())));
+        check("locks: a CRLF checkout hashes the same", Locks.hash("a\r\nb\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)).equals(Locks.hash("a\nb\n".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
         Store.write(tmp.resolve(".sdlc/PROJ-70/state.json"), Store.map("story", "PROJ-70", "tasks", Map.of("PROJ-71", Store.map("scope", List.of("src/main/java/com/acme/refund/**")))));
         check("locks: a locked acceptance test is not 'code outside the tasks' scope'", Checks.outsideScope("PROJ-70", List.of(test, "src/main/java/demo/A.java")).equals(List.of("src/main/java/demo/A.java")));
         expect("locks: agent edit tool refused on a locked test", tool("replace_string_in_file", "{\"filePath\":\"" + json(tmp) + "/" + test + "\"}"), Decision.Kind.DENY);
@@ -607,7 +607,7 @@ final class MultiRepoTests {
         check("cochange: an undeclared frequent pair is unexplained", pairs.stream().anyMatch(p -> p.a().equals("ledger") && p.b().equals("payments") && p.count() == 2 && p.known().equals("none")));
 
         java.io.PrintStream out = System.out;
-        System.setOut(new java.io.PrintStream(java.io.OutputStream.nullOutputStream()));
+        System.setOut(new java.io.PrintStream(java.io.OutputStream.nullOutputStream(), false, java.nio.charset.StandardCharsets.UTF_8));
         try {
             Path traces = tmp.resolve(".sdlc/PROJ-90/drafts/deps.json");
             Store.writeText(traces, "{\"data\": [{\"parent\": \"payments-service\", \"child\": \"orders-service\", \"callCount\": 42}, {\"parent\": \"x\", \"child\": \"x\"}]}");
