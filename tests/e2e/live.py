@@ -20,7 +20,7 @@ Settings, all from the environment (README.md here has an example):
                      Without it the run stops at the gates and checks that they stay closed.
 
 Exit code: 0 every check passed, 1 a check failed, 2 the settings are missing or the site does not
-answer or refuses the bot (nothing was tested). Options: --keep leaves the test project on disk (without its secrets);
+answer or refuses the bot (nothing was tested), 128 + n the run was stopped by signal n. Options: --keep leaves the test project on disk (without its secrets);
 --template DIR tests another copy of the template."""
 import argparse
 import base64
@@ -92,13 +92,13 @@ class Account:
         SECRETS.append(self.auth[6:])
         self.id = self.name = ""
 
-    def call(self, method, path, data=None, ok=(200, 201, 202, 204)):
+    def call(self, method, path, data=None, ok=(200, 201, 202, 204), wait=60):
         headers = {"Authorization": self.auth, "Accept": "application/json", "X-Atlassian-Token": "no-check"}
         if data is not None:
             headers["Content-Type"] = "application/json"
         req = urllib.request.Request(self.site + path, method=method, headers=headers, data=json.dumps(data).encode() if data is not None else None)
         try:
-            with OPENER.open(req, timeout=60) as r:
+            with OPENER.open(req, timeout=wait) as r:
                 code, body = r.status, r.read()
         except urllib.error.HTTPError as e:
             code, body = e.code, e.read()
@@ -191,16 +191,27 @@ def main():
     work = Path(tempfile.mkdtemp(prefix="sdlc-live-"))
     proj = work / "payments"
     # The tool lets the environment win over .agent/local.env. So nothing of the caller's shell that names
-    # a site or a login may reach it: the run would write to that site, not to SDLC_LIVE_SITE.
-    env = {k: v for k, v in os.environ.items() if not re.match(r"(?i)(SDLC_LIVE_|JIRA_|CONFLUENCE_|JENKINS_|SONAR_|JAVA_TOOL_OPTIONS$|_JAVA_OPTIONS$|JDK_JAVA_OPTIONS$)", k)
+    # a site or a login may reach it: the run would write to that site, not to SDLC_LIVE_SITE. The same
+    # for git: a GIT_DIR of the shell would make git and the tool work in that repository.
+    env = {k: v for k, v in os.environ.items() if not re.match(r"(?i)(SDLC_LIVE_|JIRA_|CONFLUENCE_|JENKINS_|SONAR_|GIT_|JAVA_TOOL_OPTIONS$|_JAVA_OPTIONS$|JDK_JAVA_OPTIONS$)", k)
            and k not in ("SDLC_BASE_BRANCH", "GITHUB_BASE_REF", "CHANGE_TARGET")}
     env.update(PATH=str(HERE / "bin") + os.pathsep + os.environ["PATH"], GIT_AUTHOR_NAME="Dev", GIT_AUTHOR_EMAIL="dev@acme.test",
                GIT_COMMITTER_NAME="Dev", GIT_COMMITTER_EMAIL="dev@acme.test")
     made = {"issues": [], "pages": []}
 
     def run(*cmd, inp=None):
-        r = subprocess.run(list(cmd), cwd=proj, env=env, input=inp, capture_output=True, text=True, timeout=900)
-        return r.returncode, r.stdout + r.stderr
+        # in a process group of its own: when the run is stopped, the java that sh started must stop too
+        p = subprocess.Popen(list(cmd), cwd=proj, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+        try:
+            out, _ = p.communicate(inp, timeout=900)
+        except BaseException:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            p.wait()
+            raise
+        return p.returncode, out
 
     def sdlc(*a):
         return run("sh", ".agent/bin/sdlc", *a)
@@ -309,17 +320,22 @@ def main():
                             "value": "<h2>Goal</h2><p>Customers can refund a paid order within 30 days.</p><p>Made by live run %s. Safe to delete.</p>" % run_id}}})
         made["pages"].append(one["id"])
 
+        last = []
+
         def pulled():
             code, out = sdlc("docs", "pull", key)
             src = proj / (".sdlc/%s/sources" % key)
             names = sorted(p.name for p in src.iterdir()) if src.exists() else []
-            return (code, out, names) if code == 0 and any(n.startswith("onePager-") for n in names) else None
+            last[:] = [code, out, names]
+            return code == 0 and any(n.startswith("onePager-") for n in names)
 
-        got = until(pulled, seconds=180, every=10)
-        check("docs pull: the story from Jira and the one pager found by the search of Confluence", got and ("jira-%s.md" % key) in got[2], "not found in 180 s" if not got else got[1])
-        text = (proj / (".sdlc/%s/sources/jira-%s.md" % (key, key))).read_text() if got else ""
-        check("the pulled story holds the real summary and description", "live run %s" % run_id in text and "within 30 days" in text, text[:600])
-        text = next((p.read_text() for p in (proj / (".sdlc/%s/sources" % key)).glob("onePager-*")), "") if got else ""
+        # the search index of Confluence takes from seconds to some minutes to hold a new page
+        found = until(pulled, seconds=420, every=15)
+        story_file = proj / (".sdlc/%s/sources/jira-%s.md" % (key, key))
+        text = story_file.read_text() if story_file.exists() else ""
+        check("docs pull reads the real story: its summary and its description", last[0] == 0 and "live run %s" % run_id in text and "within 30 days" in text, last[1] + text[:600])
+        check("docs pull finds the one pager through the search of Confluence", found, "not found in 420 s; the last pull said:\n" + last[1])
+        text = next((p.read_text() for p in (proj / (".sdlc/%s/sources" % key)).glob("onePager-*")), "")
         check("the pulled one pager holds the real page text", "refund a paid order within 30 days" in text, text[:600])
 
         write(".sdlc/%s/drafts/test-design.md" % key, TEST_DESIGN.replace("KEY", key))
@@ -337,7 +353,7 @@ def main():
         check("a draft image that points at local.env is not uploaded", not any("local.env" in a["title"] for a in att) and "not uploading" in out, out)
         said = until(lambda: [c for c in comments(key) if "SDLC-APPROVED %s test-design" % key in c["body"]], seconds=30)
         check("the bot comments on the real story with the approval line", said and said[0]["author"].get("accountId") == bot.id, json.dumps([c["body"][:120] for c in comments(key)]))
-        check("that comment links to the page on the site", said and td and ("%s/wiki/" % site) in said[0]["body"] and td["id"] in said[0]["body"], said[0]["body"][:400] if said else "")
+        check("that comment links to the page on the site", said and td and re.search(r"\|%s/wiki/[^\]\s]*/pages/%s(/[^\]\s]*)?\]" % (re.escape(site), re.escape(td["id"])), said[0]["body"]), said[0]["body"][:400] if said else "")
         code, out = sdlc("approval", "check", key, "test-design")
         check("not approved: the comment that the tool posts for the bot is not an approval", code != 0 and out.lstrip().startswith("NOT APPROVED: no approval comment yet"), out)
         bot.call("POST", "/rest/api/2/issue/%s/comment" % key, {"body": line_of(key, "test-design")})
@@ -387,8 +403,10 @@ def main():
         else:
             print("      SDLC_LIVE_ROLES is not set: the approvals by people and the sub-tasks were not tested")
         done = True
-    except RuntimeError as e:
-        check("the run went to its end", False, "stopped: %s" % e)
+    except KeyboardInterrupt:
+        check("the run went to its end", False, "stopped by Ctrl-C")
+    except Exception as e:  # the site gave no answer or an answer of another shape, or a step took too long
+        check("the run went to its end", False, "stopped: %s: %s" % (type(e).__name__, e))
     finally:
         for number in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
             signal.signal(number, signal.SIG_IGN)  # the clean-up is short, and it must end
@@ -416,22 +434,22 @@ def tidy(bot, wiki_bot, made, folder):
     pages = list(made["pages"]) + ([folder] if folder else [])
     if folder:  # a page the tool made under the run's parent page that the run did not note
         try:
-            kids = wiki_bot.call("GET", "/wiki/rest/api/content/%s/child/page?limit=100" % folder).get("results", [])
+            kids = wiki_bot.call("GET", "/wiki/rest/api/content/%s/child/page?limit=100" % folder, wait=20).get("results", [])
             pages += [k["id"] for k in kids if k["id"] not in pages]
         except RuntimeError:
             pass
     for pid in sorted(pages, key=lambda x: x == folder):  # the parent page last
         try:
-            wiki_bot.call("DELETE", "/wiki/rest/api/content/%s" % pid, ok=(200, 202, 204, 404))  # to the trash of the space
+            wiki_bot.call("DELETE", "/wiki/rest/api/content/%s" % pid, ok=(200, 202, 204, 404), wait=20)  # to the trash of the space
         except RuntimeError:
             try:
-                wiki_bot.call("POST", "/wiki/rest/api/content/archive", {"pages": [{"id": int(pid)}]})
+                wiki_bot.call("POST", "/wiki/rest/api/content/archive", {"pages": [{"id": int(pid)}]}, wait=20)
                 left.append("page %s (archived)" % pid)
             except RuntimeError:
                 left.append("page %s" % pid)
     for key in sorted(made["issues"], key=lambda k: -int(k.split("-")[1])):
         try:
-            bot.call("DELETE", "/rest/api/2/issue/%s?deleteSubtasks=true" % key, ok=(200, 204, 404))
+            bot.call("DELETE", "/rest/api/2/issue/%s?deleteSubtasks=true" % key, ok=(200, 204, 404), wait=20)
         except RuntimeError:
             left.append(key)
     return left

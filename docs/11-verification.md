@@ -133,6 +133,8 @@ holes, now closed:
 | `JIRA_BASE_URL` of another site in the shell: the tool wrote there, and the doctor checks passed | The tool lets the shell win over `local.env`, and the run passed the shell on | The run takes `JIRA_*`, `CONFLUENCE_*`, `JENKINS_*` and `SONAR_*` out of the tool's environment. Run again with a wrong site and a wrong token in the shell: 17 of 17 on the right site |
 | `tasks create` failing for any other reason counted as "refused" | The check read the exit code only | It asks for the gate's own words and the approval line. Then FAIL, as it must |
 | A page link without the site in the bot's Jira comment | Nothing read the link | A check that the link names the site and the page. Then FAIL, as it must |
+| Round 2: `GIT_DIR` of another repository in the shell: the run committed there | The run passed the shell's git settings on | The run takes `GIT_*` out of the tool's environment |
+| Round 2: a link to another page id passed | The page id is in the approval line too | The check reads the link target itself |
 
 ## What the floors do and do not catch
 

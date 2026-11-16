@@ -75,7 +75,7 @@ sh verify/run.sh live                 # or: python3 tests/e2e/live.py
 | It checks | Why the mock cannot |
 | --- | --- |
 | `doctor` logs in as the bot and reaches Confluence | The mock takes any login |
-| `docs pull` finds a page through the search of Confluence, and reads the story and the page text | The real search lags behind a write, and the real text has the real format |
+| `docs pull` finds a page through the search of Confluence, and reads the story and the page text | The real search lags behind a write (the run waits up to 7 minutes for it), and the real text has the real format |
 | A published page lands directly under the configured parent page, with its table and its mind map image | The mock keeps no page tree and no real attachment |
 | The comment the tool posts links to the page on the site | The mock has no address of its own to get wrong |
 | That comment, and the exact approval line posted by the bot account, are no approval | The mock gives the account ids that the test hands it |
@@ -98,11 +98,13 @@ What to know before you run it:
   `sdlc-live-run`, so `labels = sdlc-live-run` finds them all.
 - **The secrets stay out of the output.** Tokens are replaced by `***` in what is printed, and a
   redirect is not followed. The copy of `local.env` in the test project is removed at the end,
-  also with `--keep`, after a failure, and when the run is stopped (Ctrl-C, `kill`); only
-  `kill -9` leaves it, in the temporary folder, readable by you alone.
+  also with `--keep`, after a failure, and when the run is stopped by Ctrl-C, `kill` or a closed
+  terminal. A stop that Python cannot catch (`kill -9`) leaves it, in the temporary folder,
+  readable by you alone.
 - **The login goes to `SDLC_LIVE_SITE` only.** The tool lets `JIRA_*` and `CONFLUENCE_*` of the
   shell win over `local.env`, so the run takes those (and `JENKINS_*`, `SONAR_*`) out of the
-  tool's environment. A scoped token with `JIRA_BASE_URL` is therefore not supported here.
+  tool's environment. It takes `GIT_*` out too: a `GIT_DIR` of the shell would make the run
+  commit into that repository. A scoped token with `JIRA_BASE_URL` is therefore not supported here.
 - Exit code 2 means nothing was tested: a setting is missing, or the site does not answer or
   refuses the bot.
 
