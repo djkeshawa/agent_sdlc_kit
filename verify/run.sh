@@ -285,7 +285,8 @@ layer_selftest() {
     return
   fi
   if [ -z "$floor" ] || [ "$count" -lt "$floor" ]; then
-    result selftest FAIL "$line, but verify/selftest-count.txt asks for at least ${floor:-a number}: self tests were lost; see $log"
+    if [ -z "$floor" ]; then result selftest FAIL "$line, but verify/selftest-count.txt must hold one line with digits only"
+    else result selftest FAIL "$line, but verify/selftest-count.txt asks for at least $floor: self tests were lost; see $log"; fi
     return
   fi
   if ! "$java" -jar "$cli" report "$work/jacoco.exec" --classfiles "$kit/.agent/.build" --csv "$work/coverage.csv" >> "$log" 2>&1 || [ ! -s "$work/coverage.csv" ]; then
@@ -297,7 +298,7 @@ layer_selftest() {
     result selftest PASS "$line; $(printf '%s\n' "$cov" | tail -1)"
   else
     printf '%s\n' "$cov" >> "$log"
-    result selftest FAIL "$line; coverage $(printf '%s\n' "$cov" | grep '^UNDER:'); see $log"
+    result selftest FAIL "$line; coverage: $(printf '%s\n' "$cov" | tail -1); see $log"
   fi
 }
 
@@ -326,7 +327,7 @@ maven_path() {
   mkdir -p "$work/bin" "$cache/m2/repository"
   if [ -n "${VERIFY_MAVEN_MIRROR:-}" ]; then
     # an https address of plain characters only: it is written into an XML file
-    if ! printf '%s' "$VERIFY_MAVEN_MIRROR" | grep -Eq '^https://[A-Za-z0-9._~:/-]+$'; then
+    if [ "$(printf '%s' "$VERIFY_MAVEN_MIRROR" | wc -l)" -ne 0 ] || ! printf '%s' "$VERIFY_MAVEN_MIRROR" | grep -Eq '^https://[A-Za-z0-9._~:/-]+$'; then
       echo "verify/run.sh: VERIFY_MAVEN_MIRROR must be an https address of letters, digits and . _ ~ : / - only" >&2
       return 1
     fi

@@ -87,7 +87,7 @@ QE then planted about 46 more faults (2026-11-16). What they showed, and what wa
 | An undefined `json` or `state` in a Python test; Python outside `tests/e2e` | The lint knew 16 names everywhere, and read one folder | The names are declared in the two files that need them; every Python file is linted |
 | A misspelled input of a pinned action | actionlint cannot check it | Stated above as a limit; every action must now be pinned |
 | A changed, unpacked ShellCheck | Unpacked tools were reused | Tools are unpacked afresh on every run |
-| A mutable static collection; a lock on the class | The exclusions were for the whole tool | Excluded by field name only; the lock cache was fixed. Round 2: SpotBugs rates most of these low, so a second pass asks for them at every rank. A mutable static that is not public is still not seen |
+| A mutable static collection; a lock on the class | The exclusions were for the whole tool | Excluded by field name only; the lock cache was fixed. Round 2: SpotBugs rates most of these low, so a second pass asks for them at every rank. A mutable static that is not public, or that is in a class that is not public, is still not seen |
 | A missing switch case | The compiler has no such warning | The guide no longer claims it |
 | A mandate reached through a linked folder was accepted | The kit had no self test for that check | The self test was added |
 | 120 untested lines | The floors are coarse | Stated above |
@@ -99,6 +99,7 @@ QE round 2 (2026-11-16) planted the faults above again; all were noticed. It fou
 | A new `public static final List` (SpotBugs rates it low) | The second SpotBugs pass |
 | An unpinned action in a `.yaml` workflow, or pinned only in a comment | Every YAML file under `.github` is read, without comments and quotes |
 | A floors file with a line that cannot be read, a package twice, or no floor: no floor was applied | `verify/coverage.py` ends with exit 2 |
+| `git clean -X` and six more refusals of the guard that no self test named (round 3) | Self tests added |
 | Three faults in the guard and the mandate that no self test saw (an option of git that takes a value, the size limit of a mandate, a mandate that is not in force) | Self tests added; each fault now fails one |
 
 QE's faults that were noticed: 6 kinds of bug by SpotBugs, 4 by the compiler, 3 by ShellCheck,

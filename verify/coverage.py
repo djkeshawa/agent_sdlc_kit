@@ -22,9 +22,11 @@ def main():
             try:
                 if len(line) != 2 or line[0] in floors:
                     raise ValueError
+                if not 1 <= float(line[1]) <= 100 or line[0].endswith(".selftest"):
+                    raise ValueError
                 floors[line[0]] = float(line[1])
             except ValueError:
-                print("%s line %d is not '<package> <percent>', once per package: %s" % (floors_file, number, text.strip()))
+                print("%s line %d is not '<package> <percent from 1 to 100>', once per package and not for the self tests: %s" % (floors_file, number, text.strip()))
                 return 2
     if not floors:
         print("%s names no floor" % floors_file)

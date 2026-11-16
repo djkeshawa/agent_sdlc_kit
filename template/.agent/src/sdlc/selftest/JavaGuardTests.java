@@ -166,6 +166,14 @@ final class JavaGuardTests {
         expect("curl | jq ok", shell("curl -s https://example.com/x.json | jq ."), Decision.Kind.ASK);
         expect("rm home", shell("rm -rf ~"), Decision.Kind.DENY);
         expect("clean -x", shell("git clean -fdx"), Decision.Kind.DENY);
+        expect("clean -X", shell("git clean -fX"), Decision.Kind.DENY);
+        expect("instaweb", shell("git instaweb"), Decision.Kind.DENY);
+        expect("daemon", shell("git daemon --base-path=."), Decision.Kind.DENY);
+        expect("send-email", shell("git send-email HEAD~1"), Decision.Kind.ASK);
+        expect("filter-repo", shell("git filter-repo --path x"), Decision.Kind.DENY);
+        expect("filter-branch", shell("git filter-branch --tree-filter true"), Decision.Kind.DENY);
+        expect("stash clear", shell("git stash clear"), Decision.Kind.ASK);
+        expect("stash drop", shell("git stash drop"), Decision.Kind.ASK);
         expect("encoded ps", shell("powershell -EncodedCommand ZQBjAGgAbwA="), Decision.Kind.DENY);
 
         expect("posix escape to local.env", shell("cat .agent/local.e\\nv"), Decision.Kind.DENY);
