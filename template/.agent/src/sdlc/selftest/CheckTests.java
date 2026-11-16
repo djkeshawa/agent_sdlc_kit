@@ -815,6 +815,14 @@ final class CheckTests {
                 varies.contains("  1 could not be judged\n      tests/crash.t  [self test]\n        noName: before the change it threw IllegalStateException, not an assertion; "
                         + "in another run, before the change it threw UnsupportedOperationException, not an assertion\n")
                 && !varies.contains("by an exception") && !varies.contains(NEW_CODE) && code == 0);
+
+        write(repo, "tests/crash.t", "noName: error-twins fixed\n");
+        String twinTypes = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("thrown: two exception types of one short name, one in each run before the change, are not one type: could not be judged, each with its full name",
+                twinTypes.contains("  1 could not be judged\n      tests/crash.t  [self test]\n        noName: before the change it threw ")
+                && twinTypes.contains("before the change it threw a.ValidationException, not an assertion") && twinTypes.contains("before the change it threw b.ValidationException, not an assertion")
+                && twinTypes.contains(", not an assertion; in another run, before the change it threw ")
+                && !twinTypes.contains("by an exception") && code == 0);
         for (String how : new String[] {"error-odd", "error-even", "error-once"}) {
             write(repo, "tests/crash.t", "noName: " + how + " fixed\n");
             String wavers = report(Map.of("selftest-runner", "true", "runs", "2"));

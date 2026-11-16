@@ -153,7 +153,7 @@ final class SelfTestRunner implements Runner {
                         case "error-even" -> has ? Status.PASSED : call % 2 == 0 ? Status.ERRORED : Status.FAILED;
                         case "error-once" -> has ? Status.PASSED : call == 1 ? Status.ERRORED : Status.PASSED;
                         case "error-without" -> Status.ERRORED;
-                        case "error-varies" -> has ? Status.PASSED : Status.ERRORED;
+                        case "error-varies", "error-twins" -> has ? Status.PASSED : Status.ERRORED;
                         case "compile-needs" -> Status.PASSED;
                         case "agrees" -> how.length > 2 && prod.contains(how[2]) == (Files.isRegularFile(checkout.resolve(how[1])) && Files.readString(checkout.resolve(how[1])).contains(how[2]))
                                 ? Status.PASSED : Status.FAILED;
@@ -170,6 +170,7 @@ final class SelfTestRunner implements Runner {
                     boolean retried = how[0].endsWith("-retried") || how[0].equals("retried-with") && has || how[0].equals("retried-without") && !has;
                     for (String one : shown.contains("%i") ? List.of(shown.replace("%i", "1"), shown.replace("%i", "2")) : List.of(shown)) {
                         String thrown = how[0].equals("throws-unless") && how.length > 2 ? how[2]
+                                : how[0].equals("error-twins") ? (call % 2 == 0 ? "a.ValidationException" : "b.ValidationException")
                                 : how[0].equals("error-varies") && call % 2 == 0 ? "java.lang.UnsupportedOperationException" : "java.lang.IllegalStateException";
                         cases.add(new JUnitXml.Case(suite, one, s, s == Status.ERRORED ? thrown : s == Status.FAILED ? "AssertionError" : "",
                                 s == Status.FAILED ? "expected something else" : "", retried));

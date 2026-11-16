@@ -515,10 +515,12 @@ final class Witness {
                 if (fails != null) {
                     (candidate ? last : mine).add(fails.with(c));
                 } else if (candidate) {
-                    if (all.stream().allMatch(x -> java.util.Objects.equals(x, first))) last.add(((Verdict) first).with(c));
+                    boolean oneType = ((Verdict) first).kind() != Kind.SENSITIVE_BY_ERROR || befores.stream().map(r -> type(r, k)).distinct().count() == 1;
+                    if (oneType && all.stream().allMatch(x -> java.util.Objects.equals(x, first))) last.add(((Verdict) first).with(c));
                     else if (afters.stream().anyMatch(r -> status(r, k) != Out.PASSED)) last.add(new Verdict(f, shown(sh, k), Kind.UNSTABLE, "passed after the change in one run and not in another", by, c));
                     else if (befores.stream().allMatch(r -> status(r, k) == Out.ERRORED)) last.add(new Verdict(f, shown(sh, k), Kind.UNKNOWN, String.join("; in another run, ",
-                            befores.stream().map(r -> threw(r, k)).distinct().toList()), by, 1, all.stream().anyMatch(x -> x instanceof Verdict v && v.newCode()), c));
+                            befores.stream().map(r -> threw(r, k)).distinct().count() > 1 ? befores.stream().map(r -> threw(r, k)).distinct().toList()
+                                    : befores.stream().map(r -> "before the change it threw " + type(r, k) + ", not an assertion").distinct().toList()), by, 1, all.stream().anyMatch(x -> x instanceof Verdict v && v.newCode()), c));
                     else if (befores.stream().anyMatch(r -> status(r, k) == Out.ERRORED)) last.add(new Verdict(f, shown(sh, k), Kind.UNSTABLE, "threw before the change in one run and not in another", by, c));
                     else last.add(new Verdict(f, shown(sh, k), Kind.UNSTABLE, "failed before the change in one run and not in another", by, c));
                 } else if (all.stream().allMatch(x -> java.util.Objects.equals(x, first))) {
@@ -1506,6 +1508,10 @@ final class Witness {
 
     private static String thrown(JUnitXml.Case p) {
         return "before the change it threw " + shortType(p) + ", not an assertion";
+    }
+
+    private static String type(FileRun run, String key) {
+        return run.cases().stream().filter(c -> key(c).equals(key)).findFirst().map(c -> c.type().strip()).orElse("");
     }
 
     private static String threw(FileRun run, String key) {
