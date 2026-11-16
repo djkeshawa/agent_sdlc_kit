@@ -12,20 +12,24 @@ Settings, all from the environment (README.md here has an example):
   SDLC_LIVE_PROJECT  the key of the Jira test project, e.g. SKE
   SDLC_LIVE_SPACE    the key of the Confluence test space
   SDLC_LIVE_PARENT   the id of the page that the test pages go under
-  SDLC_LIVE_ENV      a file with JIRA_USER and JIRA_TOKEN of the bot account (the format of .agent/local.env)
+  SDLC_LIVE_ENV      a file with JIRA_USER and JIRA_TOKEN of the bot account, as in .agent/local.env (and
+                     CONFLUENCE_USER, CONFLUENCE_TOKEN when they differ). A scoped token with JIRA_BASE_URL
+                     is not supported: the run talks to SDLC_LIVE_SITE only.
   SDLC_LIVE_ROLES    optional: a file with QELEAD_USER, QELEAD_TOKEN, TECHLEAD_USER, TECHLEAD_TOKEN. With
                      it the run also approves as those two people and goes on to the Jira sub-tasks.
                      Without it the run stops at the gates and checks that they stay closed.
 
-Exit code: 0 every check passed, 1 a check failed, 2 the settings are missing or the services refuse
-the bot (nothing was tested). Options: --keep leaves the test project on disk (without its secrets);
+Exit code: 0 every check passed, 1 a check failed, 2 the settings are missing or the site does not
+answer or refuses the bot (nothing was tested). Options: --keep leaves the test project on disk (without its secrets);
 --template DIR tests another copy of the template."""
 import argparse
 import base64
+import http.client
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -68,7 +72,7 @@ def read_env(path, wanted):
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             k, v = line.split("=", 1)
-            out[k.strip()] = v.strip().strip('"').strip("'")
+            out[re.sub(r"^export\s+", "", k.strip())] = v.strip().strip('"').strip("'")
     missing = [k for k in wanted if not out.get(k)]
     if missing:
         stop("%s has no value for %s" % (path, ", ".join(missing)))
@@ -98,6 +102,8 @@ class Account:
                 code, body = r.status, r.read()
         except urllib.error.HTTPError as e:
             code, body = e.code, e.read()
+        except (OSError, http.client.HTTPException) as e:  # no answer: refused, no such host, TLS, a time-out, a dropped connection
+            raise RuntimeError("%s %s -> no answer from %s (%s)" % (method, path.split("?")[0], self.site, clean(str(getattr(e, "reason", e))))) from None
         if code not in ok:
             raise RuntimeError("%s %s -> %s %s" % (method, path.split("?")[0], code, clean(body.decode("utf-8", "replace"))[:300]))
         try:
@@ -128,7 +134,7 @@ def settings():
     s["site"] = s["site"].rstrip("/")
     if not re.fullmatch(r"https://[A-Za-z0-9.-]+(:[0-9]+)?", s["site"]):
         stop("SDLC_LIVE_SITE must be https://host with nothing after it")
-    if not re.fullmatch(r"[A-Z][A-Z0-9]+", s["project"]) or not re.fullmatch(r"[A-Za-z0-9~]+", s["space"]) or not re.fullmatch(r"[0-9]+", s["parent"]):
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]+", s["project"]) or not re.fullmatch(r"[A-Za-z0-9~]+", s["space"]) or not re.fullmatch(r"[0-9]+", s["parent"]):
         stop("SDLC_LIVE_PROJECT is a Jira key (PAY), SDLC_LIVE_SPACE a space key, SDLC_LIVE_PARENT a page id of digits")
     s["roles"] = os.environ.get("SDLC_LIVE_ROLES", "").strip()
     return s
@@ -166,7 +172,7 @@ def main():
         sub = next((t["name"] for t in types if t.get("subtask")), None)
         parent = wiki_bot.call("GET", "/wiki/rest/api/content/%s?expand=space" % s["parent"])
     except RuntimeError as e:
-        stop("the site refuses the bot account, or the project or the parent page is not there: %s" % e)
+        stop("the site does not answer or refuses the bot account, or the project or the parent page is not there: %s" % e)
     if not story or not sub:
         stop("project %s needs a story type and a sub-task type" % project)
     if (parent.get("space") or {}).get("key") != space:
@@ -177,14 +183,17 @@ def main():
         try:
             leads = {r: Account(site, roles[r.upper() + "_USER"], roles[r.upper() + "_TOKEN"]).login() for r in ("qelead", "techlead")}
         except RuntimeError as e:
-            stop("the site refuses a lead account of SDLC_LIVE_ROLES: %s" % e)
+            stop("the site does not answer or refuses a lead account of SDLC_LIVE_ROLES: %s" % e)
         if len({bot.id, leads["qelead"].id, leads["techlead"].id}) != 3:
             stop("the bot, the QE lead and the tech lead must be three accounts")
 
     run_id = time.strftime("%Y%m%d-%H%M%S")
     work = Path(tempfile.mkdtemp(prefix="sdlc-live-"))
     proj = work / "payments"
-    env = {k: v for k, v in os.environ.items() if not k.startswith("SDLC_LIVE_") and k not in ("SDLC_BASE_BRANCH", "GITHUB_BASE_REF", "CHANGE_TARGET")}
+    # The tool lets the environment win over .agent/local.env. So nothing of the caller's shell that names
+    # a site or a login may reach it: the run would write to that site, not to SDLC_LIVE_SITE.
+    env = {k: v for k, v in os.environ.items() if not re.match(r"(?i)(SDLC_LIVE_|JIRA_|CONFLUENCE_|JENKINS_|SONAR_|JAVA_TOOL_OPTIONS$|_JAVA_OPTIONS$|JDK_JAVA_OPTIONS$)", k)
+           and k not in ("SDLC_BASE_BRANCH", "GITHUB_BASE_REF", "CHANGE_TARGET")}
     env.update(PATH=str(HERE / "bin") + os.pathsep + os.environ["PATH"], GIT_AUTHOR_NAME="Dev", GIT_AUTHOR_EMAIL="dev@acme.test",
                GIT_COMMITTER_NAME="Dev", GIT_COMMITTER_EMAIL="dev@acme.test")
     made = {"issues": [], "pages": []}
@@ -213,22 +222,43 @@ def main():
         return bot.call("GET", "/rest/api/2/issue/%s?fields=%s" % (key, fields))["fields"]
 
     def line_of(key, kind):
-        return sdlc("approval", "line", key, kind)[1].strip().splitlines()[-1]
+        out = sdlc("approval", "line", key, kind)[1]
+        found = re.findall(r"(?m)^SDLC-APPROVED %s \S+ \S+ \S+$" % re.escape(key), out)
+        if not found:
+            raise RuntimeError("approval line %s %s printed no line: %s" % (key, kind, out.strip()[:300]))
+        return found[-1]
 
     def approve(who, key, kind):
         who.call("POST", "/rest/api/2/issue/%s/comment" % key, {"body": line_of(key, kind)})
+
+    def subtasks(key):
+        """The sub-tasks Jira holds for the story. Each is noted for the clean-up and gets the label of the run."""
+        subs = issue(key, "subtasks").get("subtasks", [])
+        for x in subs:
+            if x["key"] not in made["issues"]:
+                made["issues"].append(x["key"])
+                try:
+                    bot.call("PUT", "/rest/api/2/issue/%s" % x["key"], {"update": {"labels": [{"add": LABEL}]}})
+                except RuntimeError:
+                    pass
+        return subs
 
     def approved(key, kind, want):
         # a comment shows up in the list a moment after it is posted
         got = until(lambda: (lambda r: r if (r[0] == 0) == want else None)(sdlc("approval", "check", key, kind)), seconds=30)
         return got or sdlc("approval", "check", key, kind)
 
+    def ended(number, _frame):
+        sys.exit(128 + number)
+
+    for number in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(number, ended)
+    left, folder, done = [], "", False
     try:
         # A parent page of this run alone. The pages of the run must land under it: under the page of
         # SDLC_LIVE_PARENT they could be there by chance, as a page with no parent goes to the top of the space.
         folder = wiki_bot.call("POST", "/wiki/rest/api/content", {"type": "page", "title": "Live run %s" % run_id, "space": {"key": space}, "ancestors": [{"id": s["parent"]}],
                                "body": {"storage": {"representation": "storage", "value": "<p>Made by tests/e2e/live.py of the Agentic SDLC kit. Safe to delete.</p>"}}})["id"]
-        made["pages"].append(folder)
         proj.mkdir(parents=True)
         run("git", "init", "-q", "-b", "develop")
         write("README.md", "# payments-service\n")
@@ -306,6 +336,7 @@ def main():
         check("a draft image that points at local.env is not uploaded", not any("local.env" in a["title"] for a in att) and "not uploading" in out, out)
         said = until(lambda: [c for c in comments(key) if "SDLC-APPROVED %s test-design" % key in c["body"]], seconds=30)
         check("the bot comments on the real story with the approval line", said and said[0]["author"].get("accountId") == bot.id, json.dumps([c["body"][:120] for c in comments(key)]))
+        check("that comment links to the page on the site", said and td and ("%s/wiki/" % site) in said[0]["body"] and td["id"] in said[0]["body"], said[0]["body"][:400] if said else "")
         code, out = sdlc("approval", "check", key, "test-design")
         check("not approved: the comment that the tool posts for the bot is not an approval", code != 0 and out.lstrip().startswith("NOT APPROVED: no approval comment yet"), out)
         bot.call("POST", "/rest/api/2/issue/%s/comment" % key, {"body": line_of(key, "test-design")})
@@ -320,8 +351,9 @@ def main():
         check("LLD published as a real page, directly under the parent page of the run", code == 0 and lld and [a["id"] for a in lld.get("ancestors", [])][-1:] == [folder], out)
         run("git", "switch", "-q", "-c", "feature/%s-refunds" % key)
         code, out = sdlc("tasks", "create", key)
-        subs = issue(key, "subtasks").get("subtasks", [])
-        check("tasks create refused while the LLD is not approved, and Jira has no sub-task", code != 0 and not subs, out + json.dumps([x["key"] for x in subs]))
+        subs = subtasks(key)
+        check("tasks create refused by the gate while the LLD is not approved, and Jira has no sub-task", code != 0 and "is NOT approved" in out and "SDLC-APPROVED %s lld " % key in out and not subs,
+              out + json.dumps([x["key"] for x in subs]))
 
         if leads:
             approve(leads["techlead"], key, "test-design")
@@ -342,38 +374,54 @@ def main():
             code, out = approved(key, "lld", True)
             check("approved again after the edit", code == 0, out)
             code, out = sdlc("tasks", "create", key)
-            subs = until(lambda: (lambda x: x if len(x) == 2 else None)(issue(key, "subtasks").get("subtasks", [])), seconds=30) or []
-            made["issues"] += [x["key"] for x in subs]
+            subs = until(lambda: (lambda x: x if len(x) >= 2 else None)(subtasks(key)), seconds=30) or subtasks(key)
             check("tasks create: two real sub-tasks under the story", code == 0 and len(subs) == 2 and all(x["fields"]["issuetype"]["subtask"] for x in subs), out)
             if len(subs) == 2:
                 t1, t2 = sorted((x["key"] for x in subs), key=lambda k: int(k.split("-")[1]))
                 code, out = sdlc("task", "start", t2)
-                check("task start refused while its dependency is not done", code != 0, out)
+                check("task start refused while its dependency is not done", code != 0 and "depends on" in out and issue(t2)["status"]["name"] != "In Progress", out)
                 code, out = sdlc("task", "start", t1)
                 check("task start moves the real sub-task and the story to In Progress", code == 0 and issue(t1)["status"]["name"] == "In Progress" and issue(key)["status"]["name"] == "In Progress",
                       out + " | " + issue(t1)["status"]["name"] + " | " + issue(key)["status"]["name"])
         else:
             print("      SDLC_LIVE_ROLES is not set: the approvals by people and the sub-tasks were not tested")
+        done = True
+    except RuntimeError as e:
+        check("the run went to its end", False, "stopped: %s" % e)
     finally:
-        left = tidy(bot, wiki_bot, made)
-        (proj / ".agent" / "local.env").unlink(missing_ok=True)
-        passed = sum(1 for _, ok in RESULTS if ok)
-        if args.keep or passed != len(RESULTS):
-            print("test project kept at %s (its local.env is removed)" % proj)
-        else:
-            shutil.rmtree(work, ignore_errors=True)
-    if left:
-        print("left on the site, for a person to delete: " + ", ".join(left))
+        for number in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            signal.signal(number, signal.SIG_IGN)  # the clean-up is short, and it must end
+        try:
+            (proj / ".agent" / "local.env").unlink(missing_ok=True)
+        finally:
+            try:
+                left = tidy(bot, wiki_bot, made, folder)
+            except Exception as e:  # whatever goes wrong here, say what may still be on the site
+                left = ["perhaps %s (the clean-up stopped: %s)" % (", ".join(made["issues"] + ["page " + x for x in made["pages"]]), clean(str(e))[:200])]
+            passed = sum(1 for _, ok in RESULTS if ok)
+            if args.keep or passed != len(RESULTS) or not done:
+                print("test project kept at %s (its local.env is removed)" % proj)
+            else:
+                shutil.rmtree(work, ignore_errors=True)
+            if left:
+                print("left on the site, for a person to delete: " + ", ".join(left))
     print("\n%d/%d live checks passed%s" % (passed, len(RESULTS), "" if leads else " (gates only: no SDLC_LIVE_ROLES)"))
     sys.exit(0 if RESULTS and passed == len(RESULTS) else 1)
 
 
-def tidy(bot, wiki_bot, made):
+def tidy(bot, wiki_bot, made, folder):
     """Takes away what the run made, as far as the bot may. Returns what stays."""
     left = []
-    for pid in reversed(made["pages"]):
+    pages = list(made["pages"]) + ([folder] if folder else [])
+    if folder:  # a page the tool made under the run's parent page that the run did not note
         try:
-            wiki_bot.call("DELETE", "/wiki/rest/api/content/%s" % pid)
+            kids = wiki_bot.call("GET", "/wiki/rest/api/content/%s/child/page?limit=100" % folder).get("results", [])
+            pages += [k["id"] for k in kids if k["id"] not in pages]
+        except RuntimeError:
+            pass
+    for pid in sorted(pages, key=lambda x: x == folder):  # the parent page last
+        try:
+            wiki_bot.call("DELETE", "/wiki/rest/api/content/%s" % pid, ok=(200, 202, 204, 404))  # to the trash of the space
         except RuntimeError:
             try:
                 wiki_bot.call("POST", "/wiki/rest/api/content/archive", {"pages": [{"id": int(pid)}]})
@@ -382,7 +430,7 @@ def tidy(bot, wiki_bot, made):
                 left.append("page %s" % pid)
     for key in sorted(made["issues"], key=lambda k: -int(k.split("-")[1])):
         try:
-            bot.call("DELETE", "/rest/api/2/issue/%s" % key)
+            bot.call("DELETE", "/rest/api/2/issue/%s?deleteSubtasks=true" % key, ok=(200, 204, 404))
         except RuntimeError:
             left.append(key)
     return left

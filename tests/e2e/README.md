@@ -77,26 +77,34 @@ sh verify/run.sh live                 # or: python3 tests/e2e/live.py
 | `doctor` logs in as the bot and reaches Confluence | The mock takes any login |
 | `docs pull` finds a page through the search of Confluence, and reads the story and the page text | The real search lags behind a write, and the real text has the real format |
 | A published page lands directly under the configured parent page, with its table and its mind map image | The mock keeps no page tree and no real attachment |
-| The comment the tool posts, and the exact approval line posted by the bot account, are no approval | The mock gives the account ids that the test hands it |
-| `tasks create` makes no sub-task while the LLD is not approved | The real issue types and their names |
+| The comment the tool posts links to the page on the site | The mock has no address of its own to get wrong |
+| That comment, and the exact approval line posted by the bot account, are no approval | The mock gives the account ids that the test hands it |
+| `tasks create` is refused by the gate, with the line to post, and Jira holds no sub-task | It reads the real ticket afterwards |
 
 With `SDLC_LIVE_ROLES=/path/to/roles.env` (`QELEAD_USER`, `QELEAD_TOKEN`, `TECHLEAD_USER`,
 `TECHLEAD_TOKEN`) the run also posts the approvals as those two people and goes on: the wrong
-approver, the right one, a page edited after its approval, two real sub-tasks, and `task start`
-moving the real tickets. Only a person starts it this way: the approvals of the leads are theirs
+approver, the right one, a page edited after its approval, two real sub-tasks (made with the real
+issue type of the project), and `task start` moving the real tickets. The four-eyes rule is not
+tested live: the bot saves every page version of the run. Only a person starts it this way: the approvals of the leads are theirs
 to give. Without the variable the last line says `gates only`.
 
 What to know before you run it:
 
 - **Use a project and a space that nobody works in.** The run writes there.
 - **It runs only when named.** It is not in the default layers and not in CI, which has no accounts.
-- **It tidies up as far as the bot may.** Pages are deleted. A bot without the permission to
-  delete issues leaves its story (and sub-tasks) behind; the last lines name them, and each has
-  the label `sdlc-live-run`, so `labels = sdlc-live-run` finds them all.
-- **The secrets stay out of the output.** Tokens are replaced by `***` in what is printed, the
-  login goes to `SDLC_LIVE_SITE` only, and a redirect is not followed. The copy of `local.env` in
-  the test project is removed at the end, also with `--keep`.
-- Exit code 2 means nothing was tested: a setting is missing, or the site refuses the bot.
+- **It tidies up as far as the bot may.** Its pages go to the trash of the space (a page the bot
+  may not delete is archived, and named). A bot without the permission to delete issues leaves
+  its story and sub-tasks behind; the last lines name them, and each has the label
+  `sdlc-live-run`, so `labels = sdlc-live-run` finds them all.
+- **The secrets stay out of the output.** Tokens are replaced by `***` in what is printed, and a
+  redirect is not followed. The copy of `local.env` in the test project is removed at the end,
+  also with `--keep`, after a failure, and when the run is stopped (Ctrl-C, `kill`); only
+  `kill -9` leaves it, in the temporary folder, readable by you alone.
+- **The login goes to `SDLC_LIVE_SITE` only.** The tool lets `JIRA_*` and `CONFLUENCE_*` of the
+  shell win over `local.env`, so the run takes those (and `JENKINS_*`, `SONAR_*`) out of the
+  tool's environment. A scoped token with `JIRA_BASE_URL` is therefore not supported here.
+- Exit code 2 means nothing was tested: a setting is missing, or the site does not answer or
+  refuses the bot.
 
 ## When to run it
 

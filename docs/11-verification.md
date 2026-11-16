@@ -43,7 +43,7 @@ One more layer runs only when it is named, because it needs accounts and writes 
 
 | Layer | What it runs | What it catches | What it cannot see | Time |
 | --- | --- | --- | --- | --- |
-| `live` | `sh verify/run.sh live`: the first half of the flow (doctor, `docs pull`, publishing the test design and the LLD, the approval gates) against a real Jira and Confluence test project. [tests/e2e/README.md](../tests/e2e/README.md#the-live-run) has the settings | A request the real service refuses or reads in another way than the mock: a field name, the page tree, the search, an account id, an issue type | Jenkins, SonarQube and GitHub. The approvals by people and the sub-tasks, unless a person runs it with the lead accounts. It is never run in CI | 2 min |
+| `live` | `sh verify/run.sh live`: the first half of the flow (doctor, `docs pull`, publishing the test design and the LLD, the approval gates) against a real Jira and Confluence test project. [tests/e2e/README.md](../tests/e2e/README.md#the-live-run) has the settings | A request the real service refuses or reads in another way than the mock: a field name, the page tree, the search, the text of a ticket or a page, an account id, the address in a link | Jenkins, SonarQube and GitHub. The approvals by people and the sub-tasks, unless a person runs it with the lead accounts. It is never run in CI | 2 min |
 
 Three more layers are not commands. They are steps of the work:
 
@@ -123,6 +123,16 @@ When the `live` layer was added (2026-11-17), one fault was planted: a page publ
 wrong field name for its parent page. **It was not noticed at first.** The parent page of the test
 bed was the top page of the space, and a page without a parent lands there too. Now each run makes
 its own parent page and asks for the direct parent; the fault then fails two checks, as it must.
+
+QE then planted five more in `live` (2026-11-17). Two were noticed on the real site and not by the
+mock: a page read in the wrong body format, and a ticket read without its description. Three showed
+holes, now closed:
+
+| Fault that was NOT noticed | What it showed | Done |
+| --- | --- | --- |
+| `JIRA_BASE_URL` of another site in the shell: the tool wrote there, and the doctor checks passed | The tool lets the shell win over `local.env`, and the run passed the shell on | The run takes `JIRA_*`, `CONFLUENCE_*`, `JENKINS_*` and `SONAR_*` out of the tool's environment. Run again with a wrong site and a wrong token in the shell: 17 of 17 on the right site |
+| `tasks create` failing for any other reason counted as "refused" | The check read the exit code only | It asks for the gate's own words and the approval line. Then FAIL, as it must |
+| A page link without the site in the bot's Jira comment | Nothing read the link | A check that the link names the site and the page. Then FAIL, as it must |
 
 ## What the floors do and do not catch
 
