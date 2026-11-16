@@ -16,6 +16,7 @@ final class Witness {
 
     enum Kind {
         SENSITIVE,
+        SENSITIVE_BY_ERROR,
         PASSES_ON_BOTH,
         EXISTING_PASSES_ON_BOTH,
         FAILS_AFTER,
@@ -299,7 +300,7 @@ final class Witness {
             if (blind(seen, f) != null) continue;
             Map<String, String> sh = shown(gave(o) && !mv ? o.cases() : List.of(), a.cases());
             Map<String, Object> r = read(f, edited.contains(f), mv, o, b, a, shared, sh, lonely.getOrDefault(f, Set.of()), by);
-            for (Map.Entry<String, Object> x : r.entrySet()) if (x.getValue() instanceof Verdict v && v.kind() == Kind.SENSITIVE) candidates.computeIfAbsent(f, k -> new LinkedHashSet<>()).add(x.getKey());
+            for (Map.Entry<String, Object> x : r.entrySet()) if (x.getValue() instanceof Verdict v && sensitive(v.kind())) candidates.computeIfAbsent(f, k -> new LinkedHashSet<>()).add(x.getKey());
             if (mv && gave(o) && passes(o.cases()) > ran(a.cases())) movedShort.add(f);
             if (mv && gave(o) && count(f, movedNames(o.cases(), a.cases(), sh), r, a, by).least() > 0) movedGrew.add(f);
             if (edited.contains(f) && gave(o)) {
@@ -509,13 +510,18 @@ final class Witness {
                 Cover c = Cover.of(List.of(k), Side.BEFORE, Side.AFTER);
                 Object first = reads.get(0).get(k);
                 List<Object> all = reads.stream().map(r -> r.get(k)).toList();
-                boolean candidate = first instanceof Verdict v && v.kind() == Kind.SENSITIVE;
+                boolean candidate = first instanceof Verdict v && sensitive(v.kind());
                 Verdict fails = failsAfter(f, k, afters, sh, by);
                 if (fails != null) {
                     (candidate ? last : mine).add(fails.with(c));
                 } else if (candidate) {
-                    if (all.stream().allMatch(x -> x instanceof Verdict v && v.kind() == Kind.SENSITIVE)) last.add(new Verdict(f, shown(sh, k), Kind.SENSITIVE, "", by, c));
+                    boolean oneType = ((Verdict) first).kind() != Kind.SENSITIVE_BY_ERROR || befores.stream().map(r -> type(r, k)).distinct().count() == 1;
+                    if (oneType && all.stream().allMatch(x -> java.util.Objects.equals(x, first))) last.add(((Verdict) first).with(c));
                     else if (afters.stream().anyMatch(r -> status(r, k) != Out.PASSED)) last.add(new Verdict(f, shown(sh, k), Kind.UNSTABLE, "passed after the change in one run and not in another", by, c));
+                    else if (befores.stream().allMatch(r -> status(r, k) == Out.ERRORED)) last.add(new Verdict(f, shown(sh, k), Kind.UNKNOWN, String.join("; in another run, ",
+                            befores.stream().map(r -> threw(r, k)).distinct().count() > 1 ? befores.stream().map(r -> threw(r, k)).distinct().toList()
+                                    : befores.stream().map(r -> "before the change it threw " + type(r, k) + ", not an assertion").distinct().toList()), by, 1, all.stream().anyMatch(x -> x instanceof Verdict v && v.newCode()), c));
+                    else if (befores.stream().anyMatch(r -> status(r, k) == Out.ERRORED)) last.add(new Verdict(f, shown(sh, k), Kind.UNSTABLE, "threw before the change in one run and not in another", by, c));
                     else last.add(new Verdict(f, shown(sh, k), Kind.UNSTABLE, "failed before the change in one run and not in another", by, c));
                 } else if (all.stream().allMatch(x -> java.util.Objects.equals(x, first))) {
                     if (first == Mark.FRESH) freshEvery.add(k);
@@ -661,7 +667,7 @@ final class Witness {
                     : fresh.contains(k) ? Mark.FRESH : new Verdict(f, name, Kind.EXISTING_PASSES_ON_BOTH, "", by, Cover.NONE);
             else if (out(p) == Out.SKIPPED) v = new Verdict(f, name, Kind.UNKNOWN, "was skipped before the change", by, Cover.NONE);
             else if (out(p) == Out.RETRIED) v = new Verdict(f, name, Kind.UNKNOWN, "before the change the build ran it again and got another result", by, Cover.NONE);
-            else if (out(p) == Out.ERRORED) v = Verdict.beforeFailed(f, name, "before the change it threw " + shortType(p) + ", not an assertion", by);
+            else if (out(p) == Out.ERRORED) v = threw(f, name, p, by);
             else v = new Verdict(f, name, Kind.SENSITIVE, "", by, Cover.NONE);
             out.put(k, v);
         }
@@ -1479,6 +1485,37 @@ final class Witness {
         if (!gave(run)) return null;
         List<Out> found = run.cases().stream().filter(c -> key(c).equals(key)).map(Witness::out).toList();
         return found.size() == 1 ? found.get(0) : null;
+    }
+
+    static boolean sensitive(Kind k) {
+        return k == Kind.SENSITIVE || k == Kind.SENSITIVE_BY_ERROR;
+    }
+
+    // Thrown where the code a test calls did not exist or did not link; and thrown for a cause outside the test (its class's set-up, the machine, a time limit).
+    private static final Set<String> ABSENT = Set.of("ClassNotFoundException", "NoSuchMethodException", "NoSuchFieldException", "LinkageError", "NoClassDefFoundError",
+            "NoSuchMethodError", "NoSuchFieldError", "AbstractMethodError", "IllegalAccessError", "InstantiationError", "IncompatibleClassChangeError", "ClassFormatError",
+            "UnsupportedClassVersionError", "ClassCircularityError", "VerifyError", "BootstrapMethodError", "UnsatisfiedLinkError").stream().map(t -> "java.lang." + t)
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    private static final Set<String> OUTSIDE = Set.of("java.lang.ExceptionInInitializerError", "java.lang.VirtualMachineError", "java.lang.OutOfMemoryError",
+            "java.lang.StackOverflowError", "java.lang.InternalError", "java.lang.UnknownError", "java.util.concurrent.TimeoutException", "org.junit.runners.model.TestTimedOutException");
+
+    private static Verdict threw(String f, String name, JUnitXml.Case p, String by) {
+        String type = p.type().strip();
+        if (ABSENT.contains(type)) return Verdict.beforeFailed(f, name, thrown(p), by);
+        if (type.isEmpty() || OUTSIDE.contains(type)) return new Verdict(f, name, Kind.UNKNOWN, thrown(p), by, Cover.NONE);
+        return new Verdict(f, name, Kind.SENSITIVE_BY_ERROR, "threw " + shortType(p) + " before the change", by, Cover.NONE);
+    }
+
+    private static String thrown(JUnitXml.Case p) {
+        return "before the change it threw " + shortType(p) + ", not an assertion";
+    }
+
+    private static String type(FileRun run, String key) {
+        return run.cases().stream().filter(c -> key(c).equals(key)).findFirst().map(c -> c.type().strip()).orElse("");
+    }
+
+    private static String threw(FileRun run, String key) {
+        return thrown(run.cases().stream().filter(c -> key(c).equals(key)).findFirst().orElseThrow());
     }
 
     private static String shortType(JUnitXml.Case c) {

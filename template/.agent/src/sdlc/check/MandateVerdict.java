@@ -144,9 +144,9 @@ final class MandateVerdict {
             }
 
             Witness.Result w = Witness.run(change, runners, runs, timeout, sides);
-            long sensitive = w.count(Kind.SENSITIVE), both = w.count(Kind.PASSES_ON_BOTH), failing = w.count(Kind.FAILS_AFTER);
+            long byError = w.count(Kind.SENSITIVE_BY_ERROR), sensitive = w.count(Kind.SENSITIVE) + byError, both = w.count(Kind.PASSES_ON_BOTH), failing = w.count(Kind.FAILS_AFTER);
             long notRun = w.count(Kind.NOT_RUN_NOW), takenAway = w.count(Kind.OLD_FAILS_AFTER);
-            long preApproved = w.verdicts().stream().filter(v -> v.kind() == Kind.SENSITIVE && m.locked().containsKey(v.file())).count();
+            long preApproved = w.verdicts().stream().filter(v -> Witness.sensitive(v.kind()) && m.locked().containsKey(v.file())).count();
             detail = new ArrayList<>();
             for (Witness.Verdict v : w.verdicts()) {
                 boolean whole = v.name().isEmpty();
@@ -156,7 +156,10 @@ final class MandateVerdict {
                 else if (v.kind() == Kind.MOVED) detail.add(v.file() + ": " + v.detail());
             }
             for (Witness.Verdict v : w.verdicts()) {
-                if (v.kind() == Kind.SENSITIVE) detail.add(v.file() + "  " + v.name() + ": fails before, passes after (" + (m.locked().containsKey(v.file()) ? "a test approved with the mandate" : "a test written with the change") + ")");
+                String grade = m.locked().containsKey(v.file()) ? "a test approved with the mandate" : "a test written with the change";
+                if (v.kind() == Kind.SENSITIVE) detail.add(v.file() + "  " + v.name() + ": fails before, passes after (" + grade + ")");
+                else if (v.kind() == Kind.SENSITIVE_BY_ERROR) detail.add(v.file() + "  " + v.name() + ": fails before by an exception, not by a check (" + v.detail() + "), passes after ("
+                        + grade + ")");
             }
             long undecided = w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE) + w.count(Kind.SKIPPED);
             if (undecided > 0) detail.add(undecided + " of the change's tests could not be judged, gave different results or were skipped");
@@ -168,7 +171,8 @@ final class MandateVerdict {
             count(wrong, w, Kind.OLD_FAILS_AFTER, " passed before it, fails on it as it was and was taken out of the way", " passed before it, fail on it as they were and were taken out of the way");
             String what = w.verdicts().isEmpty() ? "the change adds or edits no test this version can run"
                     : "the change's own tests: " + sensitive + (sensitive == 1 ? " fails" : " fail") + " before it and " + (sensitive == 1 ? "passes" : "pass") + " after it"
-                            + (sensitive > 0 ? " (" + preApproved + " approved with the mandate, " + (sensitive - preApproved) + " written with the change)" : "")
+                            + (sensitive > 0 ? " (" + preApproved + " approved with the mandate, " + (sensitive - preApproved) + " written with the change"
+                                    + (byError > 0 ? "; " + byError + " of them by an exception, not by a check" : "") + ")" : "")
                             + (wrong.isEmpty() ? "" : "; " + String.join("; ", wrong));
             State st = both + failing + notRun + takenAway > 0 ? State.VIOLATED : undecided > 0 || !w.unsupported().isEmpty() || sensitive == 0 ? State.UNKNOWN : State.SATISFIED;
             lines.add(new Line(st, what, false, detail));

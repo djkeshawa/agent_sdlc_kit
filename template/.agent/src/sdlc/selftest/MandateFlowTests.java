@@ -168,6 +168,23 @@ final class MandateFlowTests {
         write(repo, "tests/fix.t", "other: pass\n");
         String missing = verdict();
         check("mandate: a scenario that is not found is unknown, not passed", missing.contains("unknown   scenarios found, ran and passed: 0 of 1") && missing.contains("was not found among the tests that ran"));
+        write(repo, "tests/fix.t", "fixed: throws-unless fixed java.lang.NullPointerException\n");
+        String thrown = verdict();
+        check("mandate: a test that throws before the change and passes after it satisfies the witness, said with the exception it threw",
+                thrown.contains("satisfied the change's own tests: 1 fails before it and passes after it (0 approved with the mandate, 1 written with the change; 1 of them by an "
+                        + "exception, not by a check)   [from the change's own test run]")
+                && thrown.contains("tests/fix.t  fixed: fails before by an exception, not by a check (threw NullPointerException before the change), passes after (a test written with "
+                        + "the change)") && !thrown.contains("could not be judged") && code == 0);
+        write(repo, "tests/fix.t", "fixed: needs fixed\ncrash: throws-unless fixed java.lang.IllegalArgumentException\n");
+        String both = verdict();
+        check("mandate: and is counted beside a test that fails by a check",
+                both.contains("satisfied the change's own tests: 2 fail before it and pass after it (0 approved with the mandate, 2 written with the change; 1 of them by an "
+                        + "exception, not by a check)") && both.contains("tests/fix.t  fixed: fails before, passes after (a test written with the change)") && code == 0);
+        write(repo, "tests/fix.t", "fixed: throws-unless fixed java.lang.NoSuchMethodError\n");
+        String absent = verdict();
+        check("mandate: a test that throws before the change because the code it calls did not exist does not satisfy the witness",
+                absent.contains("unknown   the change's own tests: 0 fail before it and pass after it   [") && absent.contains("1 of the change's tests could not be judged")
+                && !absent.contains("by an exception") && code == 0);
         write(repo, "tests/fix.t", "fixed: needs fixed\n");
 
         write(repo, "tests/other.t", "on: skip\n");

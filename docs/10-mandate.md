@@ -143,6 +143,13 @@ sides by count (a source of rows, in the code or in what it imports, gave it mor
 as for any file; a pure move is not. A test file moved and edited on the way is a deleted file and an added one,
 whose tests are new.
 
+A test that throws before the change, the same exception in every run, and passes after it
+counts as one that fails before and passes after. The line says how many of them failed by an
+exception, and each detail line names the exception, as an exception from another cause (a
+broken set-up) counts too. An exception that says the code the test calls did not exist or did
+not link, or one from outside the test, leaves the test `unknown` (see
+[sdlc check](09-check.md#how-to-read-the-test-results)).
+
 The command fails (exit code 1) for `OUTSIDE` or a `violated` line. `AMENDED` and `unknown` do
 not fail it; they are there for you to read.
 

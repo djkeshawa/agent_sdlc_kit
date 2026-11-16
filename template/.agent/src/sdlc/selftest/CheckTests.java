@@ -544,9 +544,12 @@ final class CheckTests {
                         + "(proves nothing); the names do not say which test is new"));
         check("check: a test already in the file that passes on both sides is not counted", r.contains("1 test that was already in the edited files passes before and after (not counted)"));
         check("check: a test that fails after the change is reported", r.contains("1 fails after the change") && r.contains("        broken: fails"));
-        check("check: a test that threw something other than an assertion before the change cannot be judged",
-                r.contains("could not be judged") && r.contains("new feature: before the change it threw"));
-        check("check: and the report says why such a test is not counted", r.contains("      A test of code that did not exist before the change cannot fail there for the right reason"));
+        check("check: a test that throws before the change and passes after it is counted in a group of its own, right after the sensitive tests, with the exception it threw",
+                r.contains("        sensitive\n  1 fails before the change by an exception, not by a check, and passes after it, in 3 of 3 runs\n      tests/new.t  [self test]\n"
+                        + "        new feature: threw IllegalStateException before the change\n") && !r.contains("could not be judged"));
+        check("check: and the report says such an exception may have another cause, and does not say the code did not exist before the change",
+                r.contains("\n  An exception before the change may come from another cause, such as a broken set-up: look at the exception each such test threw.\n")
+                && !r.contains("A test of code that did not exist"));
         check("check: a test whose result changes from run to run is unstable, not sensitive", r.contains("1 gave different results from run to run") && r.contains("        random"));
         check("check: a skipped test is listed", r.contains("1 is skipped") && r.contains("        later"));
         check("check: problems make the exit code 1", code == 1);
@@ -641,6 +644,7 @@ final class CheckTests {
         check("check: two tests that report one name are not judged", twins.contains("same: more than one test reports this name") && !twins.contains("        same\n"));
         Files.delete(repo.resolve("tests/twins.t"));
 
+        thrown(repo);
         judgedByTheRun(repo);
 
         Trusted.env = name -> name.equals("GITHUB_BASE_REF") ? "not-fetched" : null;
@@ -657,6 +661,9 @@ final class CheckTests {
         write(repo, "prod.txt", "v1\nfixed\nmore\n");
         String branch;
         commit(repo, "more");
+        write(repo, "prod.txt", "v1\nfixed\nmore\nnamed\n");
+        write(repo, "tests/crash.t", "noName: throws-unless named java.lang.NullPointerException\n");
+        commit(repo, "a fix whose test throws before it");
         write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\nidle: pass\n");
         commit(repo, "a test that proves nothing");
         write(repo, "checks/judged.t", JUDGED.replace("turned off: pass", "turned off: skip"));
@@ -719,11 +726,111 @@ final class CheckTests {
                         + "before the change does not run now (skipped now under a name that ran before: turned off)")
                 && history.contains("ran before, do not run after: checks/named.t  the file as it was passed 8 of its tests, and after the change it runs 7: at least 1 test that ran "
                         + "before the change does not run now (no longer reported: goes)"));
+        check("check: --since counts a test that throws before its fix apart, and names it with what it threw",
+                history.contains("a fix whose test throws before it\n    tests: 1 fail before by an exception, not by a check, and pass after\n"
+                        + "        fails before by an exception, passes after: tests/crash.t  noName: threw NullPointerException before the change\n")
+                && history.contains("\n  1 new or edited test fails before its commit by an exception, not by a check, and passes after it\n")
+                && !history.contains("a fix whose test throws before it\n    tests: 1 could not be judged"));
         check("check: --since wants a time span", Asserts.throwsUsage(() -> Check.run(Map.of("since", "true"))));
-        git(repo, "reset", "-q", "--hard", "HEAD~12");
+        git(repo, "reset", "-q", "--hard", "HEAD~13");
         write(repo, "prod.txt", "v1\nfixed\nmore\n");
         branch = report(Map.of("selftest-runner", "true", "runs", "1"));
         check("check: commits on the branch and uncommitted edits are one change", branch.contains("2 files changed against main") && branch.contains("1 fails before the change and passes after it"));
+    }
+
+    private static final String NEW_CODE = "      A test of code that did not exist before the change cannot fail there for the right reason, so it is not counted either way.\n";
+
+    private static void thrown(Path repo) throws IOException {
+        String sensitiveOld = "  1 fails before the change and passes after it, in 3 of 3 runs\n      tests/old.t  [self test]\n        sensitive\n";
+        write(repo, "tests/crash.t", "noName: throws-unless fixed java.lang.NullPointerException\n");
+        String crash = report(Map.of("selftest-runner", "true", "runs", "3"));
+        check("thrown: a new test that throws before the change in every run and passes after it is counted apart, after the sensitive tests, with the type it threw",
+                crash.contains(sensitiveOld + "  1 fails before the change by an exception, not by a check, and passes after it, in 3 of 3 runs\n      tests/crash.t  [self test]\n"
+                        + "        noName: threw NullPointerException before the change\n  1 test that was already in the edited files")
+                && !crash.contains("could not be judged") && !crash.contains("new test pass") && !crash.contains("from run to run") && code == 0);
+        check("thrown: it is not said to be code that did not exist before the change, and the report says its exception may have another cause",
+                !crash.contains(NEW_CODE) && crash.contains("\n  An exception before the change may come from another cause, such as a broken set-up: look at the exception each such test threw.\n"));
+        write(repo, "tests/crash.t", "a: throws-unless fixed java.lang.NullPointerException\nb: throws-unless fixed java.lang.IllegalArgumentException\n");
+        String two = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("thrown: two such tests are counted as two, each with its own exception",
+                two.contains("  2 fail before the change by an exception, not by a check, and pass after it\n      tests/crash.t  [self test]\n"
+                        + "        a: threw NullPointerException before the change\n        b: threw IllegalArgumentException before the change\n") && code == 0);
+        Files.delete(repo.resolve("tests/crash.t"));
+
+        write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\nnoName: throws-unless fixed java.lang.NullPointerException\n");
+        String edited = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("thrown: such a test added to an edited file is counted apart, and is not a new test that passes before and after",
+                edited.contains("  1 fails before the change by an exception, not by a check, and passes after it\n      tests/old.t  [self test]\n"
+                        + "        noName: threw NullPointerException before the change\n") && !edited.contains("new test pass") && !edited.contains("could not be judged") && code == 0);
+        write(repo, "tests/old.t", "kept: pass\nsensitive: needs fixed\n");
+        write(repo, "checks/failing.t", FAILING + "  edited\n");
+        String old = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("thrown: an old test that threw as it was and before the change, and passes after it, is counted apart, and that answers for its difference",
+                old.contains("  1 fails before the change by an exception, not by a check, and passes after it, in 2 of 2 runs\n      checks/failing.t  [self test]\n"
+                        + "        throwing: threw IllegalStateException before the change\n") && !old.contains(NO_RULE) && !old.contains("throwing: before the change") && code == 0);
+        write(repo, "checks/failing.t", FAILING);
+
+        for (String type : new String[] {"NoSuchMethodError", "NoClassDefFoundError", "NoSuchFieldError", "AbstractMethodError", "ClassNotFoundException", "NoSuchMethodException"}) {
+            write(repo, "tests/crash.t", "twice: throws-unless fixed java.lang." + type + "\n");
+            String absent = report(Map.of("selftest-runner", "true", "runs", "1"));
+            check("thrown: a test that throws " + type + " before the change met code that did not exist or did not link: it could not be judged, as before, and is not counted",
+                    absent.contains("  1 could not be judged\n      tests/crash.t  [self test]\n        twice: before the change it threw " + type + ", not an assertion\n" + NEW_CODE)
+                    && !absent.contains("by an exception") && code == 0);
+        }
+        for (String type : new String[] {"java.lang.OutOfMemoryError", "java.lang.StackOverflowError", "java.lang.VirtualMachineError", "java.lang.ExceptionInInitializerError",
+                "java.util.concurrent.TimeoutException", "org.junit.runners.model.TestTimedOutException"}) {
+            String shortType = type.substring(type.lastIndexOf('.') + 1);
+            write(repo, "tests/crash.t", "noName: throws-unless fixed " + type + "\n");
+            String outside = report(Map.of("selftest-runner", "true", "runs", "1"));
+            check("thrown: a test that throws " + shortType + " before the change, a cause outside the test, could not be judged, and is not said to be code that did not exist",
+                    outside.contains("  1 could not be judged\n      tests/crash.t  [self test]\n        noName: before the change it threw " + shortType + ", not an assertion\n")
+                    && !outside.contains(NEW_CODE) && !outside.contains("by an exception") && code == 0);
+        }
+
+        write(repo, "tests/crash.t", "initializationError: error-without fixed\nhalves: pass-with fixed\n");
+        String setUp = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("thrown: a class whose set-up throws before the change, in place of its tests, is not a test that threw: its test could not be judged",
+                setUp.contains("  1 could not be judged\n      tests/crash.t  [self test]\n        halves: was not found before the change\n") && !setUp.contains("by an exception")
+                && !setUp.contains("initializationError") && code == 0);
+        write(repo, "tests/crash.t", "noName: throws-unless fixed java.lang.NullPointerException\nloads: compile-needs fixed\n");
+        String unbuilt = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("thrown: a test whose file does not compile before the change could not be judged, though it would throw there",
+                unbuilt.contains("        noName: before the change the file does not compile\n") && !unbuilt.contains("by an exception") && code == 0);
+        for (String how : new String[] {"timeout", "unstarted"}) {
+            write(repo, "tests/crash.t", "noName: throws-unless fixed java.lang.NullPointerException\nslow: " + how + "-unless fixed\n");
+            String noResult = report(Map.of("selftest-runner", "true", "runs", "1"));
+            String why = how.equals("timeout") ? "timed out after 900 s" : "Maven could not be started (mvn: not found)";
+            check("thrown: a test whose file gave no result before the change (" + why + ") could not be judged, and is not said to be code that did not exist",
+                    noResult.contains("  2 could not be judged\n      tests/crash.t  [self test]\n        noName: before the change the file " + why + "\n")
+                    && !noResult.contains("by an exception") && !noResult.contains(NEW_CODE) && code == 0);
+        }
+        write(repo, "tests/crash.t", "same: throws-unless fixed java.lang.NullPointerException\nsame: pass\n");
+        String twins = report(Map.of("selftest-runner", "true", "runs", "1"));
+        check("thrown: two tests that report one name are not judged, though one of them throws before the change",
+                twins.contains("        same: more than one test reports this name, so they cannot be told apart\n") && !twins.contains("by an exception") && code == 0);
+
+        write(repo, "tests/crash.t", "noName: error-varies fixed\n");
+        String varies = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("thrown: a test that throws another exception before the change in a repeat run could not be judged, with each, and is not said to be code that did not exist",
+                varies.contains("  1 could not be judged\n      tests/crash.t  [self test]\n        noName: before the change it threw IllegalStateException, not an assertion; "
+                        + "in another run, before the change it threw UnsupportedOperationException, not an assertion\n")
+                && !varies.contains("by an exception") && !varies.contains(NEW_CODE) && code == 0);
+
+        write(repo, "tests/crash.t", "noName: error-twins fixed\n");
+        String twinTypes = report(Map.of("selftest-runner", "true", "runs", "2"));
+        check("thrown: two exception types of one short name, one in each run before the change, are not one type: could not be judged, each with its full name",
+                twinTypes.contains("  1 could not be judged\n      tests/crash.t  [self test]\n        noName: before the change it threw ")
+                && twinTypes.contains("before the change it threw a.ValidationException, not an assertion") && twinTypes.contains("before the change it threw b.ValidationException, not an assertion")
+                && twinTypes.contains(", not an assertion; in another run, before the change it threw ")
+                && !twinTypes.contains("by an exception") && code == 0);
+        for (String how : new String[] {"error-odd", "error-even", "error-once"}) {
+            write(repo, "tests/crash.t", "noName: " + how + " fixed\n");
+            String wavers = report(Map.of("selftest-runner", "true", "runs", "2"));
+            check("thrown: a test that throws before the change in one run and " + (how.equals("error-once") ? "passes" : "fails by a check") + " in another (" + how + ") gave different results",
+                    wavers.contains("  1 gave different results from run to run\n      tests/crash.t  [self test]\n        noName: threw before the change in one run and not in another\n")
+                    && !wavers.contains("by an exception") && !wavers.contains("could not be judged") && code == 0);
+        }
+        Files.delete(repo.resolve("tests/crash.t"));
     }
 
     private static final String CALC = "package a;\n\nimport real.Calc;\n\nadds: pass\nrounds: skip-unless real.Calc\nguards: fails-with other.Calc\n";
@@ -1928,7 +2035,8 @@ final class CheckTests {
             {"gone", "checks/judged.t", JUDGED.replace("stays: pass", "group > stays: pass"), "stays (as it was: passed; after the change: not reported)"},
             {"gone", "checks/named.t", NAMED.replace("goes: pass\n", "went: pass\nextra: pass\n"), "goes (as it was: passed; after the change: not reported)"},
             {"broken,gone", "checks/broken.t", MENDED.replace("holds: pass", "kept up: pass"), "holds (as it was: passed; after the change: not reported)"},
-            {"per test", "checks/failing.t", FAILING + "  edited\n", "throwing (as it was: threw; after the change: passed)"},
+            {"per test", "checks/failing.t", FAILING.replace("throwing: error-unless fixed", "throwing: throws-unless fixed java.lang.NoSuchMethodError") + "  edited\n",
+                "throwing (as it was: threw; after the change: passed)"},
             {"lost", "checks/judged.t", JUDGED.replace("turned off: pass", "turned off: skip"), "turned off (as it was: passed; after the change: skipped)"},
         };
         for (String[] e : speaks) {
@@ -2004,7 +2112,7 @@ final class CheckTests {
         for (Map.Entry<String, String> e : kept.entrySet()) write(repo, e.getKey(), e.getValue());
 
         String[][] beside = {
-            {"lost, failures as it was", "checks/failing.t", "throwing: error-unless fixed\nparams(int)[2]: pass\ntwin: skip\n", "1",
+            {"lost, failures as it was", "checks/failing.t", "throwing: throws-unless fixed java.lang.NoSuchMethodError\nparams(int)[2]: pass\ntwin: skip\n", "1",
                 "a file that did not pass as it was is not said to have lost tests", "the reports of this file as it was and after the change differ in ways " + NO_RULE
                 + ": params(int)[2] (as it was: skipped; after the change: passed), throwing (as it was: threw; after the change: passed)."},
             {"lost, only with tests run again", "checks/retry.t", "steady: pass-retried\nflaky: skip\n", "1", "passed 1 more only when the build ran it again",

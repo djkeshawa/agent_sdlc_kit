@@ -212,8 +212,11 @@ If build files or runner configuration changed at all, declared or not, obligati
 **Rules for the witness.**
 
 - Only the head's test files are laid over the base, with the base's build configuration.
-- The test must compile there, be discovered, and fail by assertion or its declared exception.
-  A compile failure or an unrelated error is `unknown`, not a pass.
+- The test must compile there, be discovered, and fail by assertion or by an exception.
+  A compile failure, or an exception that says the code did not exist or did not link, is
+  `unknown`, not a pass; a test that throws before and passes after counts, in a group of its
+  own that names the exception, though an unrelated error then counts too (decided on
+  2026-11-16, after the second measurement).
 - Three runs on each side. A randomly failing test passes a single-run witness up to 25% of
   the time and a three-run witness 1.6% of the time.
 - On the head, the test must execute a changed production line (Java in version 0, `unknown`
