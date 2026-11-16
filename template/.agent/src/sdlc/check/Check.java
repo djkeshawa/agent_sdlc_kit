@@ -47,6 +47,8 @@ public final class Check {
                     + " on the code after it as the test was, and the change took " + (n == 1 ? "it" : "them") + " out of the way: removed, renamed or switched off", true);
             section(out, w, Kind.SENSITIVE, n -> n + (n == 1 ? " fails" : " fail") + " before the change and " + (n == 1 ? "passes" : "pass") + " after it"
                     + (w.runs() > 1 ? ", in " + w.runs() + " of " + w.runs() + " runs" : ""), false);
+            section(out, w, Kind.SENSITIVE_BY_ERROR, n -> n + (n == 1 ? " fails" : " fail") + " before the change by an exception, not by a check, and " + (n == 1 ? "passes" : "pass")
+                    + " after it" + (w.runs() > 1 ? ", in " + w.runs() + " of " + w.runs() + " runs" : ""), true);
             failed |= section(out, w, Kind.PASSES_ON_BOTH, n -> n + (n == 1 ? " new test passes" : " new tests pass") + " before and after, so "
                     + (n == 1 ? "it does" : "they do") + " not test the change", false);
             failed |= section(out, w, Kind.NOT_RUN_NOW, n -> n + (n == 1 ? " test that ran before the change does" : " tests that ran before the change do") + " not run now", true);
@@ -63,8 +65,11 @@ public final class Check {
             long off = w.count(Kind.EXISTING_SKIPPED);
             if (off > 0) out.println("  " + off + (off == 1 ? " test is skipped as before the change: the file skipped a test of its name before it too"
                     : " tests are skipped as before the change: the file skipped tests of their names before it too") + " (not counted)");
-            if (w.count(Kind.SENSITIVE) > 0) {
+            if (w.count(Kind.SENSITIVE) + w.count(Kind.SENSITIVE_BY_ERROR) > 0) {
                 out.println("  A test that fails before and passes after is sensitive to the change. That is not evidence that the change is correct.");
+            }
+            if (w.count(Kind.SENSITIVE_BY_ERROR) > 0) {
+                out.println("  An exception before the change may come from another cause, such as a broken set-up: look at the exception each such test threw.");
             }
             if (w.verdicts().stream().anyMatch(v -> v.runner().equals("Vitest")) && change.files.stream().anyMatch(f -> f.path().matches("(.*/)?(package\\.json|package-lock\\.json|yarn\\.lock|pnpm-lock\\.yaml)"))) {
                 out.println("  The change touches package.json or a lock file. Both sides ran with the packages installed now, so a fix that is a new package version shows as passing on both.");
@@ -156,7 +161,7 @@ public final class Check {
         List<String> commits = log.out().isBlank() ? List.of() : List.of(log.out().strip().split("\\R"));
         out.println("sdlc check --since " + opt.get("since") + ": " + commits.size() + " commit" + (commits.size() == 1 ? "" : "s") + " on this branch since " + window
                 + (commits.size() > max ? ", the newest " + max + " checked (--max N for more)" : ""));
-        long sensitive = 0, both = 0, unknown = 0, failing = 0, untested = 0, problems = 0, notRun = 0, takenAway = 0;
+        long sensitive = 0, byError = 0, both = 0, unknown = 0, failing = 0, untested = 0, problems = 0, notRun = 0, takenAway = 0;
         java.util.Set<Kind> least = java.util.EnumSet.noneOf(Kind.class);
         int checked = 0;
         for (String line : commits) {
@@ -175,6 +180,7 @@ public final class Check {
             } else {
                 List<String> parts = new ArrayList<>();
                 part(parts, w, Kind.SENSITIVE, "fail before and pass after");
+                part(parts, w, Kind.SENSITIVE_BY_ERROR, "fail before by an exception, not by a check, and pass after");
                 part(parts, w, Kind.PASSES_ON_BOTH, "new, pass on both sides");
                 part(parts, w, Kind.FAILS_AFTER, "fail after");
                 part(parts, w, Kind.OLD_FAILS_AFTER, "passed before, fail as they were after, taken out");
@@ -185,12 +191,14 @@ public final class Check {
                 for (Verdict v : w.verdicts()) {
                     String which = v.file() + "  " + (v.name().isEmpty() ? v.detail() : v.name());
                     if (v.kind() == Kind.PASSES_ON_BOTH) out.println("        does not test the change: " + which);
+                    else if (v.kind() == Kind.SENSITIVE_BY_ERROR) out.println("        fails before by an exception, passes after: " + which + ": " + v.detail());
                     else if (v.kind() == Kind.NOT_RUN_NOW) out.println("        ran before, do not run after: " + which);
                     else if (v.kind() == Kind.OLD_FAILS_AFTER) out.println("        passed before, fails as it was after, taken out: " + which);
                     else if (v.kind() == Kind.MOVED) out.println("        moved, not counted: " + which);
                 }
                 for (Kind k : List.of(Kind.PASSES_ON_BOTH, Kind.NOT_RUN_NOW, Kind.OLD_FAILS_AFTER)) if (w.atLeast(k)) least.add(k);
                 sensitive += w.count(Kind.SENSITIVE);
+                byError += w.count(Kind.SENSITIVE_BY_ERROR);
                 both += w.count(Kind.PASSES_ON_BOTH);
                 failing += w.count(Kind.FAILS_AFTER);
                 unknown += w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE);
@@ -208,6 +216,8 @@ public final class Check {
             out.println();
             out.println("Summary of " + n + " commit" + (n == 1 ? "" : "s"));
             out.println("  " + sensitive + (sensitive == 1 ? " new or edited test fails before its commit and passes after it" : " new or edited tests fail before their commit and pass after it"));
+            out.println("  " + byError + (byError == 1 ? " new or edited test fails before its commit by an exception, not by a check, and passes after it"
+                    : " new or edited tests fail before their commit by an exception, not by a check, and pass after it"));
             out.println("  " + (least.contains(Kind.PASSES_ON_BOTH) ? "at least " : "") + both
                     + (both == 1 ? " new test passes on both sides, so does not test its commit" : " new tests pass on both sides, so do not test their commit"));
             out.println("  " + unknown + " could not be judged; " + failing + " fail after their commit");

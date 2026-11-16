@@ -111,6 +111,12 @@ final class SelfTestRunner implements Runner {
                     out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
                     continue;
                 }
+                String absent = Files.readAllLines(checkout.resolve(f)).stream().filter(line -> line.matches(".*: (timeout|unstarted)-unless \\S+")
+                        && !words.contains(line.substring(line.lastIndexOf(' ') + 1))).findFirst().orElse(null);
+                if (absent != null) {
+                    out.put(f, FileRun.failed(absent.contains(": timeout-") ? "timed out after " + timeoutSeconds + " s" : "Maven could not be started (mvn: not found)"));
+                    continue;
+                }
                 List<String> all = Files.readAllLines(checkout.resolve(f));
                 String sees = words(prod, all), fileSuite = suite(f, all);
                 for (String line : all) {
@@ -126,8 +132,10 @@ final class SelfTestRunner implements Runner {
                     if (how[0].equals("pass-without") && has) continue;
                     if (how[0].equals("gone-later") && has && call > 1) continue;
                     if (how[0].equals("tears-down-with") && !has) continue;
+                    if (how[0].equals("error-without") && has) continue;
                     Status s = switch (how[0]) {
-                        case "pass", "pass-with", "pass-later", "pass-without", "gone-later", "pass-retried", "retried-with", "retried-without", "cut-later", "cut-once" -> Status.PASSED;
+                        case "pass", "pass-with", "pass-later", "pass-without", "gone-later", "pass-retried", "retried-with", "retried-without", "cut-later", "cut-once",
+                                "timeout-unless", "unstarted-unless" -> Status.PASSED;
                         case "fail", "fail-retried", "tears-down-with" -> Status.FAILED;
                         case "error-retried" -> Status.ERRORED;
                         case "fails-later" -> has && call > 1 ? Status.FAILED : Status.PASSED;
@@ -140,7 +148,11 @@ final class SelfTestRunner implements Runner {
                         case "breaks-once" -> has && call == 1 ? Status.FAILED : Status.PASSED;
                         case "flaky" -> has || call > 1 ? Status.PASSED : Status.FAILED;
                         case "needs", "needs-with", "compile-later", "timeout-later" -> has ? Status.PASSED : Status.FAILED;
-                        case "error-unless" -> has ? Status.PASSED : Status.ERRORED;
+                        case "error-unless", "throws-unless" -> has ? Status.PASSED : Status.ERRORED;
+                        case "error-odd" -> has ? Status.PASSED : call % 2 != 0 ? Status.ERRORED : Status.FAILED;
+                        case "error-even" -> has ? Status.PASSED : call % 2 == 0 ? Status.ERRORED : Status.FAILED;
+                        case "error-once" -> has ? Status.PASSED : call == 1 ? Status.ERRORED : Status.PASSED;
+                        case "error-without" -> Status.ERRORED;
                         case "error-varies" -> has ? Status.PASSED : Status.ERRORED;
                         case "compile-needs" -> Status.PASSED;
                         case "agrees" -> how.length > 2 && prod.contains(how[2]) == (Files.isRegularFile(checkout.resolve(how[1])) && Files.readString(checkout.resolve(how[1])).contains(how[2]))
@@ -157,7 +169,8 @@ final class SelfTestRunner implements Runner {
                     }
                     boolean retried = how[0].endsWith("-retried") || how[0].equals("retried-with") && has || how[0].equals("retried-without") && !has;
                     for (String one : shown.contains("%i") ? List.of(shown.replace("%i", "1"), shown.replace("%i", "2")) : List.of(shown)) {
-                        String thrown = how[0].equals("error-varies") && call % 2 == 0 ? "java.lang.UnsupportedOperationException" : "java.lang.IllegalStateException";
+                        String thrown = how[0].equals("throws-unless") && how.length > 2 ? how[2]
+                                : how[0].equals("error-varies") && call % 2 == 0 ? "java.lang.UnsupportedOperationException" : "java.lang.IllegalStateException";
                         cases.add(new JUnitXml.Case(suite, one, s, s == Status.ERRORED ? thrown : s == Status.FAILED ? "AssertionError" : "",
                                 s == Status.FAILED ? "expected something else" : "", retried));
                     }

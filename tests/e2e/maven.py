@@ -195,9 +195,20 @@ def main():
          ["  1 fails before the change and passes after it\n" + FILE + "        halves\n"], QUIET)
 
     said(shape("crash-is-the-bug", {MAIN: BROKEN, TEST: j5(ZERO)},
-               {MAIN: FIXED, TEST: j5(ZERO + "    @Test void noName() { assertEquals(\"\", Calc.name(null)); }\n")}),
-         "a test that throws before the fix (the exception is the bug) could not be judged today", 0,
-         ["could not be judged", "noName: before the change it threw NullPointerException, not an assertion"], ["fails before the change and passes after it"])
+               {MAIN: FIXED, TEST: j5(ZERO + "    @Test void noName() { assertEquals(\"\", Calc.name(null)); }\n")}, runs="2"),
+         "a test that throws before the fix (the exception is the bug) and passes after it is counted apart, with the exception, in 2 of 2 runs", 0,
+         ["  1 fails before the change by an exception, not by a check, and passes after it, in 2 of 2 runs\n" + FILE
+          + "        noName: threw NullPointerException before the change\n",
+          "  An exception before the change may come from another cause, such as a broken set-up: look at the exception each such test threw.\n"],
+         QUIET + ("fails before the change and passes after it", "A test of code that did not exist"))
+
+    by_name = ZERO + "    @Test void twice() throws Exception {\n        assertEquals(\"4\", String.valueOf(Class.forName(\"demo.Twice\").getMethod(\"of\", int.class).invoke(null, 2)));\n    }\n"
+    said(shape("new-api-by-name", {MAIN: FIXED, TEST: j5(ZERO)},
+               {"src/main/java/demo/Twice.java": "package demo;\npublic class Twice {\n    public static int of(int n) { return n * 2; }\n}\n", TEST: j5(by_name)}),
+         "a test that reaches by name a class that did not exist before the change throws there, could not be judged, and is not counted", 0,
+         ["  1 could not be judged\n" + FILE + "        twice: before the change it threw ClassNotFoundException, not an assertion\n",
+          "      A test of code that did not exist before the change cannot fail there for the right reason, so it is not counted either way.\n"],
+         ["by an exception", "new test passes", "fails before the change and passes after it"])
 
     said(shape("new-api", {MAIN: FIXED, TEST: j5(ZERO)},
                {MAIN: FIXED[:-2] + "    public static int twice(int n) { return n * 2; }\n}\n",

@@ -1,6 +1,6 @@
 # The least number of self tests that must pass, on Linux with node on the PATH.
 # It stands against self tests that are lost without anyone seeing it: a test class that is no
 # longer called, a block that returns early. Raise it when self tests are added; lower it only
-# with the reason written here. The measured count was 1412 on 2026-11-16; three of those need
+# with the reason written here. The measured count was 1442 on 2026-11-16; three of those need
 # node, so the floor is three under it. One line with digits only.
-1409
+1439
