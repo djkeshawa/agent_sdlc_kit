@@ -243,9 +243,10 @@ def main():
                     pass
         return subs
 
-    def approved(key, kind, want):
-        # a comment shows up in the list a moment after it is posted
-        got = until(lambda: (lambda r: r if (r[0] == 0) == want else None)(sdlc("approval", "check", key, kind)), seconds=30)
+    def approved(key, kind, want, why=""):
+        # A comment shows up in the list a moment after it is posted, and a refusal was there before
+        # it: so wait for the answer AND for its reason, the one the new comment must bring.
+        got = until(lambda: (lambda r: r if (r[0] == 0) == want and why in r[1] else None)(sdlc("approval", "check", key, kind)), seconds=60)
         return got or sdlc("approval", "check", key, kind)
 
     def ended(number, _frame):
@@ -340,7 +341,7 @@ def main():
         code, out = sdlc("approval", "check", key, "test-design")
         check("not approved: the comment that the tool posts for the bot is not an approval", code != 0 and out.lstrip().startswith("NOT APPROVED: no approval comment yet"), out)
         bot.call("POST", "/rest/api/2/issue/%s/comment" % key, {"body": line_of(key, "test-design")})
-        code, out = approved(key, "test-design", False)
+        code, out = approved(key, "test-design", False, "bot account")
         check("the exact approval line posted by the bot account does not count", code != 0 and "bot account" in out, out)
 
         write(".sdlc/%s/drafts/lld.md" % key, LLD.replace("KEY", key))
@@ -357,7 +358,7 @@ def main():
 
         if leads:
             approve(leads["techlead"], key, "test-design")
-            code, out = approved(key, "test-design", False)
+            code, out = approved(key, "test-design", False, "not in gates.approvers")
             check("approval of the test design by the tech lead does not count", code != 0 and "not in gates.approvers" in out, out)
             approve(leads["qelead"], key, "test-design")
             code, out = approved(key, "test-design", True)
@@ -368,7 +369,7 @@ def main():
             now = page_by_title("%s - LLD - payments" % key)
             wiki_bot.call("PUT", "/wiki/rest/api/content/%s" % now["id"], {"type": "page", "title": now["title"], "version": {"number": now["version"]["number"] + 1},
                           "body": {"storage": {"representation": "storage", "value": now["body"]["storage"]["value"] + "<p>late edit in Confluence</p>"}}})
-            code, out = approved(key, "lld", False)
+            code, out = approved(key, "lld", False, "another version")
             check("a real edit of the page after the approval voids it", code != 0 and "another version" in out, out)
             approve(leads["techlead"], key, "lld")
             code, out = approved(key, "lld", True)
