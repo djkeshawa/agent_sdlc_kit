@@ -1,0 +1,8 @@
+{
+  "name": "sdlc-e2e-vitest-runtime",
+  "private": true,
+  "description": "The Vitest that tests/e2e/vitest.py runs sdlc check against. Installed with npm ci, so package-lock.json decides every version.",
+  "dependencies": {
+    "vitest": "3.2.4"
+  }
+}

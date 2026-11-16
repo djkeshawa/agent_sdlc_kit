@@ -1,0 +1,10 @@
+# The least share of a package's lines that the self tests must run, in percent.
+# Only the packages that decide a verdict or guard a file have a floor; the others (the
+# commands, the calls to Jira, Confluence, Jenkins and GitHub) are run by the end-to-end flow,
+# which this number does not see. A floor is a few points under what was measured when it was
+# set (2026-11-15: check 92.1, guard 93.0, mandate 93.3, util 84.8), so that it catches new
+# code without tests and does not fail on a few lines.
+sdlc.check    89
+sdlc.guard    90
+sdlc.mandate  90
+sdlc.util     80

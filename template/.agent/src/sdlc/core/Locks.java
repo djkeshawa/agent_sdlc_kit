@@ -23,11 +23,19 @@ public final class Locks {
 
     public record Entry(String path, String hash, String story) {}
 
+    private static final Object LOCK = new Object();
     private static String signature = "";
     private static Map<String, Entry> cached = Map.of();
     private static List<String> cachedDamaged = List.of();
 
-    public static synchronized Map<String, Entry> locked(Path root) {
+    /** The locks, as a map that cannot be changed: it is kept between calls. */
+    public static Map<String, Entry> locked(Path root) {
+        synchronized (LOCK) {
+            return read(root);
+        }
+    }
+
+    private static Map<String, Entry> read(Path root) {
         Path dir = root.resolve(DIR);
         if (!Files.isDirectory(dir)) {
             signature = "";
@@ -57,14 +65,16 @@ public final class Locks {
             }
         }
         signature = sig.toString();
-        cached = out;
-        cachedDamaged = damaged;
-        return out;
+        cached = java.util.Collections.unmodifiableMap(out);
+        cachedDamaged = List.copyOf(damaged);
+        return cached;
     }
 
-    public static synchronized List<String> damaged(Path root) {
-        locked(root);
-        return cachedDamaged;
+    public static List<String> damaged(Path root) {
+        synchronized (LOCK) {
+            read(root);
+            return cachedDamaged;
+        }
     }
 
     static Map<String, Entry> parse(String json) {

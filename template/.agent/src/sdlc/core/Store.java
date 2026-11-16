@@ -28,7 +28,7 @@ public final class Store {
 
     public static void write(Path f, Object value) {
         try {
-            Files.createDirectories(f.getParent());
+            sdlc.util.Fs.makeParent(f);
             Path tmp = f.resolveSibling(f.getFileName() + ".tmp" + ProcessHandle.current().pid());
             Files.writeString(tmp, Json.pretty(value) + "\n", StandardCharsets.UTF_8);
             Files.move(tmp, f, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
@@ -39,7 +39,7 @@ public final class Store {
 
     public static void writeText(Path f, String text) {
         try {
-            Files.createDirectories(f.getParent());
+            sdlc.util.Fs.makeParent(f);
             Files.writeString(f, text, StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -53,7 +53,7 @@ public final class Store {
             e.put("ts", Instant.now().toString());
             e.putAll(fields);
             Path f = Ctx.work("logs", stream + ".jsonl");
-            Files.createDirectories(f.getParent());
+            sdlc.util.Fs.makeParent(f);
             Files.writeString(f, Json.write(e) + "\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException | RuntimeException ignored) {
         }

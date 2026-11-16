@@ -191,7 +191,7 @@ public final class Runners {
                 if (Files.exists(reports) && !inside(checkout, reports)) unreadable = "the report folder is a link out of the checkout";
                 else if (Files.isDirectory(reports)) {
                     try (Stream<Path> s = Files.list(reports)) {
-                        for (Path r : s.filter(x -> x.getFileName().toString().matches("TEST-.*\\.xml") && Files.isRegularFile(x, java.nio.file.LinkOption.NOFOLLOW_LINKS)).sorted().toList()) {
+                        for (Path r : s.filter(x -> sdlc.util.Fs.name(x).matches("TEST-.*\\.xml") && Files.isRegularFile(x, java.nio.file.LinkOption.NOFOLLOW_LINKS)).sorted().toList()) {
                             cases.addAll(JUnitXml.read(r));
                         }
                     } catch (IOException e) {

@@ -1,12 +1,13 @@
 package sdlc.util;
 
 import java.io.PrintStream;
+import java.nio.charset.Charset;
 
 public final class SafeOut extends PrintStream {
     private final PrintStream to;
 
     private SafeOut(PrintStream to) {
-        super(to, true);
+        super(to, true, Charset.defaultCharset());
         this.to = to;
     }
 

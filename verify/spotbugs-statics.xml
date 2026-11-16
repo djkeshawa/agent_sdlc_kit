@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The second SpotBugs pass of verify/run.sh asks for one kind of finding only, at every rank:
+     a public static that can be changed from outside its class (MS). The fields that are meant to
+     be so are named in spotbugs-exclude.xml. -->
+<FindBugsFilter>
+  <Match>
+    <Bug code="MS"/>
+  </Match>
+</FindBugsFilter>

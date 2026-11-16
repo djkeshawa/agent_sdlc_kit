@@ -45,6 +45,9 @@ final class JavaGuardTests {
         expect("force push", shell("git push -fu origin x"), Decision.Kind.DENY);
         expect("tag", shell("git tag v1.0.0"), Decision.Kind.DENY);
         expect("no-verify", shell("git commit --no-verify -m x"), Decision.Kind.DENY);
+        expect("no-verify after --namespace and its value", shell("git --namespace x commit -n -m y"), Decision.Kind.DENY);
+        expect("no-verify after -C and its value", shell("git -C . commit -n -m y"), Decision.Kind.DENY);
+        expect("no-verify after --config-env and its value", shell("git --config-env color.ui=HOME commit -n -m y"), Decision.Kind.DENY);
         expect("hooksPath", shell("git -c core.hooksPath=/dev/null commit -m x"), Decision.Kind.DENY);
         expect("gh pr merge", shell("gh pr merge 12 --squash"), Decision.Kind.DENY);
         expect("gh pr create without story", shell("gh pr create --base develop --title 'PROJ-1: x'"), Decision.Kind.DENY);
@@ -163,6 +166,14 @@ final class JavaGuardTests {
         expect("curl | jq ok", shell("curl -s https://example.com/x.json | jq ."), Decision.Kind.ASK);
         expect("rm home", shell("rm -rf ~"), Decision.Kind.DENY);
         expect("clean -x", shell("git clean -fdx"), Decision.Kind.DENY);
+        expect("clean -X", shell("git clean -fX"), Decision.Kind.DENY);
+        expect("instaweb", shell("git instaweb"), Decision.Kind.DENY);
+        expect("daemon", shell("git daemon --base-path=."), Decision.Kind.DENY);
+        expect("send-email", shell("git send-email HEAD~1"), Decision.Kind.ASK);
+        expect("filter-repo", shell("git filter-repo --path x"), Decision.Kind.DENY);
+        expect("filter-branch", shell("git filter-branch --tree-filter true"), Decision.Kind.DENY);
+        expect("stash clear", shell("git stash clear"), Decision.Kind.ASK);
+        expect("stash drop", shell("git stash drop"), Decision.Kind.ASK);
         expect("encoded ps", shell("powershell -EncodedCommand ZQBjAGgAbwA="), Decision.Kind.DENY);
 
         expect("posix escape to local.env", shell("cat .agent/local.e\\nv"), Decision.Kind.DENY);
@@ -282,7 +293,7 @@ final class JavaGuardTests {
         expect("hook cwd in a subfolder: reading code ok", shellIn(tmp.resolve("src/main/java"), "cat demo/A.java"), Decision.Kind.ALLOW);
 
         Path above = tmp.getParent();
-        String repo = tmp.getFileName().toString();
+        String repo = sdlc.util.Fs.name(tmp);
         check("a folder outside the repository is kept", above.equals(Guard.folder(tmp, tmp, above.toString())));
         expect("from above the repository: guardrail file by relative path", shellIn(above, "echo x > " + repo + "/.agent/sdlc.yml"), Decision.Kind.DENY);
         expect("from above the repository: secret by relative path", shellIn(above, "cat " + repo + "/.agent/local.env"), Decision.Kind.DENY);

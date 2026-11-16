@@ -100,7 +100,8 @@ public final class FileRules {
         try {
             Path rest = existing.relativize(abs);
             if (Files.isSymbolicLink(existing) && !Files.exists(existing) && depth < 8) {
-                Path parent = existing.getParent() == null ? existing : existing.getParent().toRealPath();
+                Path up = existing.getParent();
+                Path parent = up == null ? existing : up.toRealPath();
                 return realish(parent.resolve(Files.readSymbolicLink(existing)).normalize(), depth + 1).resolve(rest).normalize();
             }
             return existing.toRealPath().resolve(rest).normalize();

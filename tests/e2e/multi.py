@@ -1,3 +1,10 @@
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # flow.py runs this file inside its own namespace (exec), so these names are flow.py's. They are
+    # named here, one by one, so that the lint knows them and still reports any other undefined name.
+    from flow import PORT, PROJ, TEMPLATE, WORK, admin, agent_write, bash, check, commit, git, hook, json, sdlc, state, write  # noqa: F401
+
 admin("/__gh/commits", {"commits": [
     {"repo": "acme/payments-service", "sha": "a1", "message": "feat(PAY-100): refund endpoint"},
     {"repo": "acme/orders-service", "sha": "b1", "message": "feat(PAY-101): show refund status (carries a sub-task's key)"},
@@ -145,7 +152,7 @@ check("solution design published to ARCH with an approval request on the epic", 
       and any(p["title"] == "PAY-10 - Solution design" and p["space"] == "ARCH" for p in state()["pages"].values()), out)
 code, out = sdlc("stories", "create", "PAY-10")
 check("stories refused before the architect approves", code != 0 and "NOT approved" in out, out)
-line = next(l.strip() for l in out.splitlines() if l.strip().startswith("SDLC-APPROVED PAY-10 solution"))
+line = next(ln.strip() for ln in out.splitlines() if ln.strip().startswith("SDLC-APPROVED PAY-10 solution"))
 admin("/__admin/comment", {"key": "PAY-10", "body": line, "accountId": "architect-1", "name": "Architect"})
 code, out = sdlc("stories", "create", "PAY-10")
 st = state()

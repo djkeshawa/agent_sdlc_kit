@@ -1,5 +1,5 @@
 #!/bin/sh
-dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+dir=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 run() {
   if [ -f "$dir/.build/sdlc/Main.class" ] && [ -f "$dir/.build/.stamp" ]; then
     java -cp "$dir/.build" sdlc.Main "$@"

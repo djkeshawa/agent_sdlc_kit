@@ -57,7 +57,7 @@ public final class JUnitXml {
                 builder.setErrorHandler(null);
                 byte[] doc = ("<?xml version=\"1.0\" encoding=\"UTF-8\" ?><a v=\"" + text + "\"/>").getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 return builder.parse(new java.io.ByteArrayInputStream(doc)).getDocumentElement().getAttribute("v");
-            } catch (Exception e) {
+            } catch (org.xml.sax.SAXException | java.io.IOException | RuntimeException e) {
                 return null;
             }
         }

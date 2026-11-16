@@ -90,7 +90,7 @@ public final class Setup {
         if (Files.isDirectory(agents)) {
             try (Stream<Path> files = Files.list(agents)) {
                 for (Path f : files.filter(p -> p.toString().endsWith(".agent.md")).toList()) {
-                    String name = f.getFileName().toString().replace(".agent.md", "");
+                    String name = sdlc.util.Fs.name(f).replace(".agent.md", "");
                     String model = Ctx.cfg.str("agents." + name + ".model");
                     String text = Files.readString(f);
                     String updated = setModel(text, model);

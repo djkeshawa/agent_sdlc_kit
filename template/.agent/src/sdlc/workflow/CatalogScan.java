@@ -309,7 +309,7 @@ public final class CatalogScan {
     static Map<String, String> properties(Path root) {
         Map<String, String> out = new LinkedHashMap<>();
         try (Stream<Path> s = Files.walk(root)) {
-            for (Path f : s.filter(Files::isRegularFile).filter(p -> !skipped(root, p)).filter(p -> p.getFileName().toString().matches("application[^/]*\\.(ya?ml|properties)")).sorted().toList()) {
+            for (Path f : s.filter(Files::isRegularFile).filter(p -> !skipped(root, p)).filter(p -> sdlc.util.Fs.name(p).matches("application[^/]*\\.(ya?ml|properties)")).sorted().toList()) {
                 String text = Files.readString(f);
                 if (f.toString().endsWith(".properties")) {
                     for (String l : text.split("\n")) {

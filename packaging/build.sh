@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 repo=$(dirname -- "$here")
 src=$repo/template/.agent/src
 dist=${DIST:-$repo/dist}
