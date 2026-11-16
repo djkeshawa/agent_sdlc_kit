@@ -103,8 +103,9 @@ What to know before you run it:
   readable by you alone.
 - **The login goes to `SDLC_LIVE_SITE` only.** The tool lets `JIRA_*` and `CONFLUENCE_*` of the
   shell win over `local.env`, so the run takes those (and `JENKINS_*`, `SONAR_*`) out of the
-  tool's environment. It takes `GIT_*` out too: a `GIT_DIR` of the shell would make the run
-  commit into that repository. A scoped token with `JIRA_BASE_URL` is therefore not supported here.
+  tool's environment. A scoped token with `JIRA_BASE_URL` is therefore not supported here.
+- **The run stays in its own folder.** It takes `GIT_*` out of the tool's environment too: a
+  `GIT_DIR` of the shell would make the run commit into that repository.
 - Exit code 2 means nothing was tested: a setting is missing, or the site does not answer or
   refuses the bot.
 

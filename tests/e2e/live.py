@@ -20,7 +20,8 @@ Settings, all from the environment (README.md here has an example):
                      Without it the run stops at the gates and checks that they stay closed.
 
 Exit code: 0 every check passed, 1 a check failed, 2 the settings are missing or the site does not
-answer or refuses the bot (nothing was tested), 128 + n the run was stopped by signal n. Options: --keep leaves the test project on disk (without its secrets);
+answer or refuses the bot (nothing was tested), 128 + n the run was stopped by `kill` or a closed terminal
+(Ctrl-C after the start is a failed check: 1). Options: --keep leaves the test project on disk (without its secrets);
 --template DIR tests another copy of the template."""
 import argparse
 import base64
@@ -171,7 +172,9 @@ def main():
         story = next((t["name"] for t in types if t["name"] == "Story"), None) or next((t["name"] for t in types if not t.get("subtask") and t.get("hierarchyLevel", 0) == 0), None)
         sub = next((t["name"] for t in types if t.get("subtask")), None)
         parent = wiki_bot.call("GET", "/wiki/rest/api/content/%s?expand=space" % s["parent"])
-    except RuntimeError as e:
+    except KeyboardInterrupt:
+        stop("stopped by Ctrl-C before anything was made")
+    except Exception as e:  # no answer, a refusal, or an answer of another shape
         stop("the site does not answer or refuses the bot account, or the project or the parent page is not there: %s" % e)
     if not story or not sub:
         stop("project %s needs a story type and a sub-task type" % project)
@@ -182,7 +185,9 @@ def main():
         roles = read_env(s["roles"], ["QELEAD_USER", "QELEAD_TOKEN", "TECHLEAD_USER", "TECHLEAD_TOKEN"])
         try:
             leads = {r: Account(site, roles[r.upper() + "_USER"], roles[r.upper() + "_TOKEN"]).login() for r in ("qelead", "techlead")}
-        except RuntimeError as e:
+        except KeyboardInterrupt:
+            stop("stopped by Ctrl-C before anything was made")
+        except Exception as e:
             stop("the site does not answer or refuses a lead account of SDLC_LIVE_ROLES: %s" % e)
         if len({bot.id, leads["qelead"].id, leads["techlead"].id}) != 3:
             stop("the bot, the QE lead and the tech lead must be three accounts")
