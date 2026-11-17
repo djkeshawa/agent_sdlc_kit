@@ -21,7 +21,8 @@ if "RESULTS" not in globals():
 def _vitest_checks(build, mods, work):
     """Each shape is a git repository: a base commit, then a change in the working tree, then `sdlc check --runs 2` in it."""
     config = 'export default {test:{maxWorkers:1,minWorkers:1,fileParallelism:false%s}};\n'
-    env = {k: v for k, v in os.environ.items() if k not in ("SDLC_BASE_BRANCH", "GITHUB_BASE_REF", "CHANGE_TARGET")}
+    # not the base branch of a pull request build, and no GIT_* of the caller's shell: with a GIT_DIR, git would work in that repository
+    env = {k: v for k, v in os.environ.items() if k not in ("SDLC_BASE_BRANCH", "GITHUB_BASE_REF", "CHANGE_TARGET") and not k.upper().startswith("GIT_")}
 
     def git(d, *a):
         r = subprocess.run(["git", "-c", "user.name=probe", "-c", "user.email=probe@example.com", "-c", "commit.gpgsign=false",

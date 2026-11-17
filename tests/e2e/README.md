@@ -8,6 +8,8 @@ python3 tests/e2e/run.py
 
 It needs a JDK 17+, git and Python 3 on Linux or macOS (WSL on Windows). No Maven, no network,
 no accounts. The last line is `N/N checks passed`; the exit code is 0 only when all pass.
+`flow.py` takes `GIT_*`, `JIRA_*`, `CONFLUENCE_*`, `JENKINS_*`, `SONAR_*` and `*_proxy` of your
+shell out of its environment, so the run stays in its temporary folder and talks to the mock only.
 `--keep` leaves the test project on disk so you can look at `.sdlc/` and the git history.
 
 ## What it does

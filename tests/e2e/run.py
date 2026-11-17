@@ -10,7 +10,6 @@ another copy of the template. Needs a JDK 17+, git and Python 3. Exit code 0 = e
 import argparse
 import shutil
 import socket
-import os
 import subprocess
 import sys
 import tempfile
@@ -19,6 +18,7 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def free_port():
@@ -32,7 +32,8 @@ def wait_for(port, mock):
         if mock.poll() is not None:
             sys.exit("the mock server stopped at start (exit code %s)" % mock.returncode)
         try:
-            urllib.request.urlopen("http://127.0.0.1:%d/__admin/state" % port, timeout=1).read()
+            # straight to the mock: urllib would send even 127.0.0.1 through an http_proxy of the shell
+            NO_PROXY.open("http://127.0.0.1:%d/__admin/state" % port, timeout=1).read()
             return
         except OSError:
             time.sleep(0.1)
@@ -55,9 +56,8 @@ def main():
     mock = subprocess.Popen([sys.executable, str(HERE / "mock.py"), str(port)])
     try:
         wait_for(port, mock)
-        # a pull request build of this repository must not name its base branch for the flow's repositories
-        env = {k: v for k, v in os.environ.items() if k not in ("SDLC_BASE_BRANCH", "GITHUB_BASE_REF", "CHANGE_TARGET")}
-        code = subprocess.run([sys.executable, str(HERE / "flow.py"), str(template), str(work / "run"), str(port)], env=env).returncode
+        # flow.py itself takes out of its environment what of this shell must not reach git or the tool
+        code = subprocess.run([sys.executable, str(HERE / "flow.py"), str(template), str(work / "run"), str(port)]).returncode
     finally:
         mock.terminate()
         try:
