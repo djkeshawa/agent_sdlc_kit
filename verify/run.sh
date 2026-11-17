@@ -14,6 +14,8 @@
 #   e2e       the end-to-end flow against mock services (tests/e2e/run.py)
 #   real      sdlc check against real Maven with JUnit 4 and 5, and real Vitest
 #   package   the bundle and the container image, with their smoke test
+#   live      only when named: the flow against a REAL Jira and Confluence test project (tests/e2e/live.py).
+#             It needs the SDLC_LIVE_* settings of tests/e2e/README.md, and it writes to that project.
 #
 # A layer ends as PASS, FAIL or NOT RUN (a tool it needs is missing, with what to install).
 # Exit code: 0 when every layer asked for passed; 1 when one failed; 2 when none failed but one
@@ -32,17 +34,19 @@ here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 repo=$(dirname -- "$here")
 cache=${VERIFY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/sdlc-verify}
 all="compile lint bugs selftest e2e real package"
+# run only when named: it needs accounts on a real site, and it writes there
+extra="live"
 
 if [ "${1:-}" = "--list" ]; then
-  sed -n '/^# Layers/,/^#   package/p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '/^# Layers/,/^#             It needs/p' "$0" | sed 's/^# \{0,1\}//'
   exit 0
 fi
 if [ "$#" -eq 0 ]; then layers=$all; else layers=$*; fi
 [ -n "$(printf '%s' "$layers" | tr -d ' ')" ] || { echo "verify/run.sh: name a layer, or give no argument for all. Layers: $all" >&2; exit 3; }
 for l in $layers; do
-  case " $all " in
+  case " $all $extra " in
     *" $l "*) ;;
-    *) echo "verify/run.sh: no layer named $l. Layers: $all" >&2; exit 3 ;;
+    *) echo "verify/run.sh: no layer named $l. Layers: $all; and, only when named: $extra" >&2; exit 3 ;;
   esac
 done
 
@@ -422,6 +426,20 @@ layer_package() {
   fi
   if [ "$rc" -eq 0 ] && grep -q '^SMOKE PASSED' "$log"; then result package PASS "$(grep -c '^  PASS' "$log") smoke checks"
   else result package FAIL "see $log"; fi
+}
+
+layer_live() {
+  log=$logs/live.log
+  command -v python3 >/dev/null 2>&1 || { result live "NOT RUN" "python3 is missing"; return; }
+  (cd "$repo" && python3 tests/e2e/live.py) > "$log" 2>&1
+  rc=$?
+  line=$(grep -E '^[0-9]+/[0-9]+ live checks passed' "$log" | tail -1)
+  got=${line%%/*}
+  of=$(printf '%s' "$line" | sed 's/^[0-9]*\/\([0-9]*\) .*/\1/')
+  left=$(grep '^left on the site' "$log" | tail -1)
+  if [ "$rc" -eq 2 ]; then result live "NOT RUN" "$(grep '^live: ' "$log" | tail -1)"
+  elif [ "$rc" -eq 0 ] && [ -n "$line" ] && [ "$got" = "$of" ] && [ "$got" -gt 0 ]; then result live PASS "$line${left:+; $left}"
+  else result live FAIL "${line:-no result} (exit $rc); see $log"; fi
 }
 
 for l in $layers; do

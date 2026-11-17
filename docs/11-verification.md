@@ -39,6 +39,12 @@ checked archives on every run, so an unpacked copy that was changed is never use
 | 6 | `real` | `sdlc check` against real Maven with JUnit 4 and 5 (21 cases), and against real Vitest (13 cases). Each case names the lines the check must print, and fails when the test tool did not run | A report shape of a real test tool that the tool reads wrongly | Versions of the test tools other than the pinned ones; a hanging test; a test in an abstract base class (the tool cannot judge it yet, and the case holds it to saying so); a custom report folder; `@RepeatedTest` and `@TestFactory` | 10 to 25 min |
 | 7 | `package` | The bundle and the container image, with their smoke test | A bundle that does not start; a missing Java module (the bundle runs its own self tests) | Operating systems other than the two that are built. TLS is required only in CI (`SMOKE_REQUIRE_TLS=1`): on a machine without a network that check is skipped. Without a full JDK the bundle is built in a container, which needs a checkout in a folder Docker may mount; else the layer is `NOT RUN` | 5 min |
 
+One more layer runs only when it is named, because it needs accounts and writes to a real site:
+
+| Layer | What it runs | What it catches | What it cannot see | Time |
+| --- | --- | --- | --- | --- |
+| `live` | `sh verify/run.sh live`: the first half of the flow (doctor, `docs pull`, publishing the test design and the LLD, the approval gates) against a real Jira and Confluence test project. [tests/e2e/README.md](../tests/e2e/README.md#the-live-run) has the settings | A request the real service refuses or reads in another way than the mock: a field name, the page tree, the search, the text of a ticket or a page, an account id, the address in a link | Jenkins, SonarQube and GitHub. The approvals by people and the sub-tasks, unless a person runs it with the lead accounts. It is never run in CI | 2 min |
+
 Three more layers are not commands. They are steps of the work:
 
 | # | Layer | Who | What it catches |
@@ -112,6 +118,23 @@ What the layers found in the code when they were first run: one real defect
 of the same kind (a path's parent or name taken without a check), two exceptions caught too
 widely, and 140 lint findings in the Python tests, 136 of them names that one test file gets
 from another. Real Maven and real Vitest confirmed the tool's answers in all 33 cases (20 with Maven, 13 with Vitest).
+
+When the `live` layer was added (2026-11-17), one fault was planted: a page published with a
+wrong field name for its parent page. **It was not noticed at first.** The parent page of the test
+bed was the top page of the space, and a page without a parent lands there too. Now each run makes
+its own parent page and asks for the direct parent; the fault then fails two checks, as it must.
+
+QE then planted five more in `live` (2026-11-17). Two were noticed on the real site and not by the
+mock: a page read in the wrong body format, and a ticket read without its description. Three showed
+holes, now closed:
+
+| Fault that was NOT noticed | What it showed | Done |
+| --- | --- | --- |
+| `JIRA_BASE_URL` of another site in the shell: the tool wrote there, and the doctor checks passed | The tool lets the shell win over `local.env`, and the run passed the shell on | The run takes `JIRA_*`, `CONFLUENCE_*`, `JENKINS_*` and `SONAR_*` out of the tool's environment. Run again with a wrong site and a wrong token in the shell: 17 of 17 on the right site |
+| `tasks create` failing for any other reason counted as "refused" | The check read the exit code only | It asks for the gate's own words and the approval line. Then FAIL, as it must |
+| A page link without the site in the bot's Jira comment | Nothing read the link | A check that the link names the site and the page. Then FAIL, as it must |
+| Round 2: `GIT_DIR` of another repository in the shell: the run committed there | The run passed the shell's git settings on | The run takes `GIT_*` out of the tool's environment |
+| Round 2: a link to another page id passed | The page id is in the approval line too | The check reads the link target itself |
 
 ## What the floors do and do not catch
 
