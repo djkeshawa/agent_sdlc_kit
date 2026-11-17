@@ -7,6 +7,7 @@ Normally started by run.py, which also starts mock.py. By hand:
 The build is a stand-in (tools/Build.java) so the test needs only a JDK, git and Python 3, no Maven."""
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,15 @@ from pathlib import Path
 TEMPLATE, WORK, PORT = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 HERE = Path(__file__).resolve().parent
 PROJ, ORIGIN = WORK / "payments", WORK / "origin.git"
+# Nothing of the caller's shell that names a repository, a site, a login or a proxy may reach git, the tool or
+# the fake gh: git obeys GIT_DIR (the flow would commit into that repository), the tool lets JIRA_*,
+# CONFLUENCE_*, JENKINS_* and SONAR_* win over .agent/local.env (it would talk to that site, not to the mock),
+# and the tool and urllib send even 127.0.0.1 through a *_proxy. Nor the base branch of a pull request build.
+# Taken out of os.environ itself, so that this process's own requests to the mock and the files it runs in its
+# namespace (vitest.py, multi.py) get the same environment, also when this file is started by hand.
+for _name in [k for k in os.environ if re.match(r"(?i)(GIT_|JIRA_|CONFLUENCE_|JENKINS_|SONAR_|\w*_PROXY$)", k)
+              or k in ("SDLC_BASE_BRANCH", "GITHUB_BASE_REF", "CHANGE_TARGET")]:
+    del os.environ[_name]
 ENV = dict(os.environ, PATH=str(HERE / "bin") + os.pathsep + os.environ["PATH"], MOCK_PORT=PORT,
            GIT_AUTHOR_NAME="Dev", GIT_AUTHOR_EMAIL="dev@acme.test", GIT_COMMITTER_NAME="Dev", GIT_COMMITTER_EMAIL="dev@acme.test")
 RESULTS = []

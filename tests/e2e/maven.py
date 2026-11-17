@@ -76,7 +76,8 @@ def main():
     if work.exists():
         shutil.rmtree(work)
     (work / "tmp").mkdir(parents=True)
-    env = {k: v for k, v in os.environ.items() if k not in ("SDLC_BASE_BRANCH", "GITHUB_BASE_REF", "CHANGE_TARGET")}
+    # not the base branch of a pull request build, and no GIT_* of the caller's shell: with a GIT_DIR, git would work in that repository
+    env = {k: v for k, v in os.environ.items() if k not in ("SDLC_BASE_BRANCH", "GITHUB_BASE_REF", "CHANGE_TARGET") and not k.upper().startswith("GIT_")}
 
     def git(d, *a):
         r = subprocess.run(["git", "-c", "user.name=probe", "-c", "user.email=probe@example.com", "-c", "commit.gpgsign=false",
