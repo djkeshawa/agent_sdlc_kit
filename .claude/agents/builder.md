@@ -8,7 +8,7 @@ hooks:
   Stop:
     - hooks:
         - type: command
-          command: "${CLAUDE_PROJECT_DIR}/.claude/hooks/builder-stop.sh"
+          command: '"${CLAUDE_PROJECT_DIR}/.claude/hooks/builder-stop.sh"'
           timeout: 600
 ---
 
