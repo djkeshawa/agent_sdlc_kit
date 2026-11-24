@@ -61,7 +61,8 @@ public final class Check {
             section(out, w, Kind.MOVED, n -> n + (n == 1 ? " test file moved" : " test files moved") + " (not counted)", true);
             long old = w.count(Kind.EXISTING_PASSES_ON_BOTH);
             String files = w.count(Kind.MOVED) > 0 ? "edited or moved files" : "edited files";
-            if (old > 0) out.println("  " + old + " test" + (old == 1 ? "" : "s") + " that " + (old == 1 ? "was" : "were") + " already in the " + files + " " + (old == 1 ? "passes" : "pass") + " before and after (not counted)");
+            if (old > 0) out.println("  " + old + " test" + (old == 1 ? "" : "s") + " that " + (old == 1 ? "was" : "were") + " already in the " + files + " " + (old == 1 ? "passes" : "pass") + " before and after (not counted)"
+                    + alone(w.verdicts().stream().filter(v -> v.kind() == Kind.EXISTING_PASSES_ON_BOTH).toList(), "; "));
             long off = w.count(Kind.EXISTING_SKIPPED);
             if (off > 0) out.println("  " + off + (off == 1 ? " test is skipped as before the change: the file skipped a test of its name before it too"
                     : " tests are skipped as before the change: the file skipped tests of their names before it too") + " (not counted)");
@@ -108,6 +109,18 @@ public final class Check {
 
     public static void order(int how) {
         SelfTestRunner.order = how;
+    }
+
+    // The self tests' clock of single runs: on, it moves only as the stand-in runner says its runs take.
+    public static void standInTime(boolean on) {
+        SelfTestRunner.now = 0;
+        Witness.clock = on ? () -> SelfTestRunner.now : System::nanoTime;
+    }
+
+    public static List<String> aloneRuns() {
+        List<String> out = new ArrayList<>(SelfTestRunner.aloneRuns);
+        SelfTestRunner.aloneRuns.clear();
+        return out;
     }
 
     public static String fourthCheckout(Change change) throws java.io.IOException {
@@ -161,7 +174,7 @@ public final class Check {
         List<String> commits = log.out().isBlank() ? List.of() : List.of(log.out().strip().split("\\R"));
         out.println("sdlc check --since " + opt.get("since") + ": " + commits.size() + " commit" + (commits.size() == 1 ? "" : "s") + " on this branch since " + window
                 + (commits.size() > max ? ", the newest " + max + " checked (--max N for more)" : ""));
-        long sensitive = 0, byError = 0, both = 0, unknown = 0, failing = 0, untested = 0, problems = 0, notRun = 0, takenAway = 0;
+        long sensitive = 0, byError = 0, both = 0, unknown = 0, failing = 0, untested = 0, problems = 0, notRun = 0, takenAway = 0, single = 0;
         java.util.Set<Kind> least = java.util.EnumSet.noneOf(Kind.class);
         int checked = 0;
         for (String line : commits) {
@@ -187,11 +200,12 @@ public final class Check {
                 part(parts, w, Kind.NOT_RUN_NOW, "ran before, do not run after");
                 part(parts, w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE), "could not be judged");
                 part(parts, w, Kind.SKIPPED, "skipped");
-                out.println("    tests: " + (parts.isEmpty() ? onlyOld(w) : String.join("; ", parts)));
+                out.println("    tests: " + (parts.isEmpty() ? onlyOld(w) + alone(w.verdicts().stream().filter(v -> v.kind() == Kind.EXISTING_PASSES_ON_BOTH).toList(), "; ")
+                        : String.join("; ", parts) + alone(w.verdicts().stream().filter(v -> DIGEST.contains(v.kind())).toList(), "; ")));
                 for (Verdict v : w.verdicts()) {
-                    String which = v.file() + "  " + (v.name().isEmpty() ? v.detail() : v.name());
+                    String which = v.file() + "  " + (v.name().isEmpty() ? v.detail() : v.name() + alone(List.of(v), " ("));
                     if (v.kind() == Kind.PASSES_ON_BOTH) out.println("        does not test the change: " + which);
-                    else if (v.kind() == Kind.SENSITIVE_BY_ERROR) out.println("        fails before by an exception, passes after: " + which + ": " + v.detail());
+                    else if (v.kind() == Kind.SENSITIVE_BY_ERROR) out.println("        fails before by an exception, passes after: " + which + ": " + v.bare());
                     else if (v.kind() == Kind.NOT_RUN_NOW) out.println("        ran before, do not run after: " + which);
                     else if (v.kind() == Kind.OLD_FAILS_AFTER) out.println("        passed before, fails as it was after, taken out: " + which);
                     else if (v.kind() == Kind.MOVED) out.println("        moved, not counted: " + which);
@@ -202,6 +216,7 @@ public final class Check {
                 both += w.count(Kind.PASSES_ON_BOTH);
                 failing += w.count(Kind.FAILS_AFTER);
                 unknown += w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE);
+                single += w.verdicts().stream().filter(v -> DIGEST.contains(v.kind()) && v.alone() > 0).mapToLong(Verdict::tests).sum();
                 notRun += w.count(Kind.NOT_RUN_NOW);
                 takenAway += w.count(Kind.OLD_FAILS_AFTER);
             }
@@ -225,6 +240,8 @@ public final class Check {
                     + " not run after it");
             out.println("  " + (least.contains(Kind.OLD_FAILS_AFTER) ? "at least " : "") + takenAway + (takenAway == 1 ? " test passed before its commit, fails on it as it was, and was" : " tests passed before their commit, fail on it as they were, and were")
                     + " taken out of the way");
+            if (single > 0) out.println("  " + single + " of the tests counted above ran alone on both sides, as before their commit the run of their test file did not end within "
+                    + timeout + " s");
             out.println("  " + untested + " commit" + (untested == 1 ? "" : "s") + " add or edit no test this version can run");
             out.println("  " + problems + " integrity problem" + (problems == 1 ? "" : "s"));
         }
@@ -251,7 +268,7 @@ public final class Check {
             if (v.kind() == Kind.FAILS_AFTER) reasons.add("fails: " + test + (v.detail().isBlank() ? "" : " (" + v.detail() + ")"));
             else if (v.kind() == Kind.OLD_FAILS_AFTER) reasons.add("passed before your change, fails on your code as it was, and your change took it out of the way: " + test + " (" + v.detail() + ")");
             else if (v.kind() == Kind.PASSES_ON_BOTH) reasons.add(whole ? "new tests pass with and without your change, so they do not test it: " + file
-                    : "passes with and without your change, so it does not test it: " + test);
+                    : "passes with and without your change, so it does not test it: " + test + alone(List.of(v), " ("));
             else if (v.kind() == Kind.NOT_RUN_NOW) reasons.add("tests that ran before your change do not run now: " + file);
         }
         for (Finding f : Integrity.scan(change)) if (f.level() == Finding.Level.PROBLEM) reasons.add(f.kind() + ": " + f.path() + (f.detail().isBlank() ? "" : " (" + f.detail().strip() + ")"));
@@ -280,6 +297,16 @@ public final class Check {
             Thread.currentThread().interrupt();
         }
         return text[0];
+    }
+
+    // the kinds the digest line of --since counts
+    private static final java.util.Set<Kind> DIGEST = java.util.EnumSet.of(Kind.SENSITIVE, Kind.SENSITIVE_BY_ERROR, Kind.PASSES_ON_BOTH, Kind.FAILS_AFTER, Kind.OLD_FAILS_AFTER,
+            Kind.NOT_RUN_NOW, Kind.UNKNOWN, Kind.UNSTABLE, Kind.SKIPPED);
+
+    // How many of these verdicts' tests ran alone on both sides, and why, after the given lead ("; " or " (", which then closes); "" when none did.
+    static String alone(List<Verdict> said, String lead) {
+        String s = Witness.aloneSaid(said);
+        return s == null ? "" : lead + s + (lead.equals(" (") ? ")" : "");
     }
 
     private static String onlyOld(Witness.Result w) {
@@ -321,7 +348,7 @@ public final class Check {
             out.println("      " + e.getKey() + "  [" + e.getValue().get(0).runner() + "]");
             for (Verdict v : e.getValue()) {
                 String name = v.name().isEmpty() ? "" : v.name();
-                String detail = (withDetail || name.isEmpty()) && !v.detail().isBlank() ? (name.isEmpty() ? "" : ": ") + v.detail() : "";
+                String detail = (withDetail || name.isEmpty() || v.alone() > 0) && !v.detail().isBlank() ? (name.isEmpty() ? "" : ": ") + v.detail() : "";
                 if (!name.isEmpty() || !detail.isEmpty()) out.println("        " + name + detail);
             }
         }

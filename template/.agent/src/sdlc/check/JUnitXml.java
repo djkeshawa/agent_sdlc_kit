@@ -17,7 +17,8 @@ import org.w3c.dom.NodeList;
 public final class JUnitXml {
     private JUnitXml() {}
 
-    public enum Status { PASSED, FAILED, ERRORED, SKIPPED }
+    // NO_RESULT is never read from a report: it is a test whose run on that side did not end or was not made, with the reason as its message.
+    public enum Status { PASSED, FAILED, ERRORED, SKIPPED, NO_RESULT }
 
     private static final long MAX_BYTES = 50L * 1024 * 1024;
 

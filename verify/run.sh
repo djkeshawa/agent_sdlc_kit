@@ -347,8 +347,18 @@ maven_path() {
 # another home). Offline first: Maven asks the network about every plugin on each run, which takes
 # most of a minute through a container. Only when Maven says it lacks something offline is the run
 # made again online.
+# A kill of this script or of the docker client does not reach the container: a watcher that is not
+# a child of this script (so a kill of the script and its children does not take it) ends the
+# containers once this script is gone. It starts before any redirection, so that it holds no copy
+# of this script's output. The containers carry the label of this checkout's work folder.
+( (
+  while kill -0 \$\$ 2>/dev/null; do sleep 1; done
+  for i in 1 2 3 4 5; do docker kill sdlc-verify-\$\$-1 sdlc-verify-\$\$-2 >/dev/null 2>&1; sleep 2; done
+) </dev/null >/dev/null 2>&1 & )
+n=0
 run() {
-  docker run --rm -u "\$(id -u):\$(id -g)" -e HOME=/tmp/home -v "$cache/m2/repository:/m2" -v "$work/bin/settings.xml:/settings.xml:ro" -v "\$PWD:\$PWD" -w "\$PWD" \\
+  n=\$((n + 1))
+  docker run --rm --name "sdlc-verify-\$\$-\$n" --label "sdlc-verify=$work" -u "\$(id -u):\$(id -g)" -e HOME=/tmp/home -v "$cache/m2/repository:/m2" -v "$work/bin/settings.xml:/settings.xml:ro" -v "\$PWD:\$PWD" -w "\$PWD" \\
     --entrypoint mvn $maven_image -Dmaven.repo.local=/m2 -s /settings.xml "\$@"
 }
 out=\$(mktemp)
@@ -383,7 +393,9 @@ layer_real() {
     */*) PATH=$(cd "$(dirname "$java")" && pwd):$PATH; export PATH ;;
   esac
   if path=$(maven_path); then
-    PATH=$path python3 "$repo/tests/e2e/maven.py" "$work/build" "$work/maven" >> "$log" 2>&1 || bad="$bad maven"
+    # with Maven in a container, maven.py checks that no container of this run outlives a run that was killed
+    if command -v mvn >/dev/null 2>&1; then label=; else label="sdlc-verify=$work"; fi
+    PATH=$path SDLC_VERIFY_LABEL=$label python3 "$repo/tests/e2e/maven.py" "$work/build" "$work/maven" >> "$log" 2>&1 || bad="$bad maven"
     said="$said $(grep 'real-Maven checks passed' "$log" | tail -1);"
   else
     not="$not maven(mvn on the PATH, or Docker running)"

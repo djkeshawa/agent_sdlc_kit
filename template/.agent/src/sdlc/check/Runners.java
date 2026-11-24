@@ -85,6 +85,20 @@ public final class Runners {
         return tail(text, 2).replaceAll("\\s+", " ");
     }
 
+    private static final Pattern JAVA_CLASS = Pattern.compile("[\\p{L}\\p{N}_$]+(\\.[\\p{L}\\p{N}_$]+)*"), JAVA_METHOD = Pattern.compile("[\\p{L}\\p{N}_$]+");
+
+    // Surefire reports a method by its name, then its parameters or its run in brackets; a nested class is a class of its own.
+    static Runner.Alone javaAlone(String cls, JUnitXml.Case c) {
+        String suite = c.suite(), name = c.name();
+        if (!suite.equals(cls) && !suite.startsWith(cls + "$")) return new Runner.Alone(null, "it is reported under the class " + suite + ", which is not the file's class or one nested in it");
+        int cut = name.length();
+        for (char x : new char[] {'(', '['}) if (name.indexOf(x) >= 0) cut = Math.min(cut, name.indexOf(x));
+        String method = name.substring(0, cut);
+        if (method.isEmpty()) return new Runner.Alone(null, "its reported name " + (name.isEmpty() ? "is empty" : "does not begin with the name of a method") + ", so it names no method");
+        if (!JAVA_CLASS.matcher(suite).matches() || !JAVA_METHOD.matcher(method).matches()) return new Runner.Alone(null, "its class or method name has characters that cannot be passed to Maven safely");
+        return new Runner.Alone(suite + "#" + method, null);
+    }
+
     private static final Pattern PLAIN = Pattern.compile("[\\p{L}\\p{N}_$.][\\p{L}\\p{N}_$./-]*");
 
     // Vitest's junit reporter writes every thrown error as a failure element: only an assertion error is a failure.
@@ -148,7 +162,27 @@ public final class Runners {
         }
 
         @Override
+        public boolean runsAlone() {
+            return true;
+        }
+
+        @Override
+        public Alone alone(String file, JUnitXml.Case c) {
+            return javaAlone(className(file), c);
+        }
+
+        @Override
+        public FileRun runAlone(Path checkout, String file, String filter, int timeoutSeconds) {
+            FileRun r = run(checkout, List.of(file), timeoutSeconds, filter).get(file);
+            return r == null ? FileRun.failed("gave no result") : r;
+        }
+
+        @Override
         public Map<String, FileRun> run(Path checkout, List<String> files, int timeoutSeconds) {
+            return run(checkout, files, timeoutSeconds, null);
+        }
+
+        private Map<String, FileRun> run(Path checkout, List<String> files, int timeoutSeconds, String filter) {
             Map<String, FileRun> out = new LinkedHashMap<>();
             Map<String, List<String>> byModule = new LinkedHashMap<>();
             for (String f : files) {
@@ -173,7 +207,8 @@ public final class Runners {
                     continue;
                 }
                 List<String> cmd = new ArrayList<>(launcher);
-                cmd.addAll(List.of("-B", "-q", "-ntp", "-Dtest=" + String.join(",", m.getValue().stream().map(Maven::className).toList()),
+                String tests = filter != null ? filter : String.join(",", m.getValue().stream().map(Maven::className).toList());
+                cmd.addAll(List.of("-B", "-q", "-ntp", "-Dtest=" + tests,
                         "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false"));
                 if (!within.isEmpty()) cmd.addAll(List.of("-pl", within, "-am"));
                 cmd.add("test");
@@ -185,7 +220,7 @@ public final class Runners {
                 List<JUnitXml.Case> cases = new ArrayList<>();
                 String unreadable = null;
                 if (p.code() == 124) {
-                    for (String f : m.getValue()) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
+                    for (String f : m.getValue()) out.put(f, FileRun.timedOut(timeoutSeconds));
                     continue;
                 }
                 if (Files.exists(reports) && !inside(checkout, reports)) unreadable = "the report folder is a link out of the checkout";
@@ -204,7 +239,6 @@ public final class Runners {
                     List<JUnitXml.Case> mine = cases.stream().filter(c -> c.suite().equals(cls) || c.suite().startsWith(cls + "$")).map(Runners::assertionOrError).toList();
                     if (!mine.isEmpty()) out.put(f, new FileRun(mine, null));
                     else if (unreadable != null) out.put(f, FileRun.failed("its report cannot be read (" + unreadable + ")"));
-                    else if (p.code() == 124) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
                     else if (doesNotCompile.get()) out.put(f, FileRun.broken(Witness.DOES_NOT_COMPILE));
                     else if (p.code() == 127) out.put(f, FileRun.failed("Maven could not be started (" + tail(text, 1) + ")"));
                     else if (p.code() == 0) out.put(f, new FileRun(List.of(), null));
@@ -652,7 +686,7 @@ public final class Runners {
                     List<JUnitXml.Case> cases = new ArrayList<>();
                     String unreadable = null;
                     if (p.code() == 124) {
-                        for (String f : e.getValue()) out.put(f, FileRun.failed("timed out after " + timeoutSeconds + " s"));
+                        for (String f : e.getValue()) out.put(f, FileRun.timedOut(timeoutSeconds));
                         continue;
                     }
                     try {
