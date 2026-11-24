@@ -2501,7 +2501,10 @@ final class CheckTests {
         } finally {
             Check.standInTime(false);
             try (Stream<Path> s = Files.walk(repo)) {
-                for (Path x : s.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(x);
+                for (Path x : s.sorted(Comparator.reverseOrder()).toList()) {
+                    x.toFile().setWritable(true);
+                    Files.deleteIfExists(x);
+                }
             }
         }
     }

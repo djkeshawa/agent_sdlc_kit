@@ -253,7 +253,7 @@ def main():
 
     hangs(shape, said)
     label = os.environ.get("SDLC_VERIFY_LABEL", "")
-    if label and not only or only and only.startswith("hang"):
+    if label and (not only or only.startswith("hang")):
         alive = containers(label)
         check("real maven: no container of this run is alive after the runs the check stopped at their time bound", label and not alive,
               "no label of this run's containers was given" if not label else "still running: " + " ".join(alive))
