@@ -313,6 +313,70 @@ it (Surefire's `skipAfterFailureCount`). The run before the change (the new file
 is not counted so: there a failure is what a sensitive test does, a test it does not list could
 not be judged, and no count is taken from it.
 
+### When the run before the change does not end
+
+When the run before the change of a Maven module stops at the time bound (`--timeout`), the check
+does not leave its test files at "timed out". For each of them it takes the tests the file reports
+after the change and runs them again one method at a time (`-Dtest=Class#method`): first after the
+change, then before it. A `@Nested` class is a class of its own. The test files run beside the one
+that hangs are treated the same way, as the run stopped for all of them.
+
+A test is judged only when both single runs of its method ended with a report that names it, and
+alone after the change it gave the result it gave with its file. Then the usual rules judge it from
+the single run before the change and the runs after it, and its line says that it ran alone on both
+sides and why. So do the other lines that speak of such tests: the line of the tests that were
+already in the edited files says how many of them ran alone; with `--since`, the "tests:" line of
+the commit (also where it names only tests that were already there), the line of each test that
+does not test the change, and a line of the summary that says how many of the tests it counts ran
+alone; the stop hook's reason for a test that passes with and without the change; and with
+`--mandate`, the line of the change's own tests, the line of each test that fails before and passes
+after, and the line of each test that passes before and after. Every other test of such a file
+could not be judged, and its line says what was seen: the single run before the change did not end
+within its bound; a single run reported no test, or none of that name, or gave no result (with what
+the build said); alone after the change it gave another result than with its file; its name names
+no method of the file's class, or has characters that cannot be passed to Maven safely; or the time
+for single runs was used up first.
+
+The bounds. A single run after the change may take `--timeout` seconds. A single run before the
+change may take ten times what the same single run took after it, at least 60 s, and never more
+than `--timeout`. All single runs of one check together may take `--timeout` seconds, and the bound
+of each run is cut to what is left; the last single run to start can pass that total by the time
+the build tool needs to start and the time it takes to stop the run. The shared time covers every
+repeat of `--runs N`, so a later repeat can find it used up, and its tests then could not be
+judged. With `--since`, each commit has a shared time of its own. The two single runs of a method
+are made one after the other, before the next method starts. With `--runs N`, a file with a test
+that looks sensitive gets its single runs again in each repeat; the run that did not end is not
+repeated. A single run that ends in one repeat and not in another is said so.
+
+Never run alone: a time-out of the run after the change, of the file as it was, of the fourth run,
+of the runs `--mandate` makes of its scenarios and of what must stay true, or of a file run alone
+because it does not compile beside the others; a file whose run after the change gave no result or
+reported no test; and Vitest. These are said as before: the file timed out.
+
+What this changes: where a hanging test file gave only "could not be judged", the check can now
+give verdicts. A new test that passes on both sides fails the check, as it does without a time-out.
+Where no run before the change stops at the time bound, nothing changes.
+
+Its limits:
+
+- The rows of a parameterized test, the tests of one factory and the methods of one name run
+  together: one of them that hangs leaves all of them unjudged.
+- A hang in `@BeforeAll` or `@BeforeClass` makes every method of the class hang alone too.
+- A test that needs another test of its file to run first fails alone: it could not be judged.
+- A single run shows what a test does alone. Only after the change can the check compare a test
+  alone with the test beside its file. Before the change the run with its file did not end, so a
+  test that would give another result beside its file than alone (shared state, the order of
+  the tests) is judged by what it did alone. The real shape `hang-runs-2` of
+  `tests/e2e/maven.py` is such a case: its two tests call code that hangs when it is called a
+  second time in one test run. Beside each other they hang before the change; alone, each of
+  them fails before the change, and both are judged to fail before and pass after.
+- Each method that hangs before the change costs a single run up to its bound. The tests after it
+  may not be reached.
+- The check stops a run at its bound by killing the process it started and that process's
+  children. A launcher that does not end its build when it is killed (one that starts the build
+  in a container, for instance) can leave the old run alive, and a single run can then read what
+  the old run writes into the same folder.
+
 **What a good result does not mean.** The tests and the code come from the same author. A test
 that fails before and passes after shows the test notices the change. It is not evidence that
 the change is correct.

@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 RESULTS = []
@@ -84,7 +85,7 @@ def main():
                             "-c", "core.hooksPath=/dev/null", *a], cwd=d, capture_output=True, text=True, env=env)
         assert r.returncode == 0, r.stderr
 
-    def shape(name, base, change, surefire="", runs="1", pom=None):
+    def shape(name, base, change, surefire="", runs="1", pom=None, timeout=None):
         """base and change: per file its text; None in change deletes the file. Returns None when --only names another shape."""
         if only and only != name:
             return None
@@ -104,8 +105,8 @@ def main():
                 continue
             (d / f).parent.mkdir(parents=True, exist_ok=True)
             (d / f).write_text(t)
-        r = subprocess.run(["java", "-Djava.io.tmpdir=" + str(work / "tmp"), "-cp", str(build), "sdlc.Main", "check", "--base", "main", "--runs", runs],
-                           cwd=d, capture_output=True, text=True, env=env, timeout=3600)
+        r = subprocess.run(["java", "-Djava.io.tmpdir=" + str(work / "tmp"), "-cp", str(build), "sdlc.Main", "check", "--base", "main", "--runs", runs]
+                           + (["--timeout", str(timeout)] if timeout else []), cwd=d, capture_output=True, text=True, env=env, timeout=3600)
         out = r.stdout + r.stderr
         if show:
             print("=== %s (exit %d)\n%s" % (name, r.returncode, out), flush=True)
@@ -128,8 +129,8 @@ def main():
         got, body = result
         missing = [t for t in has if t not in body]
         present = [t for t in list(lacks) + (list(NOT_RUN) if ran else []) if t in body]
-        check("real maven: " + name, got == code and not missing and not present,
-              "exit %d, expected %d%s%s\n%s" % (got, code, "; missing: %r" % missing if missing else "", "; must not be there: %r" % present if present else "", body))
+        check("real maven: " + name, (code is None or got == code) and not missing and not present,
+              "exit %d, expected %s%s%s\n%s" % (got, "either" if code is None else code, "; missing: %r" % missing if missing else "", "; must not be there: %r" % present if present else "", body))
 
     FILE = "      src/test/java/demo/CalcTest.java  [Maven Surefire]\n"
     QUIET = ("could not be judged", "from run to run", "not run now", "new test")
@@ -250,9 +251,130 @@ def main():
          "a test in a module of a multi-module build is run through the build's root, and is sensitive", 0,
          ["  1 fails before the change and passes after it\n      core/src/test/java/demo/CalcTest.java  [Maven Surefire]\n        halves\n"], QUIET)
 
+    hangs(shape, said)
+    label = os.environ.get("SDLC_VERIFY_LABEL", "")
+    if label and (not only or only.startswith("hang")):
+        alive = containers(label)
+        check("real maven: no container of this run is alive after the runs the check stopped at their time bound", label and not alive,
+              "no label of this run's containers was given" if not label else "still running: " + " ".join(alive))
+
     passed = sum(1 for _, ok in RESULTS if ok)
     print("\n%d/%d real-Maven checks passed" % (passed, len(RESULTS)))
     sys.exit(0 if passed == len(RESULTS) else 1)
+
+
+def containers(label):
+    """The containers of this run that are still running, after a grace of up to 20 s for a watcher to end them."""
+    for _ in range(20):
+        r = subprocess.run(["docker", "ps", "-q", "--filter", "label=" + label], capture_output=True, text=True)
+        if r.returncode == 0 and not r.stdout.split():
+            return []
+        time.sleep(1)
+    return r.stdout.split() or ["(docker ps failed: %s)" % r.stderr.strip()]
+
+
+# Before the change, locked() deadlocks on two monitors (an interrupt does not end it) and once() deadlocks when it is called a second
+# time in a test JVM; items() is empty. After the change none of them hangs.
+HANG_MAIN = """package demo;
+public class Calc {
+    private static int calls;
+    public static int half(int n) { return n / %s; }
+    public static int locked() {
+%s    }
+    public static int once() { return ++calls > 1 ? locked() : 1; }
+    public static java.util.List<Integer> items() { return java.util.List.of(%s); }
+    static void pause() { try { Thread.sleep(300); } catch (InterruptedException e) { } }
+}
+"""
+DEADLOCK = """        Object a = new Object(), b = new Object();
+        Thread t = new Thread(() -> { synchronized (b) { pause(); synchronized (a) { } } });
+        t.setDaemon(true);
+        synchronized (a) { t.start(); pause(); synchronized (b) { } }
+        return 1;
+"""
+HUNG = HANG_MAIN % ("3", DEADLOCK, "")
+MENDED = HANG_MAIN % ("2", "        return 1;\n", "1, 2")
+J4H = "package demo;\nimport org.junit.*;\nimport static org.junit.Assert.*;\n"
+
+
+def hangs(shape, said):
+    """A run before the change that does not end: its tests are run alone, one method at a time, on both sides."""
+    hang, side = "src/test/java/demo/HangTest.java", "src/test/java/demo/SideTest.java"
+    files = "      %s  [Maven Surefire]\n" % hang, "      %s  [Maven Surefire]\n" % side
+
+    def alone(s):
+        return ": ran alone on both sides, as before the change its file did not end within %d s\n" % s
+
+    def was(s):
+        return ": before the change the file timed out after %d s; " % s
+
+    j5h = J5 + "class HangTest {\n%s}\n"
+    j5s = J5 + "class SideTest {\n%s}\n"
+    zero5 = "    @Test void zero() { assertEquals(0, Calc.half(0)); }\n"
+    more5 = zero5 + ("    @Test void halves() { assertEquals(2, Calc.half(4)); }\n    @Test void idle() { assertTrue(true); }\n"
+                     "    @Test void locks() { assertEquals(1, Calc.locked()); }\n")
+    side5 = "    @Test void sideZero() { assertEquals(0, Calc.half(0)); }\n"
+    j4h = J4H + "public class HangTest {\n%s}\n"
+    j4s = J4H + "public class SideTest {\n%s}\n"
+    zero4 = "    @Test public void zero() { assertEquals(0, Calc.half(0)); }\n"
+    more4 = zero4 + ("    @Test public void halves() { assertEquals(2, Calc.half(4)); }\n    @Test public void idle() { assertTrue(true); }\n"
+                     "    @Test public void locks() { assertEquals(1, Calc.locked()); }\n")
+    side4 = "    @Test public void sideZero() { assertEquals(0, Calc.half(0)); }\n"
+    for name, h, s, zero, more, sidez, sideh in (
+            ("hang5", j5h, j5s, zero5, more5, side5, "    @Test void sideHalves() { assertEquals(3, Calc.half(6)); }\n"),
+            ("hang4", j4h, j4s, zero4, more4, side4, "    @Test public void sideHalves() { assertEquals(3, Calc.half(6)); }\n")):
+        said(shape(name, {MAIN: HUNG, hang: h % zero, side: s % sidez}, {MAIN: MENDED, hang: h % more, side: s % (sidez + sideh)}, timeout=150),
+             name + ": the run before the change does not end; each test of the file, and of the file run beside it, is run alone on both sides: the fix's tests "
+             "are sensitive, a new test that passes on both sides fails the check, the test that hangs could not be judged with its bound", 1,
+             ["  2 fail before the change and pass after it\n" + files[0] + "        halves" + alone(150) + files[1] + "        sideHalves" + alone(150),
+              "the file reports 3 tests it did not have, and 1 of its tests does not pass on both sides, and 1 of its tests has no result before the change: at least 1 new test passes before and after. "
+              "Under names the file did not have, 1 passes before and after (idle)",
+              "  1 could not be judged\n" + files[0] + "        locks" + was(150) + "run alone (demo.HangTest#locks), it did not end before the change within 60 s\n",
+              "  2 tests that were already in the edited files pass before and after (not counted); of them, 2 ran alone on both sides, as before the change "
+              "their test files did not end within 150 s\n"],
+             ["fails after", "not run now", "from run to run", "used up"], ran=False)
+
+    kinds = J5 + "class KindsTest {\n%s}\n"
+    rows = "    @ParameterizedTest @ValueSource(ints = {0, 4, 9}) void rows(int n) { assertEquals(n == 9 ? 1 : n, n == 9 ? Calc.locked() : Calc.half(n) * 2); }\n"
+    nested = "    @Nested class Inner {\n        @Test void four() { assertEquals(2, Calc.half(4)); }\n    }\n"
+    made = ("    @TestFactory java.util.List<DynamicTest> made() {\n        return Calc.items().stream().map(i -> DynamicTest.dynamicTest(\"item \" + i, () -> assertTrue(i > 0))).toList();\n"
+            "    }\n")
+    order = (J5 + "@TestMethodOrder(MethodOrderer.OrderAnnotation.class)\nclass OrderTest {\n    static boolean firstRan;\n"
+             "    @Test @Order(1) void first() { firstRan = true; assertEquals(2, Calc.half(4)); }\n"
+             "    @Test @Order(2) void second() { assertTrue(firstRan, \"first must run before\"); }\n}\n")
+    kfile, ofile = "      src/test/java/demo/KindsTest.java  [Maven Surefire]\n", "      src/test/java/demo/OrderTest.java  [Maven Surefire]\n"
+    said(shape("hang-kinds", {MAIN: HUNG}, {MAIN: MENDED, "src/test/java/demo/KindsTest.java": kinds % (rows + nested + made), "src/test/java/demo/OrderTest.java": order},
+               timeout=150),
+         "hang-kinds: rows of one method run together, so one row that hangs leaves every row of it unjudged; a nested class is run as a class of its own; "
+         "a test that needs another test of its file before it could not be judged, never said to fail before; a single run that reports no test could not be judged", 0,
+         ["  2 fail before the change and pass after it\n" + kfile + "        four" + alone(150) + ofile + "        first" + alone(150),
+          "        rows(int)[3]" + was(150) + "run alone (demo.KindsTest#rows), it did not end before the change within 60 s\n",
+          "        rows(int)[1]" + was(150) + "run alone (demo.KindsTest#rows), it did not end before the change within 60 s\n",
+          "        second" + was(150) + "run alone after the change it failed, and with its file it passed\n",
+          "        made()[1]" + was(150) + "run alone before the change, it reported no test"],
+         ["second: fails", "fails after", "not run now", "used up", "new test passes"], ran=False)
+
+    setup = J5 + "class SetupTest {\n    @BeforeAll static void ready() { Calc.locked(); }\n    @Test void a() { assertEquals(2, Calc.half(4)); }\n    @Test void b() { assertTrue(true); }\n}\n"
+    sfile = "      src/test/java/demo/SetupTest.java  [Maven Surefire]\n"
+    said(shape("hang-before-all", {MAIN: HUNG}, {MAIN: MENDED, "src/test/java/demo/SetupTest.java": setup}, timeout=70),
+         "hang-before-all: a set-up that hangs makes every method of its class hang alone too: none is judged", 0,
+         ["  2 could not be judged\n" + sfile + "        a" + was(70) + "run alone (demo.SetupTest#a), it did not end before the change within 60 s\n", "        b" + was(70)],
+         ["fails before", "new test passes", "ran alone on both sides"], ran=False)
+
+    said(shape("hang-used-up", {MAIN: HUNG, hang: j5h % zero5, side: j5s % side5}, {MAIN: MENDED, hang: j5h % more5, side: j5s % (side5 + "    @Test void sideHalves() { assertEquals(3, Calc.half(6)); }\n")},
+               timeout=15),
+         "hang-used-up: what the shared time of the single runs does not reach stays as without them, with the reason", None,
+         ["        sideZero" + was(15) + "it was not run alone, as the time for single runs was used up\n",
+          "        sideHalves" + was(15) + "it was not run alone, as the time for single runs was used up\n"],
+         ["sideHalves" + alone(15), "fails after", "not run now"], ran=False)
+
+    once = J5 + "class OnceTest {\n%s}\n"
+    twice = ("    @Test void halves() { Calc.once(); assertEquals(2, Calc.half(4)); }\n"
+             "    @Test void sixes() { Calc.once(); assertEquals(3, Calc.half(6)); }\n")
+    said(shape("hang-runs-2", {MAIN: HUNG}, {MAIN: MENDED, "src/test/java/demo/OnceTest.java": once % twice}, runs="2", timeout=40),
+         "hang-runs-2: with --runs 2, the single runs are made again, not the run that did not end, and the tests are sensitive in 2 of 2 runs", 0,
+         ["  2 fail before the change and pass after it, in 2 of 2 runs\n      src/test/java/demo/OnceTest.java  [Maven Surefire]\n        halves" + alone(40) + "        sixes" + alone(40)],
+         ["could not be judged", "from run to run"], ran=False)
 
 
 if __name__ == "__main__":

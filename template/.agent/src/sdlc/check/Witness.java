@@ -29,7 +29,17 @@ final class Witness {
         MOVED
     }
 
-    record Verdict(String file, String name, Kind kind, String detail, String runner, int tests, boolean newCode, Cover cover) {
+    // alone: judged from single runs on both sides, as its file did not end before the change within these seconds (0: not); the detail says so and
+    // is always printed. bare: the detail without that note.
+    record Verdict(String file, String name, Kind kind, String detail, String runner, int tests, boolean newCode, Cover cover, int alone, String bare) {
+        Verdict(String file, String name, Kind kind, String detail, String runner, int tests, boolean newCode, Cover cover, int alone) {
+            this(file, name, kind, detail, runner, tests, newCode, cover, alone, detail);
+        }
+
+        Verdict(String file, String name, Kind kind, String detail, String runner, int tests, boolean newCode, Cover cover) {
+            this(file, name, kind, detail, runner, tests, newCode, cover, 0);
+        }
+
         Verdict(String file, String name, Kind kind, String detail, String runner, Cover cover) {
             this(file, name, kind, detail, runner, 1, false, cover);
         }
@@ -43,7 +53,16 @@ final class Witness {
         }
 
         Verdict with(Cover c) {
-            return new Verdict(file, name, kind, detail, runner, tests, newCode, c);
+            return new Verdict(file, name, kind, detail, runner, tests, newCode, c, alone, bare);
+        }
+
+        Verdict aloneBecause(int seconds, String lead) {
+            String why = lead + aloneWords(seconds);
+            return new Verdict(file, name, kind, detail.isEmpty() ? why : detail + "; " + why, runner, tests, newCode, cover, seconds, bare);
+        }
+
+        Verdict aloneBecause(int seconds) {
+            return seconds == 0 ? this : aloneBecause(seconds, "");
         }
 
         boolean atLeast() {
@@ -102,6 +121,21 @@ final class Witness {
 
     static Set<String> muted = Set.of();
 
+    static String aloneWords(int seconds) {
+        return "ran alone on both sides, as before the change its file did not end within " + seconds + " s";
+    }
+
+    // Of the tests these verdicts speak of, how many were judged from single runs, and why; null when none was.
+    static String aloneSaid(Collection<Verdict> said) {
+        List<Verdict> alone = said.stream().filter(v -> v.alone() > 0).toList();
+        if (alone.isEmpty()) return null;
+        long n = alone.stream().mapToLong(Verdict::tests).sum(), all = said.stream().mapToLong(Verdict::tests).sum();
+        long files = alone.stream().map(Verdict::file).distinct().count();
+        int seconds = alone.stream().mapToInt(Verdict::alone).max().orElse(0);
+        String file = files > 1 ? "their test files" : n == 1 ? "its test file" : "their test file";
+        return (all == 1 ? "it ran" : "of them, " + n + " ran") + " alone on both sides, as before the change " + file + " did not end within " + seconds + " s";
+    }
+
     static Result run(Change change, List<Runner> runners, int runs, int timeoutSeconds) {
         try (Sides sides = new Sides(change, runners)) {
             return run(change, runners, runs, timeoutSeconds, sides);
@@ -109,6 +143,7 @@ final class Witness {
     }
 
     static Result run(Change change, List<Runner> runners, int runs, int timeoutSeconds, Sides sides) {
+        Budget budget = new Budget(timeoutSeconds);
         List<Verdict> verdicts = new ArrayList<>();
         List<String> unsupported = new ArrayList<>();
         Scratch head = sides.head();
@@ -123,7 +158,7 @@ final class Witness {
         Set<String> edited = new LinkedHashSet<>(change.paths("M"));
         Map<String, Integrity.Move> moved = moved(change, owned, sides);
         for (Map.Entry<Runner, List<String>> e : owned.entrySet()) {
-            verdicts.addAll(judge(change, e.getKey(), e.getValue(), edited, moved, sides, Math.max(1, runs), timeoutSeconds));
+            verdicts.addAll(judge(change, e.getKey(), e.getValue(), edited, moved, sides, Math.max(1, runs), timeoutSeconds, budget));
         }
         return new Result(verdicts, unsupported, Math.max(1, runs));
     }
@@ -186,13 +221,13 @@ final class Witness {
         Map<String, FileRun> out = new LinkedHashMap<>();
         for (Map.Entry<String, FileRun> e : runner.run(dir, files, timeout).entrySet()) {
             FileRun r = e.getValue();
-            out.put(e.getKey(), r == null ? null : new FileRun(r.cases().stream().sorted(ORDER).toList(), r.problem(), r.broken(), r.retriesUnknown()));
+            out.put(e.getKey(), r == null ? null : new FileRun(r.cases().stream().sorted(ORDER).toList(), r.problem(), r.broken(), r.retriesUnknown(), r.timedOut(), r.alone()));
         }
         return out;
     }
 
     enum Out {
-        PASSED("passed"), RETRIED("passed only when the build ran it again"), FAILED("failed"), ERRORED("threw"), SKIPPED("skipped");
+        PASSED("passed"), RETRIED("passed only when the build ran it again"), FAILED("failed"), ERRORED("threw"), SKIPPED("skipped"), NO_RESULT("gave no result");
 
         final String word;
 
@@ -207,6 +242,7 @@ final class Witness {
             case FAILED -> Out.FAILED;
             case ERRORED -> Out.ERRORED;
             case SKIPPED -> Out.SKIPPED;
+            case NO_RESULT -> Out.NO_RESULT;
         };
     }
 
@@ -250,11 +286,21 @@ final class Witness {
         return muted.contains(rule);
     }
 
-    private static List<Verdict> judge(Change change, Runner runner, List<String> files, Set<String> edited, Map<String, Integrity.Move> moved, Sides sides, int runs, int timeout) {
+    private static List<Verdict> judge(Change change, Runner runner, List<String> files, Set<String> edited, Map<String, Integrity.Move> moved, Sides sides, int runs, int timeout,
+            Budget budget) {
         String by = runner.name();
         Scratch head = sides.head(), base = sides.base();
         Map<String, FileRun> after = run(runner, head.dir, files, timeout);
         Map<String, FileRun> before = new LinkedHashMap<>(run(runner, base.dir, files, timeout));
+        Map<String, FileRun> timedOut = new LinkedHashMap<>();
+        for (String f : files) {
+            FileRun b = before.get(f), a = after.get(f);
+            if (b == null || b.timedOut() == 0 || !gave(a) || a.cases().isEmpty() || !runner.runsAlone()) continue;
+            FileRun n = narrowed(runner, f, a, a, b, head, base, timeout, budget);
+            if (n == b) continue;
+            timedOut.put(f, b);
+            before.put(f, n);
+        }
         Seen seen = new Seen();
         earlier(runner, files, edited, moved, sides, timeout, seen);
         Set<String> alone = new LinkedHashSet<>();
@@ -302,12 +348,12 @@ final class Witness {
             Map<String, Object> r = read(f, edited.contains(f), mv, o, b, a, shared, sh, lonely.getOrDefault(f, Set.of()), by);
             for (Map.Entry<String, Object> x : r.entrySet()) if (x.getValue() instanceof Verdict v && sensitive(v.kind())) candidates.computeIfAbsent(f, k -> new LinkedHashSet<>()).add(x.getKey());
             if (mv && gave(o) && passes(o.cases()) > ran(a.cases())) movedShort.add(f);
-            if (mv && gave(o) && count(f, movedNames(o.cases(), a.cases(), sh), r, a, by).least() > 0) movedGrew.add(f);
+            if (mv && gave(o) && count(f, movedNames(o.cases(), a.cases(), sh), r, a, b, by).least() > 0) movedGrew.add(f);
             if (edited.contains(f) && gave(o)) {
                 Names n = names(o.cases(), a.cases());
                 named.put(f, n);
                 skipsIn.put(f, skips(f, n, by));
-                if (count(f, n, r, a, by).least() > 0) counted.add(f);
+                if (count(f, n, r, a, b, by).least() > 0) counted.add(f);
                 if (passes(o.cases()) > ran(a.cases())) short1.add(f);
             }
         }
@@ -326,12 +372,15 @@ final class Witness {
         for (String f : movedShort) if (!rerunOld.contains(f)) rerunOld.add(f);
         for (String f : movedGrew) if (!rerunOld.contains(f)) rerunOld.add(f);
         for (int i = 1; i < runs && !again.isEmpty(); i++) {
-            seen.saw(Side.AFTER, again, run(runner, head.dir, new ArrayList<>(again), timeout));
+            Map<String, FileRun> now = run(runner, head.dir, new ArrayList<>(again), timeout);
+            seen.saw(Side.AFTER, again, now);
             if (!sensitive.isEmpty()) {
-                List<String> together = sensitive.stream().filter(f -> !alone.contains(f)).toList();
+                List<String> together = sensitive.stream().filter(f -> !alone.contains(f) && !timedOut.containsKey(f)).toList();
                 Map<String, FileRun> b = new LinkedHashMap<>();
                 if (!alone.isEmpty()) restore(change, runner, base, files);
                 if (!together.isEmpty()) b.putAll(run(runner, base.dir, together, timeout));
+                // before the runs of a file alone, which put the other test files of the change back as the base has them
+                for (String f : sensitive) if (timedOut.containsKey(f)) b.put(f, narrowed(runner, f, now.get(f), after.get(f), timedOut.get(f), head, base, timeout, budget));
                 for (String f : sensitive) if (alone.contains(f)) b.put(f, runAlone(change, runner, files, f, base, timeout));
                 seen.saw(Side.BEFORE, sensitive, b);
             }
@@ -470,6 +519,7 @@ final class Witness {
         Map<String, Set<String>> passingIn = new LinkedHashMap<>();
         Map<String, List<Verdict>> newIn = new LinkedHashMap<>();
         Map<String, Ledger> ledgers = new LinkedHashMap<>();
+        Map<String, Integer> aloneIn = new LinkedHashMap<>();
         List<Verdict> last = new ArrayList<>();
         List<String> counting = new ArrayList<>();
         for (String f : files) {
@@ -490,6 +540,8 @@ final class Witness {
                 continue;
             }
             Set<String> lone = lonely.getOrDefault(f, Set.of());
+            int single = befores.stream().filter(r -> r != null).mapToInt(FileRun::alone).max().orElse(0);
+            aloneIn.put(f, single);
             List<Map<String, Object>> reads = new ArrayList<>();
             List<Count> counts = new ArrayList<>();
             for (FileRun o : olds) {
@@ -497,8 +549,8 @@ final class Witness {
                     for (FileRun a : afters) {
                         Map<String, Object> r = gave(a) ? read(f, ed, mv, o, b, a, sharedIn.get(f), sh, lone, by) : Map.of();
                         reads.add(r);
-                        if (ed) counts.add(gave(o) && gave(a) ? count(f, names(o.cases(), a.cases()), r, a, by) : null);
-                        else if (mv) counts.add(gave(o) && gave(a) ? count(f, movedNames(o.cases(), a.cases(), sh), r, a, by) : null);
+                        if (ed) counts.add(gave(o) && gave(a) ? count(f, names(o.cases(), a.cases()), r, a, b, by) : null);
+                        else if (mv) counts.add(gave(o) && gave(a) ? count(f, movedNames(o.cases(), a.cases(), sh), r, a, b, by) : null);
                     }
                 }
             }
@@ -512,24 +564,29 @@ final class Witness {
                 List<Object> all = reads.stream().map(r -> r.get(k)).toList();
                 boolean candidate = first instanceof Verdict v && sensitive(v.kind());
                 Verdict fails = failsAfter(f, k, afters, sh, by);
+                List<String> unended = befores.stream().filter(r -> status(r, k) == Out.NO_RESULT).map(r -> message(r, k)).distinct().toList();
                 if (fails != null) {
                     (candidate ? last : mine).add(fails.with(c));
+                } else if (!unended.isEmpty() && !all.stream().allMatch(x -> java.util.Objects.equals(x, first))) {
+                    boolean judged = befores.stream().map(r -> status(r, k)).anyMatch(s -> s != null && s != Out.NO_RESULT);
+                    (candidate ? last : mine).add(new Verdict(f, shown(sh, k), Kind.UNKNOWN, (judged ? "in one run it ran alone on both sides; in another, " : "") + String.join("; in another run, ", unended), by, c));
                 } else if (candidate) {
                     boolean oneType = ((Verdict) first).kind() != Kind.SENSITIVE_BY_ERROR || befores.stream().map(r -> type(r, k)).distinct().count() == 1;
                     if (oneType && all.stream().allMatch(x -> java.util.Objects.equals(x, first))) last.add(((Verdict) first).with(c));
                     else if (afters.stream().anyMatch(r -> status(r, k) != Out.PASSED)) last.add(new Verdict(f, shown(sh, k), Kind.UNSTABLE, "passed after the change in one run and not in another", by, c));
                     else if (befores.stream().allMatch(r -> status(r, k) == Out.ERRORED)) last.add(new Verdict(f, shown(sh, k), Kind.UNKNOWN, String.join("; in another run, ",
                             befores.stream().map(r -> threw(r, k)).distinct().count() > 1 ? befores.stream().map(r -> threw(r, k)).distinct().toList()
-                                    : befores.stream().map(r -> "before the change it threw " + type(r, k) + ", not an assertion").distinct().toList()), by, 1, all.stream().anyMatch(x -> x instanceof Verdict v && v.newCode()), c));
-                    else if (befores.stream().anyMatch(r -> status(r, k) == Out.ERRORED)) last.add(new Verdict(f, shown(sh, k), Kind.UNSTABLE, "threw before the change in one run and not in another", by, c));
-                    else last.add(new Verdict(f, shown(sh, k), Kind.UNSTABLE, "failed before the change in one run and not in another", by, c));
+                                    : befores.stream().map(r -> "before the change it threw " + type(r, k) + ", not an assertion").distinct().toList()), by, 1, all.stream().anyMatch(x -> x instanceof Verdict v && v.newCode()), c)
+                            .aloneBecause(single));
+                    else if (befores.stream().anyMatch(r -> status(r, k) == Out.ERRORED)) last.add(new Verdict(f, shown(sh, k), Kind.UNSTABLE, "threw before the change in one run and not in another", by, c).aloneBecause(single));
+                    else last.add(new Verdict(f, shown(sh, k), Kind.UNSTABLE, "failed before the change in one run and not in another", by, c).aloneBecause(single));
                 } else if (all.stream().allMatch(x -> java.util.Objects.equals(x, first))) {
                     if (first == Mark.FRESH) freshEvery.add(k);
                     if (first == Mark.FRESH || first instanceof Verdict v && (v.kind() == Kind.EXISTING_PASSES_ON_BOTH || v.kind() == Kind.PASSES_ON_BOTH)) passing.add(k);
                     if (first instanceof Verdict v) mine.add(v.with(c));
                 } else if (first instanceof Verdict v0 && all.stream().allMatch(x -> x instanceof Verdict v && v.kind() == v0.kind() && v.tests() == v0.tests() && v.newCode() == v0.newCode())) {
                     String why = String.join("; in another run, ", all.stream().map(x -> ((Verdict) x).detail()).distinct().toList());
-                    mine.add(new Verdict(f, v0.name(), v0.kind(), why, by, v0.tests(), v0.newCode(), c));
+                    mine.add(new Verdict(f, v0.name(), v0.kind(), why, by, v0.tests(), v0.newCode(), c, all.stream().mapToInt(x -> ((Verdict) x).alone()).max().orElse(0)));
                 }
             }
             passingIn.put(f, passing);
@@ -541,7 +598,8 @@ final class Witness {
             if (unbuilt != null) out.add(unbuilt);
             Skips s = skipsIn.get(f);
             if (s != null && !muted("skips")) for (Verdict v : s.listed()) if (v.cover().change().stream().noneMatch(ledger.unsteady()::contains)) out.add(v);
-            if (named.containsKey(f) && !muted("new tests")) newIn.put(f, newTests(f, counts, freshEvery, by));
+            if (named.containsKey(f) && !muted("new tests")) newIn.put(f, newTests(f, counts, freshEvery, by).stream()
+                    .map(v -> single == 0 ? v : v.aloneBecause(single, "the tests counted as passing before and after ")).toList());
             FileRun o = ed || mv ? seen.of(Side.OLD, f).get(0) : null, a = afters.get(0);
             if (mv && gave(o)) counting.add(f);
             if (mv && !gave(o)) out.add(new Verdict(f, "", Kind.UNKNOWN, "run as it was before the change, at " + moved.get(f).from() + ", the file " + (o == null ? "gave no result"
@@ -616,7 +674,7 @@ final class Witness {
             if (fourth.unclear().containsKey(e.getKey()) && !muted("untold")) out.add(fourth.untold(e.getKey(), shownIn.get(e.getKey()), by));
         }
         out.addAll(last);
-        for (Map.Entry<String, Ledger> e : ledgers.entrySet()) out.addAll(reconcile(e.getKey(), e.getValue(), out, by));
+        for (Map.Entry<String, Ledger> e : ledgers.entrySet()) out.addAll(reconcile(e.getKey(), e.getValue(), out, by, aloneIn.getOrDefault(e.getKey(), 0)));
         return out;
     }
 
@@ -656,7 +714,10 @@ final class Witness {
             Object v;
             if (!gave(b)) v = b != null && b.broken() ? Verdict.beforeFailed(f, name, "before the change the file " + b.problem(), by)
                     : new Verdict(f, name, Kind.UNKNOWN, "before the change the file " + (b == null ? "gave no result" : b.problem()), by, Cover.NONE);
+            else if (p == null && b.alone() > 0) v = new Verdict(f, name, Kind.UNKNOWN, "before the change its file did not end, and in this run it was not run alone: "
+                    + "the run of the file after the change that its single runs followed did not report it", by, Cover.NONE);
             else if (p == null) v = Verdict.beforeFailed(f, name, "was not found before the change", by);
+            else if (out(p) == Out.NO_RESULT) v = new Verdict(f, name, Kind.UNKNOWN, p.message(), by, Cover.NONE);
             else if (lone.contains(k)) v = new Verdict(f, name, Kind.UNKNOWN, "after the change it passes only together with the other changed test files, and before the change "
                     + "the file could be run only without them (as the base has them), so what it did there may come from them, not from the change", by, Cover.NONE);
             else if (out(p) == Out.PASSED && shared != null) v = new Verdict(f, name, Kind.UNKNOWN, "passes before and after, but " + shared, by, Cover.NONE);
@@ -669,6 +730,7 @@ final class Witness {
             else if (out(p) == Out.RETRIED) v = new Verdict(f, name, Kind.UNKNOWN, "before the change the build ran it again and got another result", by, Cover.NONE);
             else if (out(p) == Out.ERRORED) v = threw(f, name, p, by);
             else v = new Verdict(f, name, Kind.SENSITIVE, "", by, Cover.NONE);
+            if (b != null && b.alone() > 0 && p != null && out(p) != Out.NO_RESULT && v instanceof Verdict x) v = x.aloneBecause(b.alone());
             out.put(k, v);
         }
         return out;
@@ -838,6 +900,115 @@ final class Witness {
         }
     }
 
+    static java.util.function.LongSupplier clock = System::nanoTime;
+
+    // The time all single runs of one check may take together: the time bound of one run.
+    static final class Budget {
+        private long left;
+
+        Budget(int seconds) {
+            left = seconds * 1_000_000_000L;
+        }
+
+        int seconds() {
+            return (int) Math.min(Integer.MAX_VALUE, Math.max(0, left) / 1_000_000_000L);
+        }
+
+        void spend(long nanos) {
+            left -= Math.max(0, nanos);
+        }
+    }
+
+    // A single run before the change may take ten times what the same single run took after it, at least 60 s, never more than the bound or the time left.
+    static int beforeBound(int timeout, long afterNanos, int left) {
+        long tenfold = (Math.max(0, afterNanos) * 10 + 999_999_999L) / 1_000_000_000L;
+        return (int) Math.min(Math.min(timeout, left), Math.max(60, tenfold));
+    }
+
+    static final String USED_UP = "it was not run alone, as the time for single runs was used up";
+
+    // The run before the change of a file that did not end, made again of single runs: each method of the cases the file reports after the change, run
+    // alone after the change and then before it. A case gets its result before the change only where both single runs ended with a report of it and it
+    // gave alone after the change what it gave with its file; every other case is a case with no result, its message saying what was seen.
+    private static FileRun narrowed(Runner runner, String f, FileRun with, FileRun first, FileRun timedOut, Scratch head, Scratch base, int timeout, Budget budget) {
+        try {
+            String was = "before the change the file " + timedOut.problem();
+            List<JUnitXml.Case> keys = gave(with) ? with.cases() : first.cases();
+            Map<String, JUnitXml.Case> got = new LinkedHashMap<>();
+            Map<String, String> why = new LinkedHashMap<>();
+            Map<String, List<JUnitXml.Case>> groups = new LinkedHashMap<>();
+            for (JUnitXml.Case c : keys) {
+                if (!gave(with)) {
+                    why.put(key(c), "in this run its file gave no result after the change, so it was not run alone");
+                    continue;
+                }
+                Runner.Alone a = runner.alone(f, c);
+                if (a.filter() == null) why.put(key(c), "it was not run alone: " + a.why());
+                else groups.computeIfAbsent(a.filter(), x -> new ArrayList<>()).add(c);
+            }
+            for (Map.Entry<String, List<JUnitXml.Case>> g : groups.entrySet()) single(runner, f, g.getKey(), g.getValue(), with, head, base, timeout, budget, why, got);
+            List<JUnitXml.Case> cases = new ArrayList<>();
+            for (JUnitXml.Case c : keys) {
+                JUnitXml.Case b = got.get(key(c));
+                cases.add(b != null ? b : new JUnitXml.Case(c.suite(), c.name(), JUnitXml.Status.NO_RESULT, "", was + "; " + why.get(key(c))));
+            }
+            return new FileRun(cases.stream().sorted(ORDER).toList(), null, false, null, 0, timedOut.timedOut());
+        } catch (RuntimeException e) {
+            return timedOut;
+        }
+    }
+
+    private static void single(Runner runner, String f, String filter, List<JUnitXml.Case> group, FileRun with, Scratch head, Scratch base, int timeout, Budget budget,
+            Map<String, String> why, Map<String, JUnitXml.Case> got) {
+        if (budget.seconds() < 1) {
+            for (JUnitXml.Case c : group) why.put(key(c), USED_UP);
+            return;
+        }
+        int bound = Math.min(timeout, budget.seconds());
+        long start = clock.getAsLong();
+        FileRun after = runner.runAlone(head.dir, f, filter, bound);
+        long took = clock.getAsLong() - start;
+        budget.spend(took);
+        String all = unended(after, filter, "after", bound);
+        List<JUnitXml.Case> left = new ArrayList<>();
+        for (JUnitXml.Case c : group) {
+            String k = key(c), no = all != null ? all : reported(after, k, "after");
+            Out alone = no == null ? status(after, k) : null, together = status(with, k);
+            if (no == null && alone != together) no = "run alone after the change it " + alone.word + ", and with its file it " + (together == null ? "gave no single result" : together.word);
+            if (no != null) why.put(k, no);
+            else left.add(c);
+        }
+        if (left.isEmpty()) return;
+        if (budget.seconds() < 1) {
+            for (JUnitXml.Case c : left) why.put(key(c), "it was run alone after the change, and not before it, as the time for single runs was used up");
+            return;
+        }
+        bound = beforeBound(timeout, took, budget.seconds());
+        start = clock.getAsLong();
+        FileRun before = runner.runAlone(base.dir, f, filter, bound);
+        budget.spend(clock.getAsLong() - start);
+        all = unended(before, filter, "before", bound);
+        for (JUnitXml.Case c : left) {
+            String k = key(c), no = all != null ? all : reported(before, k, "before");
+            if (no != null) why.put(k, no);
+            else got.put(k, before.cases().stream().filter(x -> key(x).equals(k)).findFirst().orElseThrow());
+        }
+    }
+
+    private static String unended(FileRun run, String filter, String side, int bound) {
+        if (run.timedOut() > 0) return "run alone (" + filter + "), it did not end " + side + " the change within " + bound + " s";
+        if (!gave(run)) return "run alone " + side + " the change, it gave no result: " + run.problem();
+        if (run.cases().isEmpty()) return "run alone " + side + " the change, it reported no test";
+        return null;
+    }
+
+    private static String reported(FileRun run, String key, String side) {
+        long n = run.cases().stream().filter(c -> key(c).equals(key)).count();
+        if (n == 0) return "run alone " + side + " the change, it reported no test of this name";
+        if (n > 1) return "run alone " + side + " the change, it reported more than one test of this name";
+        return null;
+    }
+
     private static void restore(Change change, Runner runner, Scratch base, List<String> files) {
         try {
             base.write(change.head, files);
@@ -999,9 +1170,10 @@ final class Witness {
         return cases.stream().map(c -> shown(shown, key(c))).toList();
     }
 
-    private record Count(Names n, List<JUnitXml.Case> passBoth, long other, long least) {}
+    // unended: of the other tests, those with no result before the change (they are counted with the others, as nothing is known of them)
+    private record Count(Names n, List<JUnitXml.Case> passBoth, long other, long least, long unended) {}
 
-    private static Count count(String f, Names n, Map<String, Object> read, FileRun a, String by) {
+    private static Count count(String f, Names n, Map<String, Object> read, FileRun a, FileRun b, String by) {
         List<JUnitXml.Case> passBoth = new ArrayList<>();
         long clean = 0;
         for (JUnitXml.Case c : a.cases()) {
@@ -1015,7 +1187,8 @@ final class Witness {
         long asBefore = n.asBefore().stream().mapToLong(Flip::tests).sum();
         long other = a.cases().size() - clean - (s.answer().isEmpty() && !s.fewer() ? asBefore : 0);
         long least = n.listing().old() != null ? 0 : Math.max(0, n.fresh().size() - n.gone().size() - other);
-        return new Count(n, passBoth, other, least);
+        long unended = a.cases().stream().filter(c -> status(b, key(c)) == Out.NO_RESULT).count();
+        return new Count(n, passBoth, other, least, Math.min(other, unended));
     }
 
     private static List<Verdict> newTests(String f, List<Count> counts, Set<String> freshEvery, String by) {
@@ -1041,10 +1214,11 @@ final class Witness {
     private static List<Verdict> say(String f, Count c, String which, Cover cover, String by) {
         Names n = c.n();
         List<JUnitXml.Case> passBoth = c.passBoth();
-        long other = c.other(), p = passBoth.size(), g = n.gone().size(), fr = n.fresh().size(), least = c.least();
+        long other = c.other(), p = passBoth.size(), g = n.gone().size(), fr = n.fresh().size(), least = c.least(), u = c.unended(), seen = other - u;
         List<Verdict> out = new ArrayList<>();
         String counts = "the file reports " + tests(fr) + " it did not have" + (g > 0 ? " and no longer reports " + g + " it had" : "")
-                + (other > 0 ? ", and " + other + " of its tests " + (other == 1 ? "does" : "do") + " not pass on both sides" : "");
+                + (seen > 0 ? ", and " + seen + " of its tests " + (seen == 1 ? "does" : "do") + " not pass on both sides" : "")
+                + (u > 0 ? ", and " + u + " of its tests " + (u == 1 ? "has" : "have") + " no result before the change" : "");
         if (least > 0) {
             out.add(new Verdict(f, "", Kind.PASSES_ON_BOTH, counts + which + ": at least " + least + (least == 1 ? " new test passes" : " new tests pass") + " before and after. Under names "
                     + "the file did not have, " + p + (p == 1 ? " passes" : " pass") + " before and after (" + shortList(shown(n.shown(), passBoth)) + "); the names do not say which "
@@ -1055,7 +1229,7 @@ final class Witness {
         List<String> why = new ArrayList<>();
         if (g > 0) why.add(g == 1 ? "the test it no longer reports, under a new name" : "one of the " + g + " tests it no longer reports, under a new name");
         if (other > 0) why.add("a test moved to this name by one put in before it, where cases are named by their place (the new "
-                + (fr - g == 1 ? "test" : "tests") + " then being among the " + other + " that do not pass on both sides)");
+                + (fr - g == 1 ? "test" : "tests") + " then being among the " + other + " that do not pass on both sides" + (u > 0 ? " or have no result before the change" : "") + ")");
         if (n.listing().old() != null) why.add("a test the file had that its report as it was did not list: " + n.listing().old());
         List<String> names = shown(n.shown(), passBoth);
         for (int i = 0; i < passBoth.size(); i++) {
@@ -1437,7 +1611,7 @@ final class Witness {
         return outs == null || outs.isEmpty() ? "not reported" : String.join(" and ", outs.stream().map(o -> o.word).toList());
     }
 
-    private static List<Verdict> reconcile(String f, Ledger l, List<Verdict> said, String by) {
+    private static List<Verdict> reconcile(String f, Ledger l, List<Verdict> said, String by, int single) {
         List<Cover> covers = said.stream().filter(v -> v.file().equals(f)).map(Verdict::cover).toList();
         Set<String> unsteady = l.unsteady();
         List<String> change = new ArrayList<>();
@@ -1458,7 +1632,7 @@ final class Witness {
                 + shortList(change) + ". Whether " + (change.size() == 1 ? "this test was" : "these tests were") + " lost, switched off, broken or replaced is not known", by,
                 change.size(), Cover.NONE));
         if (!repeat.isEmpty()) out.add(new Verdict(f, "", Kind.UNSTABLE, "the file was reported differently from run to run, in ways no rule of the check judged: " + shortList(repeat), by,
-                which.size(), Cover.NONE));
+                which.size(), Cover.NONE).aloneBecause(l.repeat().containsKey(Side.BEFORE) ? single : 0));
         return out;
     }
 
@@ -1508,6 +1682,10 @@ final class Witness {
 
     private static String thrown(JUnitXml.Case p) {
         return "before the change it threw " + shortType(p) + ", not an assertion";
+    }
+
+    private static String message(FileRun run, String key) {
+        return run.cases().stream().filter(c -> key(c).equals(key)).findFirst().map(JUnitXml.Case::message).orElse("");
     }
 
     private static String type(FileRun run, String key) {

@@ -32,7 +32,10 @@ final class CheckTests {
             adapters(repo);
             reactor(repo);
             scenarios(repo);
+            alone(repo.resolveSibling(repo.getFileName() + "-alone"));
         } finally {
+            Check.standInTime(false);
+            Check.aloneRuns();
             Trusted.env = System::getenv;
             Ctx.root = savedRoot;
             Ctx.cfg = savedCfg;
@@ -2280,6 +2283,231 @@ final class CheckTests {
     private static final String SHY = "steady: pass\nshy: skip-once fixed\n";
 
     private static int code;
+
+    private static final String HANG = "tests/jvm/a/HangTest.java", BESIDE = "tests/jvm/a/SideTest.java";
+    private static final String HANG0 = "package a;\nzero: pass\n", SIDE0 = "package a;\nsideZero: pass\n";
+    private static final String HANG1 = "package a;\nzero: pass\nhalves: needs fixed\nidle: pass\nlocks: hang-unless fixed\n", SIDE1 = "package a;\nsideZero: pass\nsideHalves: needs fixed\n";
+    private static final String WAS = "before the change the file timed out after 100 s; ";
+    private static final String ALONE = "ran alone on both sides, as before the change its file did not end within 100 s";
+
+    // The run before the change does not end: each method the file reports after the change is run alone, after the change and then before it.
+    private static void alone(Path repo) throws IOException {
+        Files.createDirectories(repo);
+        try {
+            Check.standInTime(true);
+            write(repo, "prod.txt", "v1\n");
+            write(repo, HANG, HANG0);
+            write(repo, BESIDE, SIDE0);
+            git(repo, "init", "-q", "-b", "main");
+            commit(repo, "base");
+            Ctx.init(repo);
+            write(repo, "prod.txt", "v1\nfixed\n");
+            write(repo, HANG, HANG1);
+            write(repo, BESIDE, SIDE1);
+            Map<String, String> once = Map.of("selftest-runner", "true", "runs", "1", "timeout", "100");
+            String r = report(once);
+            java.util.List<String> runs = Check.aloneRuns();
+            check("alone: a file that did not end before the change, and the file run beside it, are judged test by test from single runs: the tests that fail before and pass after",
+                    r.contains("  2 fail before the change and pass after it\n      tests/jvm/a/HangTest.java  [self test]\n        halves: " + ALONE + "\n"
+                            + "      tests/jvm/a/SideTest.java  [self test]\n        sideHalves: " + ALONE + "\n"));
+            check("alone: a new test that passes on both sides, run alone, fails the check as it does without a time-out, and the test that did not end is not counted as passing",
+                    r.contains("the file reports 3 tests it did not have, and 1 of its tests does not pass on both sides, and 1 of its tests has no result before the change: at least 1 new test passes before and after. Under names the file did not "
+                            + "have, 1 passes before and after (idle)") && code == 1);
+            check("alone: a test whose single run before the change did not end could not be judged, with the bound of that run",
+                    r.contains("  1 could not be judged\n      tests/jvm/a/HangTest.java  [self test]\n        locks: " + WAS + "run alone (a.HangTest#locks), it did not end before the change within 60 s\n"));
+            check("alone: the tests that were already there are counted as passing on both sides from their single runs",
+                    r.contains("  2 tests that were already in the edited files pass before and after (not counted); of them, 2 ran alone on both sides, as before the change "
+                            + "their test files did not end within 100 s\n"));
+            check("alone: each method runs alone after the change, then before it, in the order of the file's cases; a run before the change may take ten times the run after it, "
+                    + "at least 60 s, and all single runs share the time bound of one run", runs.equals(java.util.List.of("after a.HangTest#halves 100", "before a.HangTest#halves 60",
+                    "after a.HangTest#idle 96", "before a.HangTest#idle 60", "after a.HangTest#locks 92", "before a.HangTest#locks 60", "after a.HangTest#zero 30", "before a.HangTest#zero 28",
+                    "after a.SideTest#sideHalves 26", "before a.SideTest#sideHalves 24", "after a.SideTest#sideZero 22", "before a.SideTest#sideZero 20")));
+            check("alone: no line says the file reported nothing or differed from run to run", !r.contains("reports no tests") && !r.contains("from run to run") && !r.contains("not found"));
+
+            write(repo, HANG, HANG1 + "alone takes 7\n");
+            String counted = report(once);
+            java.util.List<String> slow = Check.aloneRuns();
+            check("alone: a single run before the change may take ten times what it took after the change", slow.get(1).equals("before a.HangTest#halves 70"));
+            check("alone: the count of new tests says apart the tests with no result before the change, and still counts them as not passing on both sides",
+                    counted.contains("        idle: passes before and after, but it cannot be told whether it is a new test: the file reports 3 tests it did not have, and 1 of its tests "
+                            + "does not pass on both sides, and 2 of its tests have no result before the change. It may be a new test that does not test the change, or a test the "
+                            + "file had: a test moved to this name by one put in before it, where cases are named by their place (the new tests then being among the 3 that do not "
+                            + "pass on both sides or have no result before the change); the tests counted as passing before and after " + ALONE + "\n") && code == 0);
+            check("alone: and never more than the time left for single runs, and none is started when nothing is left",
+                    slow.contains("before a.HangTest#locks 65") && slow.size() == 6 && slow.stream().noneMatch(x -> x.contains("#zero")));
+            write(repo, HANG, HANG1);
+
+            String spent = report(Map.of("selftest-runner", "true", "runs", "1", "timeout", "5"));
+            java.util.List<String> few = Check.aloneRuns();
+            check("alone: what the shared time does not reach is said as before, with the reason it was not run alone",
+                    spent.contains("        locks: before the change the file timed out after 5 s; it was not run alone, as the time for single runs was used up\n")
+                    && spent.contains("        idle: before the change the file timed out after 5 s; it was run alone after the change, and not before it, as the time for single runs was used up\n")
+                    && few.equals(java.util.List.of("after a.HangTest#halves 5", "before a.HangTest#halves 3", "after a.HangTest#idle 1")));
+            check("alone: and a test that was reached in full is still judged", spent.contains("        halves: ran alone on both sides, as before the change its file did not end within 5 s\n"));
+
+            Check.aloneRuns();
+            write(repo, HANG, HANG1 + "lonely: alone-fails\n");
+            String lonely = report(once);
+            check("alone: a test that gives alone after the change another result than with its file could not be judged, and is never said to fail before",
+                    lonely.contains("        lonely: " + WAS + "run alone after the change it failed, and with its file it passed\n") && !lonely.contains("lonely: fails"));
+
+            write(repo, HANG, HANG1 + "rows(int)[1]: needs fixed\nrows(int)[2]: alone-gone\nquiet: alone-gone\nbroke: alone-broken-unless fixed\nstuck: alone-hangs\n");
+            String gone = report(once);
+            check("alone: rows of one method run together, and one the single run does not report could not be judged",
+                    gone.contains("        rows(int)[1]: " + ALONE + "\n") && gone.contains("        rows(int)[2]: " + WAS + "run alone after the change, it reported no test of this name\n"));
+            check("alone: a single run after the change that does not end could not be judged, with its bound",
+                    gone.contains("        stuck: " + WAS + "run alone (a.HangTest#stuck), it did not end after the change within ") && !gone.contains("        stuck: ran alone"));
+            check("alone: a single run that reports no test could not be judged", gone.contains("        quiet: " + WAS + "run alone after the change, it reported no test\n"));
+            check("alone: a single run the build did not make could not be judged, with what the build said",
+                    gone.contains("        broke: " + WAS + "run alone before the change, it gave no result: did not run (Maven exit 1: a stand-in failure)\n"));
+
+            Check.aloneRuns();
+            write(repo, HANG, HANG1 + "a.HangTest$Inner::deep: needs fixed\nb.Other::far: pass\n: pass\nwe-ird: pass\n");
+            String names = report(once);
+            java.util.List<String> nested = Check.aloneRuns();
+            check("alone: a nested class is run alone as a class of its own", names.contains("        deep: " + ALONE + "\n") && nested.contains("after a.HangTest$Inner#deep 26")
+                    && nested.contains("before a.HangTest$Inner#deep 24"));
+            check("alone: a case of another class is not run alone",
+                    names.contains("        far: " + WAS + "it was not run alone: it is reported under the class b.Other, which is not the file's class or one nested in it\n"));
+            check("alone: a case with an empty name names no method and is not run alone", names.contains(WAS + "it was not run alone: its reported name is empty, so it names no method\n"));
+            check("alone: a name with characters that cannot be passed to the build is not run alone",
+                    names.contains("        we-ird: " + WAS + "it was not run alone: its class or method name has characters that cannot be passed to Maven safely\n")
+                    && nested.stream().noneMatch(x -> x.contains("we-ird") || x.contains("Other")));
+
+            write(repo, HANG, HANG1 + "boom: alone-throws\n");
+            String thrown = report(once);
+            check("alone: a failure inside the single runs leaves the answer of a file that did not end",
+                    thrown.contains("        halves: before the change the file timed out after 100 s\n") && thrown.contains("        locks: before the change the file timed out after 100 s\n")
+                    && !thrown.contains("halves: ran alone") && thrown.contains("        sideHalves: " + ALONE + "\n"));
+
+            Check.aloneRuns();
+            write(repo, HANG, HANG1 + "flip: hang-once-unless fixed\nflop: hang-later-unless fixed\n");
+            String twice = report(Map.of("selftest-runner", "true", "runs", "2", "timeout", "800"));
+            java.util.List<String> again = Check.aloneRuns();
+            check("alone: with --runs 2 the single runs are made again, not the run that did not end, and a test that passes the rules in both is said in 2 of 2 runs",
+                    twice.contains("  2 fail before the change and pass after it, in 2 of 2 runs\n      tests/jvm/a/HangTest.java  [self test]\n        halves: " + ALONE.replace("100", "800") + "\n")
+                    && again.stream().filter(x -> x.startsWith("before a.HangTest#halves")).count() == 2);
+            check("alone: a single run that ends in one run and not in another is said as that, not as a result that differs",
+                    twice.contains("        flip: in one run it ran alone on both sides; in another, " + WAS.replace("100", "800") + "run alone (a.HangTest#flip), it did not end before the change within 60 s\n")
+                    && twice.contains("        flop: in one run it ran alone on both sides; in another, " + WAS.replace("100", "800") + "run alone (a.HangTest#flop), it did not end before the change within 60 s\n")
+                    && !twice.contains("in one run and not in another") && !twice.contains("reported differently"));
+
+            write(repo, HANG, HANG1 + "late: pass-later\n");
+            String later = report(Map.of("selftest-runner", "true", "runs", "2", "timeout", "800"));
+            check("alone: a test the file reports after the change only in a later run is not said to have run alone where it did not, nor to be missing before the change",
+                    later.contains("        late: before the change the file timed out after 800 s; run alone before the change, it reported no test\n")
+                    && !later.contains("late: in one run") && !later.contains("not found before the change") && !later.contains("did not exist"));
+            write(repo, HANG, HANG1 + "wob: alone-once-fails-unless fixed\nthr: alone-once-throws-unless fixed\ntwin: alone-twins-unless fixed\n");
+            String varied = report(Map.of("selftest-runner", "true", "runs", "2", "timeout", "800"));
+            String note = "; " + ALONE.replace("100", "800") + "\n";
+            check("alone: a single run before the change that failed in one run and not in another says so, and that it ran alone and why",
+                    varied.contains("        wob: failed before the change in one run and not in another" + note));
+            check("alone: a single run before the change that threw in one run and not in another says so, and that it ran alone and why",
+                    varied.contains("        thr: threw before the change in one run and not in another" + note));
+            check("alone: a test that threw before the change in its single runs, another exception in each, says what it threw, and that it ran alone and why",
+                    varied.contains("        twin: before the change it threw a.ValidationException, not an assertion; in another run, before the change it threw b.ValidationException, "
+                            + "not an assertion" + note) || varied.contains("        twin: before the change it threw b.ValidationException, not an assertion; in another run, before the change "
+                            + "it threw a.ValidationException, not an assertion" + note));
+
+            write(repo, HANG, HANG1);
+            write(repo, "tests/jvm/b/OneTest.java", "package b;\nx: needs fixed\n");
+            write(repo, "tests/jvm/b/TwoTest.java", "package b;\ny: needs fixed\nz: module-needs fixed\n");
+            String mixedRuns = report(Map.of("selftest-runner", "true", "runs", "2", "timeout", "800"));
+            check("alone: in a repeat, the single runs before the change see the change's test files, also after a file was run alone because the others do not compile beside it",
+                    mixedRuns.contains("      tests/jvm/a/HangTest.java  [self test]\n        halves: " + ALONE.replace("100", "800") + "\n")
+                    && mixedRuns.contains("in 2 of 2 runs") && !mixedRuns.contains("halves: in one run") && !mixedRuns.contains("reported no test of this name"));
+            Files.delete(repo.resolve("tests/jvm/b/OneTest.java"));
+            Files.delete(repo.resolve("tests/jvm/b/TwoTest.java"));
+            Check.aloneRuns();
+            write(repo, HANG, HANG1.replace("locks: hang-unless fixed", "locks: hang-unless never"));
+            String afterToo = report(once);
+            check("alone: a file that does not end on either side is not run alone", afterToo.contains("could not be run after the change: timed out after 100 s") && Check.aloneRuns().stream().noneMatch(x -> x.contains("HangTest")));
+            write(repo, HANG, HANG1.replace("locks: hang-unless fixed", "locks: hang-with fixed"));
+            String afterOnly = report(once);
+            check("alone: a file that does not end only after the change is not run alone: the run after the change is never narrowed",
+                    afterOnly.contains("      tests/jvm/a/HangTest.java  [self test]\n        could not be run after the change: timed out after 100 s\n")
+                    && Check.aloneRuns().stream().noneMatch(x -> x.contains("HangTest")));
+
+            write(repo, HANG, "package a;\nzero: pass\nhalves: needs fixed\nlocks: hang-unless fixed\n");
+            write(repo, BESIDE, SIDE0);
+            String unknownOnly = report(once);
+            check("alone: what could not be judged from single runs does not fail the check by itself",
+                    unknownOnly.contains("        locks: " + WAS + "run alone (a.HangTest#locks), it did not end before the change within 60 s\n") && unknownOnly.contains("        halves: " + ALONE) && code == 0);
+            write(repo, "docs/mandates/hang.json", "{\"mandate\": \"v0\", \"id\": \"hang\", \"intent\": \"Halves\", \"scope\": {\"paths\": [\"prod.txt\", \"tests/jvm/a/HangTest.java\"]}, "
+                    + "\"oracle\": {\"scenarios\": [\"tests/jvm/a/HangTest.java\"]}}\n");
+            String mandate = report(Map.of("selftest-runner", "true", "runs", "1", "timeout", "100", "mandate", "hang"));
+            check("alone: a mandate's own tests line is unknown, not violated, for a test that did not end",
+                    mandate.contains("  unknown   the change's own tests: 1 fails before it and passes after it") && mandate.contains("1 of the change's tests could not be judged"));
+            check("alone: the mandate's lines of a test judged from single runs say that it ran alone, and why",
+                    mandate.contains("the change's own tests: 1 fails before it and passes after it (0 approved with the mandate, 1 written with the change; it ran alone on both sides, "
+                            + "as before the change its test file did not end within 100 s)")
+                    && mandate.contains("tests/jvm/a/HangTest.java  halves: fails before, passes after (a test written with the change; it ran alone on both sides, as before the change "
+                            + "its test file did not end within 100 s)"));
+            write(repo, HANG, "package a;\nzero: pass\nhalves: needs fixed\nlocks: hang-unless fixed\nbang: error-unless fixed\n");
+            write(repo, "tests/jvm/a/NewTest.java", "package a;\nfine: pass\n");
+            write(repo, "docs/mandates/hang.json", "{\"mandate\": \"v0\", \"id\": \"hang\", \"intent\": \"Halves\", \"scope\": {\"paths\": [\"prod.txt\", \"tests/jvm/a/HangTest.java\", "
+                    + "\"tests/jvm/a/NewTest.java\"]}, \"oracle\": {\"scenarios\": [\"tests/jvm/a/HangTest.java\"]}}\n");
+            String mandate2 = report(Map.of("selftest-runner", "true", "runs", "1", "timeout", "100", "mandate", "hang"));
+            String note1 = "it ran alone on both sides, as before the change its test file did not end within 100 s";
+            check("alone: the mandate's line of a new test that passes before and after, judged from single runs, says that it ran alone, and why",
+                    mandate2.contains("tests/jvm/a/NewTest.java  fine: passes before and after, so it does not test the change (" + note1 + ")\n"));
+            String bangLine = mandate2.lines().filter(l -> l.contains("HangTest.java  bang:")).findFirst().orElse("");
+            check("alone: the mandate's line of a test that fails before by an exception, judged from single runs, says once that it ran alone",
+                    bangLine.contains("bang: fails before by an exception, not by a check (threw IllegalStateException before the change), passes after (a test written with the change; "
+                            + note1 + ")") && bangLine.split("ran alone", -1).length == 2);
+            Files.delete(repo.resolve("tests/jvm/a/NewTest.java"));
+            Files.delete(repo.resolve("docs/mandates/hang.json"));
+            write(repo, HANG, HANG1);
+            write(repo, BESIDE, SIDE1);
+            write(repo, "tests/jvm/a/NewTest.java", "package a;\nfine: pass\n");
+            String fine = " (it ran alone on both sides, as before the change its test file did not end within 100 s)";
+
+            java.io.InputStream in = System.in;
+            java.io.PrintStream err = System.err;
+            ByteArrayOutputStream reasons = new ByteArrayOutputStream();
+            try {
+                System.setErr(new PrintStream(reasons, true, StandardCharsets.UTF_8));
+                System.setIn(new java.io.ByteArrayInputStream("{\"stop_hook_active\": false}".getBytes(StandardCharsets.UTF_8)));
+                int hook = Check.run(Map.of("selftest-runner", "true", "stop-hook", "true", "timeout", "100"));
+                String said = reasons.toString(StandardCharsets.UTF_8);
+                check("alone: the stop hook blocks on the new test that passes on both sides, and not on the test that did not end", hook == 2 && said.contains("(idle)") && !said.contains("locks"));
+                check("alone: the stop hook says of a test judged from single runs that it ran alone, and why",
+                        said.contains("passes with and without your change, so it does not test it: tests/jvm/a/NewTest.java \u00bb fine" + fine + "\n"));
+            } finally {
+                System.setIn(in);
+                System.setErr(err);
+            }
+            commit(repo, "the fix");
+            write(repo, "prod.txt", "v1\nfixed\nv3\n");
+            write(repo, BESIDE, "package a;\nsideZero: hang-together-unless v3\nsideHalves: needs fixed\n");
+            commit(repo, "old only");
+            write(repo, "prod.txt", "v1\nfixed\nv3\nv4\n");
+            write(repo, "tests/jvm/a/ErrTest.java", "package a;\nbang: error-unless v4\nwait: hang-together-unless v4\n");
+            commit(repo, "by error");
+            String since = report(Map.of("selftest-runner", "true", "since", "1d", "timeout", "100", "runs", "1"));
+            check("alone: --since says of a commit with only old tests, judged from single runs, that they ran alone, and why",
+                    since.contains("    tests: only tests that were already there, passing on both sides; of them, 2 ran alone on both sides, as before the change their test file did "
+                            + "not end within 100 s\n"));
+            check("alone: the summary of --since says how many of the tests it counts ran alone, and why",
+                    since.contains("  6 of the tests counted above ran alone on both sides, as before their commit the run of their test file did not end within 100 s\n"));
+            String errLine = since.lines().filter(l -> l.contains("ErrTest.java  bang")).findFirst().orElse("");
+            check("alone: --since's line of a test that fails before by an exception says once that it ran alone",
+                    errLine.equals("        fails before by an exception, passes after: tests/jvm/a/ErrTest.java  bang" + fine + ": threw IllegalStateException before the change"));
+            check("alone: --since counts the test that did not end as could not be judged, and says how many of its tests ran alone, and why",
+                    since.contains("    tests: 2 fail before and pass after; at least 2 new, pass on both sides; 1 could not be judged; of them, 4 ran alone on both sides, as before the change "
+                            + "their test files did not end within 100 s\n") && since.contains("  1 could not be judged; 0 fail after their commit\n"));
+            check("alone: --since says of a test judged from single runs that does not test the change that it ran alone, and why",
+                    since.contains("        does not test the change: tests/jvm/a/NewTest.java  fine" + fine + "\n"));
+        } finally {
+            Check.standInTime(false);
+            try (Stream<Path> s = Files.walk(repo)) {
+                for (Path x : s.sorted(Comparator.reverseOrder()).toList()) {
+                    x.toFile().setWritable(true);
+                    Files.deleteIfExists(x);
+                }
+            }
+        }
+    }
 
     private static boolean lostSaid(String report) {
         return report.contains(" that ran before the change does not run now\n") || report.contains(" that ran before the change do not run now\n");

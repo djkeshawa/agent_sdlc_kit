@@ -150,16 +150,18 @@ final class MandateVerdict {
             detail = new ArrayList<>();
             for (Witness.Verdict v : w.verdicts()) {
                 boolean whole = v.name().isEmpty();
-                if (v.kind() == Kind.PASSES_ON_BOTH) detail.add(v.file() + (whole ? ": " + v.detail() : "  " + v.name() + ": passes before and after, so it does not test the change"));
+                if (v.kind() == Kind.PASSES_ON_BOTH) detail.add(v.file() + (whole ? ": " + v.detail() : "  " + v.name() + ": passes before and after, so it does not test the change"
+                        + Check.alone(List.of(v), " (")));
                 else if (v.kind() == Kind.FAILS_AFTER || v.kind() == Kind.OLD_FAILS_AFTER) detail.add(v.file() + (whole ? "" : "  " + v.name()) + ": " + v.detail());
                 else if (v.kind() == Kind.NOT_RUN_NOW) detail.add(v.file() + ": " + v.detail());
                 else if (v.kind() == Kind.MOVED) detail.add(v.file() + ": " + v.detail());
             }
             for (Witness.Verdict v : w.verdicts()) {
                 String grade = m.locked().containsKey(v.file()) ? "a test approved with the mandate" : "a test written with the change";
-                if (v.kind() == Kind.SENSITIVE) detail.add(v.file() + "  " + v.name() + ": fails before, passes after (" + grade + ")");
-                else if (v.kind() == Kind.SENSITIVE_BY_ERROR) detail.add(v.file() + "  " + v.name() + ": fails before by an exception, not by a check (" + v.detail() + "), passes after ("
-                        + grade + ")");
+                String ran = Check.alone(List.of(v), "; ");
+                if (v.kind() == Kind.SENSITIVE) detail.add(v.file() + "  " + v.name() + ": fails before, passes after (" + grade + ran + ")");
+                else if (v.kind() == Kind.SENSITIVE_BY_ERROR) detail.add(v.file() + "  " + v.name() + ": fails before by an exception, not by a check (" + v.bare() + "), passes after ("
+                        + grade + ran + ")");
             }
             long undecided = w.count(Kind.UNKNOWN) + w.count(Kind.UNSTABLE) + w.count(Kind.SKIPPED);
             if (undecided > 0) detail.add(undecided + " of the change's tests could not be judged, gave different results or were skipped");
@@ -172,7 +174,8 @@ final class MandateVerdict {
             String what = w.verdicts().isEmpty() ? "the change adds or edits no test this version can run"
                     : "the change's own tests: " + sensitive + (sensitive == 1 ? " fails" : " fail") + " before it and " + (sensitive == 1 ? "passes" : "pass") + " after it"
                             + (sensitive > 0 ? " (" + preApproved + " approved with the mandate, " + (sensitive - preApproved) + " written with the change"
-                                    + (byError > 0 ? "; " + byError + " of them by an exception, not by a check" : "") + ")" : "")
+                                    + (byError > 0 ? "; " + byError + " of them by an exception, not by a check" : "")
+                                    + Check.alone(w.verdicts().stream().filter(v -> Witness.sensitive(v.kind())).toList(), "; ") + ")" : "")
                             + (wrong.isEmpty() ? "" : "; " + String.join("; ", wrong));
             State st = both + failing + notRun + takenAway > 0 ? State.VIOLATED : undecided > 0 || !w.unsupported().isEmpty() || sensitive == 0 ? State.UNKNOWN : State.SATISFIED;
             lines.add(new Line(st, what, false, detail));
