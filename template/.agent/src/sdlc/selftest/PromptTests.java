@@ -104,6 +104,7 @@ final class PromptTests {
 
     // The example in the prompt, written with its test files, is a draft mandate draft accepts as it is.
     private static void example(String body, Path repo) throws IOException {
+        body = body.replace("\r\n", "\n"); // a Windows checkout may give the prompt CRLF line ends
         int start = body.indexOf("```json\n");
         int end = start < 0 ? -1 : body.indexOf("```", start + 8);
         String json = end < 0 ? "" : body.substring(start + 8, end).lines().map(String::strip).reduce("", (a, b) -> a + b + "\n");
