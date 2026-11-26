@@ -23,7 +23,7 @@ sdlc check --mandate fix-search    # the change against the mandate
 
 1. **Write the mandate, then run `sdlc mandate draft <id>`.** `docs/mandates/<id>.json`: one
    sentence of intent, the paths the change may touch, and the tests that must pass. Your agent
-   can draft it from the issue or its plan. The smallest draft:
+   can draft it from the issue or its plan (`/mandate <id>`, below). The smallest draft:
 
    ```json
    {
@@ -48,6 +48,21 @@ sdlc check --mandate fix-search    # the change against the mandate
 
    It never approves. A mandate that is approved as it is, it leaves alone. It exits 0 when the
    draft is ready for approval, 1 when it is not.
+
+### Let your agent draft it: `/mandate <id>`
+
+In Copilot Chat, Claude Code or Codex, type `/mandate fix-search` and say in the chat what the
+change is for. The agent:
+
+- takes what the change is for from the chat, an issue, its own plan, an `intent.md`, a Spec Kit
+  or Kiro spec, or the approved LLD, and says which one it used. It does not read the diff;
+- writes `docs/mandates/fix-search.json` and runs `sdlc mandate draft fix-search` until it passes;
+- ends with the card, the one or two parts of the draft it was least sure of, and the line you
+  run yourself: `java .agent/Sdlc.java mandate approve fix-search`. Then it stops.
+
+The agent never writes `failsIf` and never approves. It needs a branch that is not protected:
+on `main` or `develop` the guard refuses the file. For Claude Code and Codex, run
+`java .agent/Sdlc.java config apply` once to get the command.
 
 2. **Approve it.** `sdlc mandate approve` asks you three things, in this order:
    - before it shows anything: in your own words, how could this change fail?

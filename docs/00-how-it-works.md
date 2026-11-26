@@ -107,6 +107,10 @@ and the skills in their formats (`tools` in `sdlc.yml`, [docs/02 step 8](02-setu
 | `impact-analyst` | architect (k times), `/eval-scoping` | Which components change, with evidence; started fresh each time | its answer file |
 | `eval-runner` | `/eval-scoping RUN` | Runs the scoping eval: one fresh impact-analyst per case | answers in `.sdlc/eval/inbox` |
 
+`/mandate ID` starts no other agent. The agent you chat with drafts the mandate of one change in
+`docs/mandates/ID.json`, then stops; a person approves it in a terminal
+([10. Mandates](10-mandate.md)).
+
 Tip: give the **reviewer a different model family** than the implementer (`agents.reviewer.model`
 in `sdlc.yml`, then `java .agent/Sdlc.java config apply`). Different models miss different things.
 

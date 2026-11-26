@@ -14,6 +14,9 @@ runs); a refusal means "change your approach", never "find a way around it". One
    (test-first) -> verify -> blind review (2..5 rounds) -> QA -> PR -> CI auto-fix loop.
 4. Humans merge. Agents never approve, merge, tag or push to protected branches.
 
+`/mandate ID`, for any change: draft `docs/mandates/ID.json`, then stop. A person approves it
+with `java .agent/Sdlc.java mandate approve ID`. Never write `failsIf`.
+
 The agents (orchestrator, analyst, qe-designer, designer, implementer, reviewer, qa-verifier,
 ci-fixer) are defined in `.github/agents` and generated for Claude Code (`.claude/agents`) and
 Codex (`.codex/agents`) by `java .agent/Sdlc.java config apply`.

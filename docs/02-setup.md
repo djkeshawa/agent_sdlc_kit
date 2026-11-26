@@ -186,7 +186,7 @@ authors** (in Restricted Mode no hooks, agents or MCP run). Accept the recommend
 | What | How | Expected |
 | --- | --- | --- |
 | Custom agents | agent picker under the chat box | orchestrator, analyst, qe-designer, designer, implementer, reviewer, qa-verifier, ci-fixer |
-| Prompt files | type `/` in chat | `/analyse`, `/test-design`, `/design`, `/feature`, `/review`, `/fix-ci` |
+| Prompt files | type `/` in chat | `/analyse`, `/test-design`, `/design`, `/feature`, `/review`, `/fix-ci`, `/mandate` |
 | Hooks | Command Palette -> **Chat: Configure Hooks** | `.github/hooks/guardrails.json` |
 | MCP | Command Palette -> **MCP: List Servers** | `atlassian`, `github` (and `sonarqube`); start them, Cloud asks you to log in |
 

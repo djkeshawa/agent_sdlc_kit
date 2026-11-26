@@ -20,11 +20,14 @@ public final class AgentTools {
 
     record Agent(String name, String description, List<String> tools, String body) {}
 
-    record Prompt(String name, String description, String agent, String argumentHint) {}
+    public record Prompt(String name, String description, String agent, String argumentHint, String body) {}
+
+    // Copilot's own agent, not a custom one: the prompt's body is the instruction, in the chat the user typed it in.
+    public static final String OWN_INSTRUCTIONS = "agent";
 
     private AgentTools() {}
 
-    static void apply() throws IOException {
+    public static void apply() throws IOException {
         List<String> tools = Ctx.cfg.list("tools");
         if (tools.contains("claude")) claude();
         if (tools.contains("codex")) codex();
@@ -64,7 +67,8 @@ public final class AgentTools {
             Store.writeText(root.resolve(".claude/agents/" + a.name() + ".md"), fm + "---\n" + generated() + a.body());
         }
         for (Prompt p : prompts()) {
-            String body = p.agent().equals("orchestrator")
+            String body = p.agent().equals(OWN_INSTRUCTIONS) ? "The user typed after the command: $ARGUMENTS\n\n" + p.body()
+                    : p.agent().equals("orchestrator")
                     ? "You are the orchestrator for: $ARGUMENTS\nFollow `.claude/agents/orchestrator.md` exactly. Start the other agents it names as subagents (Task tool); never edit code yourself.\n"
                     : "Use the `" + p.agent() + "` subagent for: $ARGUMENTS\nGive it only the key. When it finishes, report its result to the user as it is.\n";
             Store.writeText(root.resolve(".claude/commands/" + p.name() + ".md"),
@@ -110,14 +114,17 @@ public final class AgentTools {
         }
         Path skills = root.resolve(".agents/skills");
         copySkills(skills);
+        List<String> commands = new ArrayList<>();
         for (Prompt p : prompts()) {
-            String body = p.agent().equals("orchestrator")
+            commands.add("/" + p.name());
+            String body = p.agent().equals(OWN_INSTRUCTIONS) ? p.body()
+                    : p.agent().equals("orchestrator")
                     ? "You are the orchestrator. Follow the developer_instructions in `.codex/agents/orchestrator.toml` exactly, for the story the user named. Start the other agents it names (designer, implementer, reviewer, qa-verifier, ci-fixer) as subagents by name; never edit code yourself.\n"
                     : "Start the `" + p.agent() + "` agent (`.codex/agents/" + p.agent() + ".toml`) as a subagent with only the key the user named, then report its result as it is.\n";
             Store.writeText(skills.resolve(p.name()).resolve("SKILL.md"), "---\nname: " + p.name() + "\ndescription: " + yamlString(p.description()
                     + " Use when the user types /" + p.name() + " " + p.argumentHint() + " or asks for this step.") + "\n---\n" + generated() + body);
         }
-        System.out.println("- Codex: .codex/hooks.json, .codex/agents/*.toml, .agents/skills (skills and /analyse, /test-design, /design, /feature, /review, /fix-ci); AGENTS.md is read natively");
+        System.out.println("- Codex: .codex/hooks.json, .codex/agents/*.toml, .agents/skills (skills and " + String.join(", ", commands) + "); AGENTS.md is read natively");
         System.out.println("  Codex asks you once to trust the hooks; check with: codex, then a guarded command (docs/02 step 8)");
     }
 
@@ -132,12 +139,13 @@ public final class AgentTools {
         return out;
     }
 
-    static List<Prompt> prompts() throws IOException {
+    public static List<Prompt> prompts() throws IOException {
         List<Prompt> out = new ArrayList<>();
         for (Path f : list(Ctx.root.resolve(".github/prompts"), ".prompt.md")) {
-            Map<String, String> m = fields(frontMatter(Files.readString(f))[0]);
+            String[] fm = frontMatter(Files.readString(f));
+            Map<String, String> m = fields(fm[0]);
             out.add(new Prompt(m.getOrDefault("name", sdlc.util.Fs.name(f).replace(".prompt.md", "")), unquote(m.getOrDefault("description", "")),
-                    m.getOrDefault("agent", "orchestrator"), unquote(m.getOrDefault("argument-hint", ""))));
+                    m.getOrDefault("agent", "orchestrator"), unquote(m.getOrDefault("argument-hint", "")), fm[1].strip() + "\n"));
         }
         return out;
     }

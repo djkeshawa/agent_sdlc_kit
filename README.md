@@ -60,7 +60,7 @@ agent_sdlc_kit/
     │   ├── agents/                <- orchestrator, analyst, qe-designer, designer, implementer,
     │   │                             reviewer, qa-verifier, ci-fixer, architect, impact-analyst, eval-runner
     │   ├── prompts/               <- /analyse, /test-design, /design, /feature, /review, /fix-ci,
-    │   │                             /solution, /eval-scoping
+    │   │                             /solution, /eval-scoping, /mandate
     │   ├── skills/                <- Java standards, testing, code review, Sonar fixes, Jira/Confluence
     │   ├── hooks/guardrails.json  <- Copilot agent hooks -> the tool
     │   │                             (Claude Code and Codex: `config apply` generates .claude/, .codex/, .agents/)
