@@ -13,6 +13,7 @@ import sdlc.util.Glob;
 final class RunRules {
     private static final Set<String> SHELLS = Set.of("bash", "sh", "zsh", "dash", "ksh");
     private static final Set<String> POWERSHELLS = Set.of("powershell", "pwsh");
+    private static final Set<String> TEXT_RUNNERS = Set.of("tmux", "screen", "parallel", "sg");
     private static final Set<String> INLINE = Set.of("node", "python", "python3", "perl", "ruby", "deno", "bun", "php");
     private static final Pattern SCRIPT_FILE = Pattern.compile("(?i).*\\.(sh|bash|zsh|py|js|mjs|cjs|ts|rb|pl|php|ps1|bat|cmd)$");
 
@@ -39,7 +40,7 @@ final class RunRules {
                 if (build.isTool(script.get(0))) return build.check(script.subList(1, script.size()));
                 return file(script.get(0));
             }
-            return Decision.allow();
+            return Decision.ask("`" + name + "` reads its commands from what is typed or piped into it; the guard cannot see them. Give the command with -c, or approve only if you know what is piped in.");
         }
         if (name.equals("source") || name.equals(".")) return args.isEmpty() ? Decision.allow() : file(args.get(0));
         if (POWERSHELLS.contains(name)) {
@@ -57,7 +58,83 @@ final class RunRules {
             return Decision.allow();
         }
         if (name.equals("eval")) return shell.check(String.join(" ", args));
+        if (name.equals("script")) return pseudoTerminal(args);
+        if (name.equals("expect")) return expect(args);
+        if (name.equals("socat")) return socat(args);
+        if (name.equals("watch") || name.equals("flock")) return held(name, args);
+        if (TEXT_RUNNERS.contains(name)) return text(args);
         return null;
+    }
+
+    // script -c '<command>' [file] (Linux), script [file [command ...]] (BSD and macOS), or a shell that reads what is typed or piped in
+    private Decision pseudoTerminal(List<String> args) {
+        Decision result = null;
+        for (int k = 0; k < args.size(); k++) {
+            String a = args.get(k);
+            if (a.startsWith("--command=")) result = strictest(result, shell.check(a.substring("--command=".length())));
+            else if ((a.equals("--command") || a.matches("^-[a-zA-Z]*c$")) && k + 1 < args.size()) result = strictest(result, shell.check(args.get(++k)));
+            else if (a.matches("^-[a-zA-Z]*c.+$")) result = strictest(result, shell.check(a.substring(a.indexOf('c') + 1)));
+        }
+        if (result != null) return result;
+        Decision words = Decision.allow();
+        for (int k = 0; k < args.size() && !words.denied(); k++) if (!args.get(k).startsWith("-")) words = words.strictest(shell.command(args.subList(k, args.size())));
+        if (words.denied()) return words;
+        return words.strictest(Decision.ask("`script` starts a shell in a pseudo terminal; the guard cannot see what is typed or piped into it. Approve only if you know what it runs."));
+    }
+
+    private Decision expect(List<String> args) {
+        Decision result = null;
+        for (int k = 0; k < args.size(); k++) {
+            if (!args.get(k).equals("-c") || k + 1 >= args.size()) continue;
+            for (String statement : args.get(++k).split("[;\\n]")) {
+                String t = statement.strip();
+                while (t.startsWith("spawn ") || t.startsWith("exec ") || t.startsWith("system ") || t.startsWith("-noecho ") || t.startsWith("-ignore ")) t = t.substring(t.indexOf(' ') + 1).strip();
+                if (!t.isEmpty()) result = strictest(result, shell.check(t));
+            }
+        }
+        Decision unread = Decision.ask("`expect` drives other programs and answers their questions; the guard cannot check its script. Approve only if you read it.");
+        return result == null ? unread : result.denied() ? result : result.strictest(unread);
+    }
+
+    private Decision socat(List<String> args) {
+        Decision result = null;
+        for (String a : args) {
+            java.util.regex.Matcher m = Pattern.compile("(?is)^(exec|system|shell):(.*)$").matcher(a);
+            if (!m.matches()) continue;
+            String text = m.group(2);
+            result = strictest(result, shell.check(text));
+            int comma = text.indexOf(',');
+            if (comma > 0) result = strictest(result, shell.check(text.substring(0, comma)));
+        }
+        return result;
+    }
+
+    // watch '<command>' or watch <command ...>; flock <file> -c '<command>' or flock <file> <command ...>
+    private Decision held(String name, List<String> args) {
+        Decision result = Decision.allow();
+        boolean lockFile = name.equals("flock");
+        for (int k = 0; k < args.size() && !result.denied(); k++) {
+            String a = args.get(k);
+            if (a.startsWith("-")) continue;
+            if (lockFile && !args.get(Math.max(0, k - 1)).matches("^-[a-zA-Z]*c$")) {
+                lockFile = false;
+                continue;
+            }
+            result = result.strictest(a.chars().anyMatch(Character::isWhitespace) ? shell.check(a) : shell.command(args.subList(k, args.size())));
+            if (!a.chars().anyMatch(Character::isWhitespace) && !(k > 0 && args.get(k - 1).startsWith("-"))) break;
+        }
+        return result;
+    }
+
+    // tmux new-session '<command>', parallel ::: '<command>', sg group -c '<command>': a word with a blank in it is a command line
+    private Decision text(List<String> args) {
+        Decision result = null;
+        for (String a : args) if (a.chars().anyMatch(Character::isWhitespace)) result = strictest(result, shell.check(a));
+        return result;
+    }
+
+    private static Decision strictest(Decision so, Decision d) {
+        return so == null ? d : so.strictest(d);
     }
 
     Decision inlineCode(ShellCommand c) {

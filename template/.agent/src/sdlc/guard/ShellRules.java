@@ -18,7 +18,11 @@ public final class ShellRules {
     static final Pattern BUILD_OUTPUT = Pattern.compile("^(.*/)?(target|build|out|dist|coverage|node_modules|\\.next)(/.*)?$");
     static final Pattern ASSIGNMENT = Pattern.compile("^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", Pattern.DOTALL);
 
-    private static final Set<String> WRAPPERS = Set.of("env", "command", "exec", "time", "nohup", "nice", "builtin", "xargs");
+    private static final Set<String> WRAPPERS = Set.of("env", "command", "exec", "time", "nohup", "nice", "builtin", "xargs",
+            "timeout", "stdbuf", "unbuffer", "faketty", "setsid", "ionice", "chrt", "taskset", "strace", "ltrace");
+    // timeout <duration>, taskset <mask>, chrt <priority>: one word of their own stands before the command
+    private static final Set<String> WITH_A_VALUE = Set.of("timeout", "taskset", "chrt");
+    private static final Pattern KIT_WORD = Pattern.compile("(?i)((^|.*/)(sdlc\\.java|\\.agent/bin/sdlc|\\.agent/bin/sdlc\\.cmd)|sdlc\\.main|sdlc)$");
     private static final Set<String> NETWORK = Set.of("curl", "wget", "invoke-webrequest", "iwr", "invoke-restmethod", "irm", "nc", "ncat", "netcat", "scp", "sftp", "ftp", "ssh", "rsync", "telnet");
     private static final Set<String> SYSTEM = Set.of("sudo", "su", "doas", "runas", "shutdown", "reboot", "mkfs", "dd", "format", "diskpart", "chown", "setx", "reg");
     private static final Set<String> INFRASTRUCTURE = Set.of("docker", "podman", "kubectl", "helm", "terraform");
@@ -39,6 +43,7 @@ public final class ShellRules {
     private final WriteRules write;
     private final List<ShellRule> rules;
     private int depth;
+    private Map<List<String>, Decision> seen;
     private static final int MAX_NESTING = 12;
 
     ShellRules(Guard g) {
@@ -52,10 +57,11 @@ public final class ShellRules {
         this.rules = List.of(
                 env::powershellAssignment,
                 this::secretsAndToolCopy,
+                this::forAPerson,
                 this::ownTool,
                 read::wholeFolder,
                 cd::check,
-                run::nested,
+                this::nested,
                 this::machine,
                 env::dump,
                 write::targets,
@@ -137,9 +143,10 @@ public final class ShellRules {
                 if (variable != null && variable.denied()) return variable;
                 if (variable != null) question = question.strictest(variable);
                 words.remove(0);
-            } else if (WRAPPERS.contains(w) && words.size() > 1) {
-                words.remove(0);
-                while (!words.isEmpty() && words.get(0).startsWith("-")) words.remove(0);
+            } else if (WRAPPERS.contains(baseName(w)) && words.size() > 1) {
+                // a wrapper named with a path is a file like any other: one that nobody reviewed asks, whatever it is called
+                Decision file = w.contains("/") || w.contains("\\") ? run.scriptFile(new ShellCommand(List.of(w), List.of(w))) : null;
+                return wrapped(baseName(w), words.subList(1, words.size())).strictest(question).strictest(file);
             } else {
                 break;
             }
@@ -151,6 +158,63 @@ public final class ShellRules {
             if (d != null) return d.strictest(question);
         }
         return question;
+    }
+
+    // A wrapper takes options and values of its own before the command it runs (timeout -s KILL 60 git ...), and the guard does
+    // not know each option. So each word the command can start at is checked as its start, and the strictest answer stands.
+    Decision wrapped(String wrapper, List<String> rest) {
+        boolean outermost = seen == null;
+        if (outermost) seen = new HashMap<>();
+        try {
+            int free = WITH_A_VALUE.contains(wrapper) ? 2 : 1; // words that are no option and follow none: the last of them is the command
+            Decision result = Decision.allow();
+            for (int k = 0; k < rest.size() && free > 0; k++) {
+                String w = rest.get(k);
+                boolean option = w.startsWith("-");
+                if (!option && (k == 0 || !rest.get(k - 1).startsWith("-"))) free--;
+                if (option) continue;
+                List<String> from = List.copyOf(rest.subList(k, rest.size()));
+                Decision d = seen.get(from);
+                if (d == null) {
+                    d = command(from);
+                    seen.put(from, d);
+                }
+                if (d.denied()) return d;
+                result = result.strictest(d);
+            }
+            return result;
+        } finally {
+            if (outermost) seen = null;
+        }
+    }
+
+    // What only a person runs of the kit's tool is refused wherever the words stand, so that no program that runs another
+    // (a pseudo terminal, a timer, find -exec) carries it past the rule for the tool run plainly.
+    private Decision forAPerson(ShellCommand c) {
+        List<String> words = c.raw();
+        for (int i = 0; i < words.size(); i++) {
+            String w = words.get(i);
+            if (!KIT_WORD.matcher(w.replace('\\', '/')).matches() || i > 0 && w.equalsIgnoreCase("sdlc")) continue; // the bare word, further on, is a file or a folder
+            Decision d = forAPerson(i + 1 < words.size() ? words.get(i + 1) : "", i + 2 < words.size() ? words.get(i + 2) : "");
+            if (d != null && d.denied()) return d;
+        }
+        return null;
+    }
+
+    private Decision forAPerson(String sub, String sub2) {
+        if (sub.equals("hook") || sub.equals("git-hook")) return Decision.deny("hooks are run by the IDE and git, not by hand.");
+        if (sub.equals("setup") || sub.equals("upgrade") || sub.equals("config") && sub2.equals("apply")) return Decision.deny("setup, upgrade and config apply change guardrail files; a human runs them.");
+        if (sub.equals("review") && sub2.equals("record")) return g.gate.recordReview();
+        if (sub.equals("tests") && sub2.equals("lock")) return Decision.deny("locking acceptance tests is QE's approval; a human runs tests lock.");
+        if (sub.equals("mandate") && sub2.equals("approve")) return Decision.deny("approving a mandate is a person's decision; a human runs mandate approve.");
+        if (sub.equals("eval")) return Decision.deny("the scoping eval is collected and scored by a human (its report shows the ground truth); agents only answer cases with /eval-scoping.");
+        return null;
+    }
+
+    // The shell redirects the output of the outer command itself, whatever command that one carries: script -c '...' > file
+    private Decision nested(ShellCommand c) {
+        Decision d = run.nested(c);
+        return d == null ? null : d.strictest(write.targets(c));
     }
 
     private Decision secretsAndToolCopy(ShellCommand c) {
@@ -180,12 +244,8 @@ public final class ShellRules {
             if (kit && i > 1 && words.subList(1, i).stream().anyMatch(o -> o.startsWith("-"))) {
                 return Decision.deny("Java options (`" + brief(String.join(" ", words.subList(1, i))) + "`) change how the guard's tool runs. Run it plainly: java .agent/Sdlc.java <command>");
             }
-            if (sub.equals("hook") || sub.equals("git-hook")) return Decision.deny("hooks are run by the IDE and git, not by hand.");
-            if (sub.equals("setup") || sub.equals("upgrade") || sub.equals("config") && sub2.equals("apply")) return Decision.deny("setup, upgrade and config apply change guardrail files; a human runs them.");
-            if (sub.equals("review") && sub2.equals("record")) return g.gate.recordReview();
-            if (sub.equals("tests") && sub2.equals("lock")) return Decision.deny("locking acceptance tests is QE's approval; a human runs tests lock.");
-            if (sub.equals("mandate") && sub2.equals("approve")) return Decision.deny("approving a mandate is a person's decision; a human runs mandate approve.");
-            if (sub.equals("eval")) return Decision.deny("the scoping eval is collected and scored by a human (its report shows the ground truth); agents only answer cases with /eval-scoping.");
+            Decision person = forAPerson(sub, sub2);
+            if (person != null) return person;
             if (vouched) return Decision.allow();
         }
         return null;

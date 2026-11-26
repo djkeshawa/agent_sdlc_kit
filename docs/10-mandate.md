@@ -56,13 +56,16 @@ change is for. The agent:
 
 - takes what the change is for from the chat, an issue, its own plan, an `intent.md`, a Spec Kit
   or Kiro spec, or the approved LLD, and says which one it used. It does not read the diff;
-- writes `docs/mandates/fix-search.json` and runs `sdlc mandate draft fix-search` until it passes;
+- writes `docs/mandates/fix-search.json` and runs `java .agent/Sdlc.java mandate draft fix-search`
+  until it passes;
 - ends with the card, the one or two parts of the draft it was least sure of, and the line you
   run yourself: `java .agent/Sdlc.java mandate approve fix-search`. Then it stops.
 
-The agent never writes `failsIf` and never approves. It needs a branch that is not protected:
-on `main` or `develop` the guard refuses the file. For Claude Code and Codex, run
-`java .agent/Sdlc.java config apply` once to get the command.
+The agent is told never to write `failsIf` and never to approve. It needs a branch that is not
+protected: on `main` or `develop` the guard refuses the edit of the file. For Claude Code and Codex,
+list `claude` and `codex` under `tools` in `.agent/sdlc.yml` and run
+`java .agent/Sdlc.java config apply` once to get the command
+([setup, step 8](02-setup.md#step-8-the-hook-test)).
 
 2. **Approve it.** `sdlc mandate approve` asks you three things, in this order:
    - before it shows anything: in your own words, how could this change fail?
@@ -71,7 +74,10 @@ on `main` or `develop` the guard refuses the file. For Claude Code and Codex, ru
 
    Your sentence is written into the mandate as `failsIf`. The order is deliberate: a draft
    written by the agent whose work it limits should not be the first thing you read.
-   An agent cannot run this command; the kit's guard refuses it.
+   The kit's guard refuses this command to an agent, in its plain forms and behind the usual
+   wrappers. That is not a lock: an agent that sets out to get around the guard can
+   ([limits](06-guardrails-reference.md#limits---be-honest-with-your-team)). So this approval is
+   your own word on your machine, and every verdict says so.
 
 3. **Make the change**, then run `sdlc check --mandate <id>`.
 

@@ -151,6 +151,76 @@ final class JavaGuardTests {
         expect("approving a mandate by agent", shell("java .agent/Sdlc.java mandate approve fix-search"), Decision.Kind.DENY);
         expect("packaged tool: approving a mandate by agent", shell("sdlc mandate approve fix-search"), Decision.Kind.DENY);
         expect("reading a mandate ok", shell("sdlc mandate show fix-search"), Decision.Kind.ALLOW);
+        String approve = "java .agent/Sdlc.java mandate approve fix-search";
+        for (String wrapped : List.of("timeout 60 " + approve, "timeout -s KILL 60 " + approve, "stdbuf -o0 " + approve, "unbuffer " + approve, "unbuffer -p " + approve,
+                "faketty " + approve, "setsid -w " + approve, "nice -n 5 " + approve, "strace -f " + approve, "script -q /dev/null " + approve,
+                "script -qc '" + approve + "'", "script -q -c '" + approve + "' /dev/null", "printf 'it breaks\\n1\\nfix-search\\n' | script -qec \"" + approve + "\" /dev/null",
+                "script --command='" + approve + "' /dev/null", "expect -c 'spawn " + approve + "; interact'", "socat - EXEC:'" + approve + "',pty",
+                "socat - SYSTEM:'" + approve + "'", "script -qc \"sh -c '" + approve + "'\"", "script -qc 'cd .agent && java Sdlc.java mandate approve fix-search'",
+                "unbuffer sdlc mandate approve fix-search", "script -qc 'sdlc mandate approve fix-search'",
+                "script -qc 'sh .agent/bin/sdlc mandate approve fix-search'", "A=approve; script -qc \"java .agent/Sdlc.java mandate $A fix-search\"",
+                "script -qc \"java .agent/Sdlc.java mandate appro''ve fix-search\"", "tmux new-session -d '" + approve + "'", "parallel ::: '" + approve + "'",
+                "/usr/bin/timeout 60 " + approve, "timeout inf " + approve, "taskset 0x1 " + approve, "find . -maxdepth 0 -exec " + approve + " \\;", "screen -dm " + approve,
+                "watch -n 1 '" + approve + "'", "flock /tmp/l -c '" + approve + "'")) {
+            expect("approving a mandate through a wrapper: " + wrapped, shell(wrapped), Decision.Kind.DENY);
+        }
+        for (String unread : List.of("echo '" + approve + "' | script -q /dev/null", "script -qc 'java .agent/Sdlc.java mandate $(echo approve) fix-search'",
+                "script -qc 'java .agent/Sdlc.java mandate `echo approve` fix-search'")) {
+            check("a command the guard cannot read to the end is not waved through: " + unread, shell(unread).kind() != Decision.Kind.ALLOW);
+        }
+        expect("the tool's other commands for a person, behind a wrapper: setup", shell("timeout 60 java .agent/Sdlc.java setup"), Decision.Kind.DENY);
+        expect("config apply in a pseudo terminal", shell("script -qc 'java .agent/Sdlc.java config apply' /dev/null"), Decision.Kind.DENY);
+        expect("locking tests behind stdbuf", shell("stdbuf -o0 sh .agent/bin/sdlc tests lock PROJ-1"), Decision.Kind.DENY);
+        expect("a hook by hand behind unbuffer", shell("unbuffer java .agent/Sdlc.java hook pre-tool-use"), Decision.Kind.DENY);
+        expect("the scoping eval through expect", shell("expect -c 'spawn sdlc eval score'"), Decision.Kind.DENY);
+        expect("a wrapper does not hide a force push: timeout", shell("timeout 60 git push --force"), Decision.Kind.DENY);
+        expect("nor with its own options: timeout -s KILL", shell("timeout -s KILL 60 git push --force"), Decision.Kind.DENY);
+        expect("nor nice with a value", shell("nice -n 5 git push --force"), Decision.Kind.DENY);
+        expect("nor stdbuf", shell("stdbuf -oL git push --force"), Decision.Kind.DENY);
+        expect("nor a pseudo terminal", shell("script -qc 'git push --force' /dev/null"), Decision.Kind.DENY);
+        expect("nor script with the command as words", shell("script -q /dev/null git push --force"), Decision.Kind.DENY);
+        expect("nor expect", shell("expect -c 'spawn git push --force; interact'"), Decision.Kind.DENY);
+        expect("nor socat", shell("socat - EXEC:'git push --force',pty"), Decision.Kind.DENY);
+        for (String value : List.of("taskset 0x1", "taskset ff", "timeout .5", "timeout 1e3", "timeout inf", "timeout --foreground 60", "chrt -f 10", "chrt 10", "/usr/bin/nice -n 5",
+                "ionice -c 3 -n 7", "env -i -u X A=1", "strace -f -e trace=file -o /tmp/x", "exec -a name", "setsid -f", "time -p", "command -p")) {
+            expect("nor " + value + ", whatever its own words are", shell(value + " git push --force"), Decision.Kind.DENY);
+        }
+        expect("nor script told the command with --command=", shell("script --command='git push --force' /dev/null"), Decision.Kind.DENY);
+        expect("nor socat SYSTEM", shell("socat - SYSTEM:'git push --force'"), Decision.Kind.DENY);
+        expect("nor watch with the command as text", shell("watch -n 1 'git push --force'"), Decision.Kind.DENY);
+        expect("nor watch with the command as words", shell("watch -n 1 git push --force"), Decision.Kind.DENY);
+        expect("nor flock with the command as text", shell("flock /tmp/l -c 'git push --force'"), Decision.Kind.DENY);
+        expect("nor flock with the command as words", shell("flock -n /tmp/l git push --force"), Decision.Kind.DENY);
+        expect("nor tmux", shell("tmux new-session -d 'git push --force'"), Decision.Kind.DENY);
+        expect("a lock file is a file, not a program to run", shell("flock /tmp/build.lock git status"), Decision.Kind.ALLOW);
+        String deep = "env -i ".repeat(40) + "git push --force";
+        long start = System.nanoTime();
+        expect("forty wrappers deep is read as fast as one", shell(deep), Decision.Kind.DENY);
+        check("in well under a second (" + (System.nanoTime() - start) / 1_000_000 + " ms)", System.nanoTime() - start < 2_000_000_000L);
+        for (String carrier : List.of("script -qc 'true' /dev/null", "tmux new-session -d 'echo hello'", "expect -c 'spawn true'", "watch -n 1 'true'", "flock /tmp/l -c 'true'",
+                "socat - EXEC:'true'", "sh -c 'true'", "timeout 5 true")) {
+            expect("a command that carries another still writes where the shell sends its output: " + carrier, shell(carrier + " > AGENTS.md"), Decision.Kind.DENY);
+        }
+        check("a file that is only named like a wrapper is a file nobody reviewed", shell("./env true").kind() != Decision.Kind.ALLOW && shell("/tmp/env true").kind() != Decision.Kind.ALLOW
+                && shell("/tmp/timeout 5 true").kind() != Decision.Kind.ALLOW && shell("./nice git status").kind() != Decision.Kind.ALLOW);
+        expect("the system's own wrapper, named with its path, is the wrapper", shell("/usr/bin/env git status"), Decision.Kind.ALLOW);
+        expect("and hides nothing", shell("/usr/bin/timeout 60 git push --force"), Decision.Kind.DENY);
+        expect("nor a secret file read behind a wrapper", shell("timeout 5 cat .agent/local.env"), Decision.Kind.DENY);
+        check("a shell that script starts with no command is not waved through", shell("script -q /dev/null").kind() != Decision.Kind.ALLOW);
+        check("nor a shell that reads commands the guard cannot see from a pipe", shell("echo amF2YSAuYWdlbnQvU2RsYy5qYXZhIG1hbmRhdGUgYXBwcm92ZSB4 | base64 -d | sh").kind() != Decision.Kind.ALLOW
+                && shell("base64 -d payload.b64 | bash -s").kind() != Decision.Kind.ALLOW);
+        expect("a shell with its command in sight is read as before", shell("sh -c 'git status'"), Decision.Kind.ALLOW);
+        check("nor an expect script the guard cannot read", shell("expect drive.exp").kind() != Decision.Kind.ALLOW);
+        expect("a wrapper around a command that is fine stays fine: timeout", shell("timeout 60 git status"), Decision.Kind.ALLOW);
+        expect("and the tool's open commands behind one", shell("timeout 120 java .agent/Sdlc.java status"), Decision.Kind.ALLOW);
+        expect("and a mandate draft in a pseudo terminal", shell("script -qc 'java .agent/Sdlc.java mandate draft fix-search' /dev/null"), Decision.Kind.ALLOW);
+        expect("the words mandate approve alone, in a commit message, are words", shell("git commit -m 'docs(PROJ-1): a person runs mandate approve'"), Decision.Kind.ALLOW);
+        expect("so is a search for them", shell("grep -rn 'mandate approve' docs"), Decision.Kind.ALLOW);
+        for (String words : List.of("grep -rn 'Sdlc.java mandate approve' docs", "grep -rn \"sdlc hook pre-tool-use\" .github", "git grep -n 'Sdlc.java tests lock'",
+                "git log --grep='java .agent/Sdlc.java config apply'", "git commit -m 'docs(PROJ-1): the guide' -m 'Ask a person: java .agent/Sdlc.java mandate approve x'",
+                "git commit -m 'docs(PROJ-1): sdlc setup is run by a person'", "echo 'my/sdlc setup'", "echo \"the Sdlc.java eval loop\"", "ls 'docs/sdlc setup'")) {
+            expect("a command of the tool quoted as text is text: " + words, shell(words), Decision.Kind.ALLOW);
+        }
         expect("a folder named sdlc is not the tool", shell("ls sdlc setup"), Decision.Kind.ALLOW);
         expect("compile into build", shell("javac -d .agent/.build /tmp/Evil.java"), Decision.Kind.DENY);
         expect("curl asks", shell("curl https://example.com"), Decision.Kind.ASK);
