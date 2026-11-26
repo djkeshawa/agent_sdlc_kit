@@ -68,11 +68,15 @@ layer-1 and layer-2 rules (532 checks, with the multi-component ones).
 | Printing the environment (`env`, `printenv`, `set`, `Get-ChildItem env:`, `ps e`, `/proc/<pid>/environ`), `$...TOKEN` variables | deny | - | - | - |
 | Recursive deletes outside build output; deleting outside the project or `.git` | ask / deny | - | - | - |
 | Encoded PowerShell (`-EncodedCommand`) | deny | - | - | - |
-| Running the hooks, `setup`, `upgrade` or `config apply` by hand; `tests lock` (QE's approval); `eval` (its report shows the ground truth) | deny | - | - | - |
+| Running the hooks, `setup`, `upgrade` or `config apply` by hand; `tests lock` (QE's approval); `mandate approve` (a person's decision); `eval` (its report shows the ground truth) | deny | - | - | - |
+| The same commands of the tool written out behind a program that runs another (`timeout`, `nice`, `stdbuf`, `script`, `expect`, `socat`, `find -exec`, ...) | deny | - | - | - |
+| A shell or pseudo terminal that reads its commands from what is typed or piped in (`... \| sh`, `script` with no command), and an `expect` script | ask | - | - | - |
 | Docker, kubectl, helm, terraform; `pip install` | ask | - | - | - |
 
 Shell commands are split and checked part by part, through `bash -c`, `sh -c`, `cmd /c`,
-`powershell -Command`, `eval`, `xargs`, `env`, `$( )` and backticks. A line with backslashes is read
+`powershell -Command`, `eval`, `xargs`, `env`, `timeout`, `nice`, `stdbuf`, `script -c`, `expect -c`,
+`socat EXEC:`, `watch`, `flock`, `tmux`, `$( )` and backticks. A program of that kind takes options of its
+own, so each word the command behind it can start at is checked. A line with backslashes is read
 both ways, as sh/bash (`\n` is `n`) and as cmd/PowerShell (a path separator), and the stricter answer wins.
 
 ## External systems (MCP)
@@ -110,6 +114,16 @@ GitHub Enterprise and SonarQube servers in read-only mode.
 
 ## Limits - be honest with your team
 
+- **The guard is not a lock.** It reads the text of a command, and the shell decides afterwards
+  what runs. An agent that sets out to get around it can: with a pattern the shell fills in
+  (`Sdlc.jav?`), an alias or a function, a program that puts the words together (`xargs`), a small
+  program piped into an interpreter, or a copy of a script under a build folder. So a command the
+  table marks `deny` is refused in its plain forms and behind the usual wrappers, not in every form.
+  This holds for the tool's own commands for a person too (`mandate approve`, `tests lock`,
+  `setup`): an agent with a shell on your account can reach them, and can write the files they
+  write. What a person approved on this machine is that person's word, and each verdict says so.
+  Trust that does not rest on the agent comes from outside it: the git hooks, CI, branch protection,
+  and approval by another person on the code host.
 - **The hooks check text.** Running a file that is not committed needs your approval, but code the
   agent may legitimately write and run (a test, an in-scope script) can still do anything the
   developer's account can, including reading `.agent/local.env`. That is why the same rules exist
