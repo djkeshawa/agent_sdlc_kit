@@ -197,6 +197,14 @@ final class JavaGuardTests {
         long start = System.nanoTime();
         expect("forty wrappers deep is read as fast as one", shell(deep), Decision.Kind.DENY);
         check("in well under a second (" + (System.nanoTime() - start) / 1_000_000 + " ms)", System.nanoTime() - start < 2_000_000_000L);
+        for (String carrier : List.of("script -qc 'true' /dev/null", "tmux new-session -d 'echo hello'", "expect -c 'spawn true'", "watch -n 1 'true'", "flock /tmp/l -c 'true'",
+                "socat - EXEC:'true'", "sh -c 'true'", "timeout 5 true")) {
+            expect("a command that carries another still writes where the shell sends its output: " + carrier, shell(carrier + " > AGENTS.md"), Decision.Kind.DENY);
+        }
+        check("a file that is only named like a wrapper is a file nobody reviewed", shell("./env true").kind() != Decision.Kind.ALLOW && shell("/tmp/env true").kind() != Decision.Kind.ALLOW
+                && shell("/tmp/timeout 5 true").kind() != Decision.Kind.ALLOW && shell("./nice git status").kind() != Decision.Kind.ALLOW);
+        expect("the system's own wrapper, named with its path, is the wrapper", shell("/usr/bin/env git status"), Decision.Kind.ALLOW);
+        expect("and hides nothing", shell("/usr/bin/timeout 60 git push --force"), Decision.Kind.DENY);
         expect("nor a secret file read behind a wrapper", shell("timeout 5 cat .agent/local.env"), Decision.Kind.DENY);
         check("a shell that script starts with no command is not waved through", shell("script -q /dev/null").kind() != Decision.Kind.ALLOW);
         check("nor a shell that reads commands the guard cannot see from a pipe", shell("echo amF2YSAuYWdlbnQvU2RsYy5qYXZhIG1hbmRhdGUgYXBwcm92ZSB4 | base64 -d | sh").kind() != Decision.Kind.ALLOW

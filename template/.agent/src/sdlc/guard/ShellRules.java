@@ -61,7 +61,7 @@ public final class ShellRules {
                 this::ownTool,
                 read::wholeFolder,
                 cd::check,
-                run::nested,
+                this::nested,
                 this::machine,
                 env::dump,
                 write::targets,
@@ -144,7 +144,9 @@ public final class ShellRules {
                 if (variable != null) question = question.strictest(variable);
                 words.remove(0);
             } else if (WRAPPERS.contains(baseName(w)) && words.size() > 1) {
-                return wrapped(baseName(w), words.subList(1, words.size())).strictest(question);
+                // a wrapper named with a path is a file like any other: one that nobody reviewed asks, whatever it is called
+                Decision file = w.contains("/") || w.contains("\\") ? run.scriptFile(new ShellCommand(List.of(w), List.of(w))) : null;
+                return wrapped(baseName(w), words.subList(1, words.size())).strictest(question).strictest(file);
             } else {
                 break;
             }
@@ -207,6 +209,12 @@ public final class ShellRules {
         if (sub.equals("mandate") && sub2.equals("approve")) return Decision.deny("approving a mandate is a person's decision; a human runs mandate approve.");
         if (sub.equals("eval")) return Decision.deny("the scoping eval is collected and scored by a human (its report shows the ground truth); agents only answer cases with /eval-scoping.");
         return null;
+    }
+
+    // The shell redirects the output of the outer command itself, whatever command that one carries: script -c '...' > file
+    private Decision nested(ShellCommand c) {
+        Decision d = run.nested(c);
+        return d == null ? null : d.strictest(write.targets(c));
     }
 
     private Decision secretsAndToolCopy(ShellCommand c) {
