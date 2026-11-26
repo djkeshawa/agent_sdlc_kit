@@ -284,6 +284,169 @@ final class MandateTests {
         }
         check("mandate: an unknown sub-command prints the usage and exits 3", code == 3 && sink.toString(StandardCharsets.UTF_8).replace("\r\n", "\n").contains("mandate check <ID>"));
         check("mandate: check without an id is a usage error", Asserts.throwsUsage(() -> cli("mandate", "check")));
+        check("mandate draft: the usage names it", sink.toString(StandardCharsets.UTF_8).contains("mandate draft <ID>"));
+        draft(repo);
+    }
+
+    private static final String DRAFTED = """
+            {
+              "intent": "Searching with an empty query returns an empty list",
+              "mustStayTrue": [ { "is": "Other queries return what they did", "test": "%s" } ],
+              "scope": { "paths": ["src/**"] },
+              "oracle": { "scenarios": ["src/test/java/com/acme/search/SearchServiceTest.java"] }
+            }
+            """;
+
+    private static void draft(Path repo) throws IOException {
+        String keep = "src/test/java/com/acme/search/KeepTest.java";
+        write(repo, keep, "class KeepTest {}\n");
+        String keepBlob = Proc.run(repo, "git", "hash-object", "--", keep).out().strip();
+
+        String none = cli("mandate", "draft", "d0");
+        check("mandate draft: a mandate that is not there says what to write and where, and exits 1", code == 1 && none.startsWith("docs/mandates/d0.json does not exist.")
+                && none.contains("\"intent\"") && none.contains("\"scope\"") && none.contains("\"oracle\"") && none.contains("sdlc mandate draft d0") && !Files.exists(repo.resolve("docs/mandates/d0.json")));
+        check("mandate draft: without an id it is a usage error", Asserts.throwsUsage(() -> cli("mandate", "draft")));
+
+        write(repo, "docs/mandates/d1.json", DRAFTED.formatted(keep));
+        String first = cli("mandate", "draft", "d1");
+        String text = Files.readString(repo.resolve("docs/mandates/d1.json"));
+        Mandate d1 = loadedOrNull(repo, "d1");
+        check("mandate draft: it fills in the version and the id, and the result is a valid mandate", code == 0 && d1 != null && d1.version().equals("v0") && d1.id().equals("d1")
+                && text.startsWith("{\n  \"mandate\": \"v0\",\n  \"id\": \"d1\",\n  \"intent\": ") && first.contains("added \"mandate\": \"v0\"") && first.contains("added \"id\": \"d1\""));
+        check("mandate draft: it locks each test that must stay true at the blob git hash-object gives", d1 != null && d1.locked().size() == 1 && d1.locked().get(keep).equals(keepBlob)
+                && keepBlob.length() == 40 && first.contains("locked " + keep + " at blob " + keepBlob.substring(0, 12)));
+        check("mandate draft: it writes the layout approve writes", text.equals(Json.pretty(Json.parseStrict(text)) + "\n"));
+        check("mandate draft: it prints the card, then says the draft is not approved and how a person approves it", first.startsWith("Mandate d1\n")
+                && first.contains("This mandate is the file with blob " + Mandate.blobId(repo, "d1")) && first.contains("It is not approved")
+                && first.contains("sdlc mandate approve d1") && first.indexOf("sdlc mandate approve d1") > first.indexOf("Locked tests"));
+        check("mandate draft: it never approves", sdlc.mandate.SelfApproval.of(repo, "d1") == null);
+        String checked = cli("mandate", "check", "d1");
+        check("mandate draft: mandate check finds nothing to warn about in what it wrote", code == 0 && checked.contains("is a valid mandate") && !checked.contains("warning"));
+        String second = cli("mandate", "draft", "d1");
+        check("mandate draft: run again, it changes nothing and says so", code == 0 && second.contains("Nothing to change in docs/mandates/d1.json")
+                && Files.readString(repo.resolve("docs/mandates/d1.json")).equals(text) && !second.contains("added"));
+
+        write(repo, "docs/mandates/d2.json", DRAFTED.formatted(keep).replace("{\n  \"intent\"", "{\n  \"id\": \"other\",\n  \"intent\""));
+        String before = Files.readString(repo.resolve("docs/mandates/d2.json"));
+        String wrongId = cli("mandate", "draft", "d2");
+        check("mandate draft: an id that is not the file name is refused, not put right", code == 1 && wrongId.contains("  id \"other\" does not match the file name d2.json")
+                && wrongId.contains("Nothing was written") && Files.readString(repo.resolve("docs/mandates/d2.json")).equals(before));
+
+        String missingTest = "src/test/java/com/acme/search/MissingTest.java";
+        write(repo, "docs/mandates/d3.json", DRAFTED.formatted(missingTest));
+        before = Files.readString(repo.resolve("docs/mandates/d3.json"));
+        String missing = cli("mandate", "draft", "d3");
+        check("mandate draft: a test that must stay true and does not exist is named, and nothing is written", code == 1
+                && missing.contains("  mustStayTrue[0].test \"" + missingTest + "\" does not exist") && !missing.contains("is not in oracle.locked")
+                && Files.readString(repo.resolve("docs/mandates/d3.json")).equals(before));
+
+        write(repo, "docs/mandates/d4.json", DRAFTED.formatted(keep).replace("\"scope\":", "\"failsIf\": \"an empty query reaches the database\",\n  \"scope\":"));
+        before = Files.readString(repo.resolve("docs/mandates/d4.json"));
+        String fails = cli("mandate", "draft", "d4");
+        check("mandate draft: a draft that holds failsIf is refused: the approver writes that sentence", code == 1 && fails.contains("failsIf")
+                && fails.contains("sdlc mandate approve") && fails.contains("Take \"failsIf\" out") && Files.readString(repo.resolve("docs/mandates/d4.json")).equals(before));
+
+        write(repo, "docs/mandates/d5.json", DRAFTED.formatted(keep).replace("\"scope\": { \"paths\": [\"src/**\"] },", ""));
+        before = Files.readString(repo.resolve("docs/mandates/d5.json"));
+        String invalid = cli("mandate", "draft", "d5");
+        check("mandate draft: a draft that is not valid once filled in prints each problem as mandate check does, and is not written", code == 1
+                && invalid.startsWith("docs/mandates/d5.json is not a valid mandate:\n  ") && invalid.contains("\n  scope is missing")
+                && invalid.contains("Nothing was written") && Files.readString(repo.resolve("docs/mandates/d5.json")).equals(before));
+
+        write(repo, "docs/mandates/d5.json", DRAFTED.formatted(keep).replace(",\n  \"oracle\": { \"scenarios\": [\"src/test/java/com/acme/search/SearchServiceTest.java\"] }", ""));
+        String noOracle = cli("mandate", "draft", "d5");
+        check("mandate draft: a draft with no oracle is told the one thing it lacks, the scenarios, not to lock its tests by hand", code == 1
+                && noOracle.contains("\n  oracle.scenarios is missing") && !noOracle.contains("is not in oracle.locked") && !Files.readString(repo.resolve("docs/mandates/d5.json")).contains("oracle"));
+
+        write(repo, "docs/mandates/d6.json", DRAFTED.formatted(keep).replace("\"scenarios\":", "\"locked\": { \"" + keep + "\": \"" + "0".repeat(40) + "\" }, \"scenarios\":"));
+        String stale = cli("mandate", "draft", "d6");
+        check("mandate draft: a locked blob that is not the file's is replaced, and the replacement is said", code == 0
+                && loadedOrNull(repo, "d6") != null && loadedOrNull(repo, "d6").locked().get(keep).equals(keepBlob) && stale.contains("oracle.locked[\"" + keep + "\"] said 000000000000; the file has blob " + keepBlob.substring(0, 12)));
+        write(repo, "docs/mandates/d6.json", DRAFTED.formatted(keep).replace("\"scenarios\":", "\"locked\": { \"" + REGRESSION + "\": \"" + "1".repeat(40) + "\" }, \"scenarios\":"));
+        String gone = cli("mandate", "draft", "d6");
+        check("mandate draft: a locked test that does not exist is named too", code == 1 && gone.contains("  oracle.locked key \"" + REGRESSION + "\" does not exist"));
+
+        write(repo, "docs/mandates/d7.json", DRAFTED.formatted("../KeepTest.java"));
+        String leaves = cli("mandate", "draft", "d7");
+        check("mandate draft: a test path that leaves the repository is refused by the parser and never looked for", code == 1
+                && leaves.contains("mustStayTrue[0].test \"../KeepTest.java\" leaves the repository") && !leaves.contains("does not exist"));
+
+        Path linkedTest = repo.resolve("src/test/java/com/acme/search/LinkedTest.java");
+        try {
+            Files.createSymbolicLink(linkedTest, repo.resolve(keep));
+            write(repo, "docs/mandates/d8.json", DRAFTED.formatted("src/test/java/com/acme/search/LinkedTest.java"));
+            String link = cli("mandate", "draft", "d8");
+            check("mandate draft: a test that is a link is not locked", code == 1 && link.contains("LinkedTest.java\" is a link"));
+            Files.delete(linkedTest);
+            Files.createSymbolicLink(repo.resolve("src/test/java/linked"), repo.resolve("src/test/java/com/acme/search"));
+            write(repo, "docs/mandates/d8.json", DRAFTED.formatted("src/test/java/linked/KeepTest.java"));
+            String through = cli("mandate", "draft", "d8");
+            check("mandate draft: nor a test reached through a linked folder, which git does not keep", code == 1 && through.contains("src/test/java/linked/KeepTest.java\" is reached through a link"));
+            Files.delete(repo.resolve("src/test/java/linked"));
+            Files.createSymbolicLink(repo.resolve("docs/mandates/d9.json"), repo.resolve("docs/mandates/d1.json"));
+            String linkedMandate = cli("mandate", "draft", "d9");
+            check("mandate draft: a mandate that is a link is refused as for the other commands", code == 1 && linkedMandate.contains("docs/mandates/d9.json is a link")
+                    && Files.readString(repo.resolve("docs/mandates/d1.json")).equals(text));
+        } catch (IOException | UnsupportedOperationException e) {
+        } finally {
+            Files.deleteIfExists(linkedTest);
+            Files.deleteIfExists(repo.resolve("src/test/java/linked"));
+            Files.deleteIfExists(repo.resolve("docs/mandates/d9.json"));
+        }
+
+        write(repo, "docs/mandates/d10.json", DRAFTED.formatted(keep).replace("Searching with an empty query", "x".repeat(256 * 1024)));
+        String huge = cli("mandate", "draft", "d10");
+        check("mandate draft: a mandate larger than a page is refused for its size", code == 1 && huge.contains("is larger than 256 KB"));
+        StringBuilder paths = new StringBuilder();
+        for (int i = 0; i < 22_000; i++) paths.append(i == 0 ? "" : ",").append("\"p/").append(i).append('"');
+        write(repo, "docs/mandates/d10.json", "{\"intent\":\"Many paths\",\"scope\":{\"paths\":[" + paths + "]},\"oracle\":{\"scenarios\":[\"T.java\"]}}");
+        before = Files.readString(repo.resolve("docs/mandates/d10.json"));
+        String grows = cli("mandate", "draft", "d10");
+        check("mandate draft: a draft that would grow past a page once laid out is not written", code == 1 && grows.contains("would be larger than 256 KB")
+                && Files.readString(repo.resolve("docs/mandates/d10.json")).equals(before));
+
+        String ignored = "src/test/java/com/acme/search/IgnoredTest.java", kept = "src/test/java/com/acme/search/KeptTest.java";
+        write(repo, ".gitignore", "src/test/java/com/acme/search/IgnoredTest.java\nsrc/test/java/com/acme/search/KeptTest.java\n");
+        write(repo, ignored, "class IgnoredTest {}\n");
+        write(repo, kept, "class KeptTest {}\n");
+        Proc.run(repo, "git", "add", "-f", "--", kept);
+        write(repo, "docs/mandates/d11.json", DRAFTED.formatted(ignored));
+        before = Files.readString(repo.resolve("docs/mandates/d11.json"));
+        String notTaken = cli("mandate", "draft", "d11");
+        check("mandate draft: a test that git ignores and does not track is refused, as the check would not find it, and nothing is written", code == 1
+                && notTaken.contains("  mustStayTrue[0].test \"" + ignored + "\" is ignored by git, so the check will not find it. Take it out of .gitignore or name another test")
+                && !notTaken.contains("is not in oracle.locked") && Files.readString(repo.resolve("docs/mandates/d11.json")).equals(before));
+        write(repo, "docs/mandates/d12.json", DRAFTED.formatted(kept));
+        String tracked = cli("mandate", "draft", "d12");
+        Mandate d12 = loadedOrNull(repo, "d12");
+        check("mandate draft: a test that git tracks is locked, though a pattern of .gitignore matches it", code == 0 && tracked.contains("locked " + kept) && d12 != null
+                && d12.locked().get(kept).equals(Proc.run(repo, "git", "hash-object", "--", kept).out().strip()));
+        Files.delete(repo.resolve(".gitignore"));
+
+        java.util.Deque<String> answers = new java.util.ArrayDeque<>(java.util.List.of("other queries change", "1", "d1"));
+        int approved;
+        try {
+            approved = MandateCli.approve(repo, "d1", q -> answers.poll(), new PrintStream(new ByteArrayOutputStream(), false, StandardCharsets.UTF_8));
+        } catch (UsageException e) {
+            approved = -1;
+        }
+        String asApproved = Files.readString(repo.resolve("docs/mandates/d1.json"));
+        String again = cli("mandate", "draft", "d1");
+        check("mandate draft: a mandate that is approved as it is is left byte for byte", approved == 0 && code == 0
+                && again.contains("already approved; an edit needs a new approval") && Files.readString(repo.resolve("docs/mandates/d1.json")).equals(asApproved));
+        write(repo, "docs/mandates/d1.json", asApproved.replace("an empty list", "an empty list, quickly"));
+        String edited = cli("mandate", "draft", "d1");
+        check("mandate draft: an approved mandate edited since still holds the approver's sentence, so it is refused and its approval is not touched", code == 1
+                && edited.contains("Take \"failsIf\" out") && edited.contains("edited since it was approved")
+                && approved == 0 && sdlc.mandate.SelfApproval.of(repo, "d1").blob().equals(Mandate.blobOf(repo, asApproved)));
+    }
+
+    private static Mandate loadedOrNull(Path repo, String id) {
+        try {
+            return Mandate.load(repo, id);
+        } catch (UsageException e) {
+            return null;
+        }
     }
 
     private static String loadMessage(Path repo, String id) {

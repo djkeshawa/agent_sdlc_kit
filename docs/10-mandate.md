@@ -13,6 +13,7 @@ says so. Nothing is enforced.
 ## The steps
 
 ```bash
+sdlc mandate draft fix-search      # finish the draft in docs/mandates/fix-search.json, and check it
 sdlc mandate check fix-search      # is docs/mandates/fix-search.json a valid mandate?
 sdlc mandate show fix-search       # the mandate as a card you can read
 sdlc mandate approve fix-search    # you approve it, in a terminal
@@ -20,19 +21,33 @@ sdlc mandate approve fix-search    # you approve it, in a terminal
 sdlc check --mandate fix-search    # the change against the mandate
 ```
 
-1. **Write the mandate.** `docs/mandates/<id>.json`: one sentence of intent, the paths the
-   change may touch, and the tests that must pass. Your agent can draft it from the issue or
-   its plan. The smallest one:
+1. **Write the mandate, then run `sdlc mandate draft <id>`.** `docs/mandates/<id>.json`: one
+   sentence of intent, the paths the change may touch, and the tests that must pass. Your agent
+   can draft it from the issue or its plan. The smallest draft:
 
    ```json
    {
-     "mandate": "v0",
-     "id": "fix-search",
      "intent": "Searching with an empty query returns an empty list, not an error",
      "scope": { "paths": ["src/main/java/com/acme/search/**", "src/test/java/com/acme/search/**"] },
      "oracle": { "scenarios": ["src/test/java/com/acme/search/SearchServiceTest.java#emptyQueryReturnsEmptyList"] }
    }
    ```
+
+   `sdlc mandate draft` finishes the file in place and checks it:
+   - it adds `"mandate": "v0"` and the `id` (the file name) when they are missing. An `id` that
+     is not the file name is an error;
+   - it locks each test of `mustStayTrue`, and each test already in `oracle.locked`, at the
+     blob id of the file as it is now (what `git hash-object` prints). A blob id there that is
+     not the file's is replaced, and the command says so. A test that does not exist, is a link,
+     or lies behind a linked folder is an error, and so is one that git ignores and does not
+     track: `sdlc check --mandate` would not find it;
+   - it refuses a draft that holds `failsIf`: that sentence is the approver's (step 2);
+   - it checks the result as `sdlc mandate check` does, and writes nothing when it is not valid.
+     When it is, it writes the file in the layout `approve` writes, prints the card, and says
+     that the mandate is not approved. Run again, it changes nothing.
+
+   It never approves. A mandate that is approved as it is, it leaves alone. It exits 0 when the
+   draft is ready for approval, 1 when it is not.
 
 2. **Approve it.** `sdlc mandate approve` asks you three things, in this order:
    - before it shows anything: in your own words, how could this change fail?

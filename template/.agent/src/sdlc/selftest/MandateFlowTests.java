@@ -83,6 +83,36 @@ final class MandateFlowTests {
                 && first.contains("1 fails before it and passes after it (0 approved with the mandate, 1 written with the change)"));
         check("mandate: every verdict says what it does not say", first.contains("that the change is correct") && first.contains("approved before the work"));
 
+        write(repo, "docs/mandates/drafted.json", """
+                {
+                  "intent": "The fix is applied",
+                  "mustStayTrue": [ { "is": "the old behaviour holds", "test": "tests/keep.t" } ],
+                  "scope": { "paths": ["prod.txt", "tests/**", "docs/mandates/fix.json"] },
+                  "oracle": { "scenarios": ["tests/fix.t#fixed"] }
+                }
+                """);
+        String drafting = draft("drafted");
+        String draftedText = Files.readString(repo.resolve("docs/mandates/drafted.json"));
+        check("mandate draft: it locks the test that must stay true at the blob the verdict reads", code == 0 && drafting.contains("It is not approved")
+                && draftedText.contains("\"tests/keep.t\": \"" + keep + "\""));
+        String byTool = verdictOf("drafted");
+        check("mandate draft: the verdict of a mandate it finished is the verdict of the same mandate written by hand", evidence(byTool).equals(evidence(first))
+                && byTool.contains("satisfied locked tests are the files the mandate names (1)") && byTool.contains("Scope     AMENDED") && byTool.contains("not approved"));
+        Deque<String> draftAnswers = new ArrayDeque<>(List.of("the old behaviour breaks", "1", "drafted"));
+        int draftApproved;
+        try {
+            draftApproved = MandateCli.approve(repo, "drafted", q -> draftAnswers.poll(), new PrintStream(new ByteArrayOutputStream(), false, StandardCharsets.UTF_8));
+        } catch (sdlc.core.UsageException e) {
+            draftApproved = -1;
+        }
+        SelfApproval.Record draftRecord = SelfApproval.of(repo, "drafted");
+        check("mandate draft: a person approves what it finished, and the verdict then finds the change inside it", draftApproved == 0 && draftRecord != null
+                && draftRecord.blob().equals(Mandate.blobId(repo, "drafted")) && verdictOf("drafted").contains("Scope     INSIDE"));
+        String approvedDraft = Files.readString(repo.resolve("docs/mandates/drafted.json"));
+        check("mandate draft: run on the approved mandate, it changes nothing", draft("drafted").contains("already approved") && code == 0
+                && Files.readString(repo.resolve("docs/mandates/drafted.json")).equals(approvedDraft));
+        Files.delete(repo.resolve("docs/mandates/drafted.json"));
+
         ByteArrayOutputStream said = new ByteArrayOutputStream();
         String draftText = Files.readString(repo.resolve("docs/mandates/fix.json"));
         Deque<String> slow = new ArrayDeque<>(List.of("it breaks", "1", "fix"));
@@ -449,6 +479,33 @@ final class MandateFlowTests {
 
     private static String verdict() {
         return report(Map.of("mandate", "fix", "selftest-runner", "true", "runs", "1"));
+    }
+
+    private static String verdictOf(String id) {
+        try {
+            return report(Map.of("mandate", id, "selftest-runner", "true", "runs", "1"));
+        } catch (sdlc.core.UsageException e) {
+            return e.getMessage();
+        }
+    }
+
+    private static String evidence(String verdict) {
+        int from = verdict.indexOf("\nEvidence\n"), to = verdict.indexOf("\nWhat this does not say");
+        return from < 0 || to < from ? "(no evidence)" : verdict.substring(from, to);
+    }
+
+    private static String draft(String id) {
+        PrintStream out = System.out;
+        ByteArrayOutputStream sink = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(sink, true, StandardCharsets.UTF_8));
+        try {
+            code = MandateCli.run(new String[] {"mandate", "draft", id}, Map.of());
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        } finally {
+            System.setOut(out);
+        }
+        return sink.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
     }
 
     private static String report(Map<String, String> options) {

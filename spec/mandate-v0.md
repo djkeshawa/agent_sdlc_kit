@@ -58,6 +58,13 @@ Rules of the format:
   tests are compared as git stores them, which is what `git hash-object <file>` prints.
 - No YAML, no Markdown front matter, no comments.
 
+## Drafting
+
+`sdlc mandate draft <id>` finishes a draft in place: it adds `mandate` and `id` when they are
+missing, and writes into `oracle.locked` the blob id of each `mustStayTrue` test and of each
+test already locked, as the file is now in the working tree. It refuses a draft that holds
+`failsIf`, writes only a valid mandate, and never approves.
+
 ## The card
 
 The readable view of a mandate: intent, what must stay true, the "this fails if" line, the

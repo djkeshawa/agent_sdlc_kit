@@ -350,6 +350,12 @@ public record Mandate(String version, String id, String intent, List<Truth> must
         return true;
     }
 
+    static boolean plainFile(String p) {
+        List<String> out = new ArrayList<>();
+        path(out, p, "", false);
+        return out.isEmpty();
+    }
+
     private static void path(List<String> out, String p, String where, boolean glob) {
         String shown = where.contains("\"") ? where : where + " \"" + p + "\"";
         if (p.isEmpty()) out.add(where + " is empty");

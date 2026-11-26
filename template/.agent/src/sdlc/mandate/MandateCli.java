@@ -20,6 +20,7 @@ public final class MandateCli {
             usage: java .agent/Sdlc.java mandate <command>
               mandate check <ID>   is docs/mandates/<ID>.json a valid mandate? Exit 0 yes, 1 no
               mandate show <ID>    print the mandate as a card a person can read
+              mandate draft <ID>   finish a draft: fill in its version, id and locked blob ids, then check it; never approves
               mandate list         every mandate in docs/mandates, valid or not
               mandate approve <ID> approve it yourself, in a terminal: you say first how it could fail
             """;
@@ -31,6 +32,7 @@ public final class MandateCli {
         return switch (sub) {
             case "check" -> check(root, id(args), out);
             case "show" -> show(root, id(args), out);
+            case "draft" -> MandateDraft.draft(root, id(args), out);
             case "list" -> list(root, out);
             case "approve" -> approve(root, id(args), MandateCli::terminal, out);
             default -> {

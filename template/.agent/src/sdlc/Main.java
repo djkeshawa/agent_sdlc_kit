@@ -70,6 +70,7 @@ public final class Main {
             check --since 30d [--max N]          the same, replayed over the recent commits of this branch
             check --stop-hook                    for an agent's Stop hook: keeps the agent working while a new test proves nothing
             mandate check|show <ID>              what one change may do (docs/mandates/<ID>.json): is it valid | print it as a card
+            mandate draft <ID>                   finish a drafted mandate (version, id, locked tests' blob ids) and check it; never approves
             mandate list                         every mandate in docs/mandates, valid or not
             verify | trace [<STORY>] | check-pr [--title "..."] [--story KEY]
             review record <TASK> --file <report> | qa record [<STORY>] --file <report>
