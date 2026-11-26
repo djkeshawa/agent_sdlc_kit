@@ -46,6 +46,7 @@ public final class SelfTest {
             IntegrityTests.run();
             MandateTests.run();
             MandateFlowTests.run();
+            PromptTests.run(savedRoot);
         } finally {
             Ctx.root = savedRoot;
             Ctx.cfg = savedCfg;
