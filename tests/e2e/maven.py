@@ -11,6 +11,7 @@ working tree, then `sdlc check` in it. What the check prints is compared with wh
 really is. --show prints the whole output of each shape.
 """
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -23,6 +24,24 @@ RESULTS = []
 def check(name, ok, detail=""):
     RESULTS.append((name, bool(ok)))
     print(("PASS " if ok else "FAIL ") + name + ("" if ok or not detail else "\n      " + detail.strip().replace("\n", "\n      ")[:4000]), flush=True)
+
+
+class Bound:
+    """A text with one number of seconds in it that the check measured: the bound of a run alone before the change. The rule
+    (Witness.beforeBound) makes it ten times the same run after the change, at least 60 s, at most the --timeout and the time
+    left for single runs, so a slow machine prints a larger one. The number must be a whole number from low to high; every
+    other character is compared exactly."""
+
+    def __init__(self, before, after, low, high):
+        self.pattern = re.compile(re.escape(before) + r"(0|[1-9][0-9]*)" + re.escape(after))
+        self.low, self.high, self.text = low, high, "%s<%d to %d>%s" % (before, low, high, after)
+
+    def found(self, body):
+        seen = [int(m.group(1)) for m in self.pattern.finditer(body)]
+        return bool(seen) and all(self.low <= n <= self.high for n in seen)
+
+    def __repr__(self):
+        return repr(self.text)
 
 
 POM = """<project xmlns="http://maven.apache.org/POM/4.0.0">
@@ -127,7 +146,7 @@ def main():
         if result is None:
             return
         got, body = result
-        missing = [t for t in has if t not in body]
+        missing = [t for t in has if not (t.found(body) if isinstance(t, Bound) else t in body)]
         present = [t for t in list(lacks) + (list(NOT_RUN) if ran else []) if t in body]
         check("real maven: " + name, (code is None or got == code) and not missing and not present,
               "exit %d, expected %s%s%s\n%s" % (got, "either" if code is None else code, "; missing: %r" % missing if missing else "", "; must not be there: %r" % present if present else "", body))
@@ -308,6 +327,9 @@ def hangs(shape, said):
     def was(s):
         return ": before the change the file timed out after %d s; " % s
 
+    def unended(before, timeout, after="\n", low=60):
+        return Bound(before + "it did not end before the change within ", " s" + after, low, timeout)
+
     j5h = J5 + "class HangTest {\n%s}\n"
     j5s = J5 + "class SideTest {\n%s}\n"
     zero5 = "    @Test void zero() { assertEquals(0, Calc.half(0)); }\n"
@@ -329,7 +351,7 @@ def hangs(shape, said):
              ["  2 fail before the change and pass after it\n" + files[0] + "        halves" + alone(150) + files[1] + "        sideHalves" + alone(150),
               "the file reports 3 tests it did not have, and 1 of its tests does not pass on both sides, and 1 of its tests has no result before the change: at least 1 new test passes before and after. "
               "Under names the file did not have, 1 passes before and after (idle)",
-              "  1 could not be judged\n" + files[0] + "        locks" + was(150) + "run alone (demo.HangTest#locks), it did not end before the change within 60 s\n",
+              unended("  1 could not be judged\n" + files[0] + "        locks" + was(150) + "run alone (demo.HangTest#locks), ", 150),
               "  2 tests that were already in the edited files pass before and after (not counted); of them, 2 ran alone on both sides, as before the change "
               "their test files did not end within 150 s\n"],
              ["fails after", "not run now", "from run to run", "used up"], ran=False)
@@ -348,17 +370,18 @@ def hangs(shape, said):
          "hang-kinds: rows of one method run together, so one row that hangs leaves every row of it unjudged; a nested class is run as a class of its own; "
          "a test that needs another test of its file before it could not be judged, never said to fail before; a single run that reports no test could not be judged", 0,
          ["  2 fail before the change and pass after it\n" + kfile + "        four" + alone(150) + ofile + "        first" + alone(150),
-          "        rows(int)[3]" + was(150) + "run alone (demo.KindsTest#rows), it did not end before the change within 60 s\n",
-          "        rows(int)[1]" + was(150) + "run alone (demo.KindsTest#rows), it did not end before the change within 60 s\n",
+          unended("        rows(int)[3]" + was(150) + "run alone (demo.KindsTest#rows), ", 150),
+          unended("        rows(int)[1]" + was(150) + "run alone (demo.KindsTest#rows), ", 150),
           "        second" + was(150) + "run alone after the change it failed, and with its file it passed\n",
           "        made()[1]" + was(150) + "run alone before the change, it reported no test"],
          ["second: fails", "fails after", "not run now", "used up", "new test passes"], ran=False)
 
     setup = J5 + "class SetupTest {\n    @BeforeAll static void ready() { Calc.locked(); }\n    @Test void a() { assertEquals(2, Calc.half(4)); }\n    @Test void b() { assertTrue(true); }\n}\n"
     sfile = "      src/test/java/demo/SetupTest.java  [Maven Surefire]\n"
+    # all single runs share the 70 s of --timeout: the run of a before the change gets what its run after the change left, under 60 s when that took more than 10 s
     said(shape("hang-before-all", {MAIN: HUNG}, {MAIN: MENDED, "src/test/java/demo/SetupTest.java": setup}, timeout=70),
          "hang-before-all: a set-up that hangs makes every method of its class hang alone too: none is judged", 0,
-         ["  2 could not be judged\n" + sfile + "        a" + was(70) + "run alone (demo.SetupTest#a), it did not end before the change within 60 s\n", "        b" + was(70)],
+         [unended("  2 could not be judged\n" + sfile + "        a" + was(70) + "run alone (demo.SetupTest#a), ", 70, low=1), "        b" + was(70)],
          ["fails before", "new test passes", "ran alone on both sides"], ran=False)
 
     said(shape("hang-used-up", {MAIN: HUNG, hang: j5h % zero5, side: j5s % side5}, {MAIN: MENDED, hang: j5h % more5, side: j5s % (side5 + "    @Test void sideHalves() { assertEquals(3, Calc.half(6)); }\n")},
